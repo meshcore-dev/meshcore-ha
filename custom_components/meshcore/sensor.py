@@ -183,7 +183,6 @@ REPEATER_SENSORS = [
         device_class=SensorDeviceClass.DURATION,
         native_unit_of_measurement="min",
         suggested_unit_of_measurement="d",
-        suggested_display_precision="1",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:clock",
     ),
