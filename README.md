@@ -6,17 +6,19 @@ This is a custom Home Assistant integration for MeshCore mesh radio nodes. It al
 
 > :warning: **Work in Progress**: This integration is under active development. BLE connection method hasn't been thoroughly tested yet.
 
-Core integration is powered by [mccli.py](https://github.com/fdlamotte/mccli/blob/main/mccli.py) from fdlamotte.
+Core integration is powered by [meshcore-py](https://github.com/fdlamotte/meshcore_py).
 
 ## Features
 
 - Connect to MeshCore nodes via USB, BLE, or TCP
+- Event-driven architecture for efficient updates and low overhead
 - Monitor node status, signal strength, battery levels, and more
 - View messages received by the mesh network
 - Send messages to other nodes in the network
 - Automatically discover nodes in the mesh network and create sensors for them
 - Track and monitor repeater nodes with detailed statistics 
 - Support for Room Server nodes allowing group chat functionality
+- Direct access to all meshcore-py commands and events
 - Configurable update intervals for different data types (messages, device info, repeaters)
 
 ## Installation
@@ -139,48 +141,51 @@ data:
   message: "Broadcast to everyone on channel 0!"
 ```
 
-### CLI Command (Advanced)
+### Execute Command (Advanced)
 
-Send an arbitrary CLI command directly to the MeshCore node. This service provides direct access to the underlying CLI interface and enables automation of advanced features not otherwise exposed through the API.
+Execute MeshCore SDK commands directly. This service provides access to the underlying meshcore-py library methods, enabling automation of advanced features.
 
-> ⚠️ **Advanced Feature**: This service directly exposes the CLI command interface and is intended for advanced users. Commands sent using this service may change or stop working in future firmware versions.
+> ⚠️ **Advanced Feature**: This service directly exposes the meshcore-py library methods and is intended for advanced users.
 
-Service: `meshcore.cli_command`
+Service: `meshcore.execute_command`
 
 | Field | Type | Required | Description |
 | ----- | ---- | -------- | ----------- |
-| `command` | string | Yes | The CLI command to send to the node (e.g., "get_bat", "info", "set_txpower 10") |
+| `command` | string | Yes | The command with parameters to execute (e.g., "get_bat", "set_tx_power 10") |
 | `entry_id` | string | No | The config entry ID if you have multiple MeshCore devices |
 
 Example with arguments:
 ```yaml
-service: meshcore.cli_command
+service: meshcore.execute_command
 data:
-  command: "set_txpower 15"
+  command: "set_tx_power 15"
 ```
 
-Example sending commands to repeater
+Example sending messages:
 ```yaml
-action: meshcore.cli_command
+service: meshcore.execute_command
 data:
-  command: cmd OldRepeaterName "set name Newname"
+  command: 'send_msg "Repeater1" "Hello from Home Assistant!"'
 ```
 
 ```yaml
-action: meshcore.cli_command
+service: meshcore.execute_command
 data:
-  command: cmd Repeatername advert
+  command: "send_advert true"
 ```
 
 Available commands include:
-- `get_bat` or `b` - Get battery level
-- `info` or `i` - Print node information
+- `get_bat` - Get battery level
+- `send_device_query` - Query device information
 - `reboot` - Reboot the node
-- `advert` or `a` - Send an advertisement
-- `set_txpower` or `txp` - Set transmit power (e.g., `set_txpower 10`)
-- `set_radio` or `rad` - Set radio parameters (e.g., `set_radio 868 125 7 5`)
-- `set_name` - Set node name (e.g., `set_name MyNode`)
-- And many more - refer to the MeshCore CLI documentation
+- `send_advert` - Send an advertisement (add true for flood)
+- `set_tx_power` - Set transmit power (e.g., `set_tx_power 10`)
+- `set_radio` - Set radio parameters (e.g., `set_radio 868.0 250.0 7 8`)
+- `set_name` - Set node name (e.g., `set_name "My Node"`)
+- `send_msg` - Send message to contact (e.g., `send_msg "NodeName" "Hello!"`)
+- `send_chan_msg` - Send channel message (e.g., `send_chan_msg 0 "Hello channel 0!"`)
+- `get_contacts` - Get list of contacts
+- And many more advanced commands from the meshcore-py library
 
 ### UI Message Service
 
@@ -194,19 +199,64 @@ This service automatically pulls values from the helper entities (`select.meshco
 | ----- | ---- | -------- | ----------- |
 | `entry_id` | string | No | The config entry ID if you have multiple MeshCore devices |
 
-### Execute CLI Command UI
+### Execute Command UI
 
-This service executes CLI commands entered through the UI text input.
+This service executes commands entered through the UI text input.
 
-Service: `meshcore.execute_cli_command_ui`
+Service: `meshcore.execute_command_ui`
 
-This service automatically pulls the command from the `text.meshcore_cli_command` helper entity.
+This service automatically pulls the command from the `text.meshcore_command` helper entity.
 
 | Field | Type | Required | Description |
 | ----- | ---- | -------- | ----------- |
 | `entry_id` | string | No | The config entry ID if you have multiple MeshCore devices |
 
 > For more detailed service definitions, see the [services.yaml](custom_components/meshcore/services.yaml) file.
+
+## Event System
+
+The MeshCore integration now uses an event-driven architecture, exposing all events from the meshcore-py library to Home Assistant. This allows for more flexible automations and integrations.
+
+### Raw Events
+
+All events from the MeshCore device are forwarded to the Home Assistant event bus as `meshcore_raw_event`. This allows you to listen for specific events and create automations based on them.
+
+The event data contains:
+- `event_type`: The type of event as a string, e.g., "EventType.BATTERY"
+- `payload`: The payload of the event (contains the specific data for that event type)
+- `timestamp`: When the event was received
+
+Example of listening to raw events in an automation:
+
+```yaml
+trigger:
+  - platform: event
+    event_type: meshcore_raw_event
+    event_data:
+      event_type: "EventType.BATTERY"
+condition: []
+action:
+  - service: notify.notify
+    data:
+      title: "Battery Update"
+      message: "Battery status updated: {{ trigger.event.data.payload.voltage }}V ({{ trigger.event.data.payload.percent }}%)"
+```
+
+Common event types include:
+- `EventType.BATTERY` - Battery status updates
+- `EventType.DEVICE_INFO` - Device information updates
+- `EventType.CONTACTS` - Contact list updates 
+- `EventType.CONTACT_MSG_RECV` - Direct message received
+- `EventType.CHANNEL_MSG_RECV` - Channel message received
+- `EventType.STATUS_RESPONSE` - Repeater status updates
+- `EventType.MSG_SENT` - Message sent confirmation
+
+### Specific Message Events
+
+In addition to raw events, the integration fires specific events for common operations:
+
+- `meshcore_message`: Fired when a message is received (either channel or direct)
+- `meshcore_message_sent`: Fired when a message is sent through the integration services
 
 ## Automation Examples
 
@@ -242,9 +292,9 @@ trigger:
   - platform: time_pattern
     minutes: "/15"  # Every 15 minutes
 action:
-  - service: meshcore.cli_command
+  - service: meshcore.execute_command
     data:
-      command: "advert"  # Or you can use the shorthand "a"
+      command: "send_advert"
 mode: single
 ```
 
@@ -316,23 +366,23 @@ cards:
     icon_height: 24px
 ```
 
-### CLI Command Card
+### Command Card
 
-This card provides a simple interface for executing CLI commands:
+This card provides a simple interface for executing MeshCore commands:
 
 ```yaml
 type: vertical-stack
 cards:
   - type: entities
     entities:
-      - entity: text.meshcore_cli_command
-        name: CLI Command
+      - entity: text.meshcore_command
+        name: MeshCore Command
   - show_name: true
     show_icon: true
     type: button
     tap_action:
       action: call-service
-      service: meshcore.execute_cli_command_ui
+      service: meshcore.execute_command_ui
     name: Execute Command
     icon: mdi:console
     icon_height: 24px

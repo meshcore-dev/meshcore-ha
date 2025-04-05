@@ -76,13 +76,27 @@ send_ui_message:
       selector:
         text:
 
-execute_cli_command_ui:
-  name: Execute CLI Command from UI
+execute_command:
+  name: Execute MeshCore Command
   description: >-
-    Execute a CLI command using the text.meshcore_cli_command helper entity.
-    This service reads the command from the text helper and executes it.
-    It will automatically clear the input field after execution.
+    Execute a command provided by the MeshCore Python library. This is an advanced feature
+    that provides direct access to the underlying commands interface.
+    CAUTION: Some commands will make PERMANENT CHANGES to your node's configuration. Use with care.
   fields:
+    command:
+      name: Command
+      description: >-
+        The command with parameters to execute. Format is "[command_name] [param1] [param2] ..."
+        Examples:
+        - set_name "MyDevice"
+        - send_msg "f293ac" "Hello from Home Assistant!"
+        - get_bat
+        - set_tx_power 20
+        - set_coords 37.7749 -122.4194
+      required: true
+      example: "set_name \"MyDevice\""
+      selector:
+        text:
     entry_id:
       name: Config Entry ID
       description: The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device.
@@ -91,23 +105,13 @@ execute_cli_command_ui:
       selector:
         text:
 
-cli_command:
-  name: Send CLI command
+execute_command_ui:
+  name: Execute Command from UI
   description: >-
-    Send an arbitrary CLI command directly to the MeshCore node. This is an advanced feature
-    that provides direct access to the underlying CLI interface.
-    CAUTION: Commands like 'set_txpower', 'set_name', 'set_radio', 'reboot', etc. will 
-    make PERMANENT CHANGES to your node's configuration. Use with care.
+    Execute a command using the text.meshcore_command helper entity.
+    This service reads the command from the text helper and executes it.
+    It will automatically clear the input field after execution.
   fields:
-    command:
-      name: Command
-      description: >-
-        The CLI command to send to the node.
-        examples: advert, change_path <ct> <path>, set_name <n>, sync_time, etc.
-      required: true
-      example: "advert"
-      selector:
-        text:
     entry_id:
       name: Config Entry ID
       description: The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device.

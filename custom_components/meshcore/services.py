@@ -3,28 +3,29 @@ import logging
 import time
 import voluptuous as vol
 import json
+import shlex
 from typing import Any, Dict, Optional
 
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
 from homeassistant.const import MAJOR_VERSION
+from meshcore.events import EventType
 
 from .const import (
     ATTR_PUBKEY_PREFIX,
     DOMAIN, 
     SERVICE_SEND_MESSAGE,
     SERVICE_SEND_CHANNEL_MESSAGE,
-    SERVICE_CLI_COMMAND,
+    SERVICE_EXECUTE_COMMAND,
+    SERVICE_EXECUTE_COMMAND_UI,
     SERVICE_MESSAGE_SCRIPT,
-    SERVICE_EXECUTE_CLI_COMMAND_UI,
     ATTR_NODE_ID,
     ATTR_CHANNEL_IDX,
     ATTR_MESSAGE,
-    ATTR_CLI_COMMAND,
+    ATTR_COMMAND,
     ATTR_ENTRY_ID,
     DEFAULT_DEVICE_NAME,
 )
-from .logbook import handle_log_message
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,10 +48,10 @@ SEND_CHANNEL_MESSAGE_SCHEMA = vol.Schema(
     }
 )
 
-# Schema for cli_command service
-CLI_COMMAND_SCHEMA = vol.Schema(
+# Schema for execute_command service
+EXECUTE_COMMAND_SCHEMA = vol.Schema(
     {
-        vol.Required(ATTR_CLI_COMMAND): cv.string,
+        vol.Required(ATTR_COMMAND): cv.string,
         vol.Optional(ATTR_ENTRY_ID): cv.string,
     }
 )
@@ -91,51 +92,55 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                 
             # Get the API from coordinator
             api = coordinator.api
-            if api and api._connected:
+            if api and api.connected:
                 try:
                     _LOGGER.debug(
                         "Sending message to %s: %s", target_identifier, message
                     )
                     
+                    # Get the contact object
+                    contact = None
+                    contact_name = None
                     if node_id is not None:
-                        # Send the message by node name
-                        success, pubkey, contact_name = await api.send_message(node_id, message)
+                        # Find contact by name
+                        contact = api.mesh_core.get_contact_by_name(node_id)
+                        if not contact:
+                            _LOGGER.error(f"Contact with name '{node_id}' not found")
+                            continue
                     else:
-                        # Send the message by pubkey prefix
-                        success, pubkey, contact_name = await api.send_message_by_pubkey(pubkey_prefix, message)
-                    if success:
+                        # Find contact by pubkey prefix
+                        contact = api.mesh_core.get_contact_by_key_prefix(pubkey_prefix)
+                        if not contact:
+                            _LOGGER.error(f"Contact with pubkey prefix '{pubkey_prefix}' not found")
+                            continue
+                    
+                    # Send the message using the new API
+                    result = await api.mesh_core.commands.send_msg(contact, message)
+                    
+                    if result.type == EventType.ERROR:
+                        _LOGGER.warning(
+                            "Failed to send message to %s: %s", target_identifier, result.payload
+                        )
+                    else:
                         # Use the actual contact name for logging when available
                         display_name = contact_name if contact_name else target_identifier
+                        pubkey = contact.get("public_key", "Unknown")
                         _LOGGER.info("Successfully sent message to %s, pubkey: %s", display_name, pubkey)
                         
-                        # Get device name from coordinator for outgoing message logs
-                        device_name = DEFAULT_DEVICE_NAME
-                        if hasattr(coordinator, "data") and "name" in coordinator.data:
-                            device_name = coordinator.data.get("name", DEFAULT_DEVICE_NAME)
-                        
-                        # Determine the receiver name for the logbook
-                        receiver_name = contact_name if contact_name else (node_id if node_id else f"pubkey:{pubkey_prefix}")
-                        
-                        # Log outgoing message to logbook with the contact's public key
+                        # Create outgoing message event data
                         outgoing_msg = {
-                            "msg": message,
-                            "sender": device_name,
-                            "sender_name": device_name,
-                            "receiver": receiver_name,
-                            "type": "PRIV",
+                            "message": message,
+                            "device": config_entry_id,
+                            "message_type": "direct",
+                            "receiver": contact.get("name"),
                             "timestamp": int(time.time()),
-                            "outgoing": True,
-                            # Include the contact's public key - most critical for entity_id generation
                             "contact_public_key": pubkey
                         }
-                        handle_log_message(hass, outgoing_msg)
-                    else:
-                        _LOGGER.warning(
-                            "Failed to send message to node %s", node_id
-                        )
+                        # Fire event for outgoing message to update message-related entities
+                        hass.bus.async_fire(f"{DOMAIN}_message_sent", outgoing_msg)
                 except Exception as ex:
                     _LOGGER.error(
-                        "Error sending message to node %s: %s", node_id, ex
+                        "Error sending message to %s: %s", target_identifier, ex
                     )
                 # Only attempt with the first available API if no entry_id specified
                 if not entry_id:
@@ -149,45 +154,42 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         
         # Iterate through all registered config entries
         for config_entry_id, coordinator in hass.data[DOMAIN].items():
-            _LOGGER.debug("Entry ID: %s, coordinator: %s", config_entry_id, coordinator)
+            _LOGGER.debug("Entry ID: %s, coordinator: %s", config_entry_id, coordinator.name)
             # If entry_id is specified, only use the matching entry
             if entry_id and entry_id != config_entry_id:
                 continue
                 
             # Get the API from coordinator
             api = coordinator.api
-            if api and api._connected:
+            if api and api.connected:
                 try:
                     _LOGGER.debug(
                         "Sending message to channel %s: %s", channel_idx, message
                     )
-                    success = await api.send_channel_message(channel_idx, message)
-                    if success:
+                    
+                    # Send the channel message using the new API
+                    result = await api.mesh_core.commands.send_chan_msg(channel_idx, message)
+                    
+                    if result.type == EventType.ERROR:
+                        _LOGGER.warning(
+                            "Failed to send message to channel %s: %s", channel_idx, result.payload
+                        )
+                    else:
                         _LOGGER.info(
                             "Successfully sent message to channel %s", channel_idx
                         )
                         
-                        # Get device name from coordinator for outgoing message logs
-                        device_name = DEFAULT_DEVICE_NAME
-                        if hasattr(coordinator, "data") and "name" in coordinator.data:
-                            device_name = coordinator.data.get("name", DEFAULT_DEVICE_NAME)
-                        
-                        # Log outgoing message to logbook
+                        # Create outgoing message event data
                         outgoing_msg = {
-                            "msg": message,
-                            "sender": device_name,
-                            "sender_name": device_name,
+                            "message": message,
+                            "device": config_entry_id,
+                            "message_type": "channel",
                             "receiver": f"channel_{channel_idx}",
-                            "type": "CHAN",
-                            "channel_idx": channel_idx,
                             "timestamp": int(time.time()),
-                            "outgoing": True,
+                            "channel_idx": channel_idx
                         }
-                        handle_log_message(hass, outgoing_msg)
-                    else:
-                        _LOGGER.warning(
-                            "Failed to send message to channel %s", channel_idx
-                        )
+                        # Fire event for outgoing message to update message-related entities
+                        hass.bus.async_fire(f"{DOMAIN}_message_sent", outgoing_msg)
                 except Exception as ex:
                     _LOGGER.error(
                         "Error sending message to channel %s: %s", channel_idx, ex
@@ -196,52 +198,52 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                 if not entry_id:
                     return
     
-    async def async_cli_command_service(call: ServiceCall) -> None:
-        """Handle CLI command service call."""
-        command = call.data[ATTR_CLI_COMMAND]
-        entry_id = call.data.get(ATTR_ENTRY_ID)
+    # async def async_cli_command_service(call: ServiceCall) -> None:
+    #     """Handle CLI command service call."""
+    #     command = call.data[ATTR_CLI_COMMAND]
+    #     entry_id = call.data.get(ATTR_ENTRY_ID)
         
-        # Track if any command executed successfully
-        command_success = False
+    #     # Track if any command executed successfully
+    #     command_success = False
         
-        # Iterate through all registered config entries
-        for config_entry_id, coordinator in hass.data[DOMAIN].items():            
-            # If entry_id is specified, only use the matching entry
-            if entry_id and entry_id != config_entry_id:
-                continue
+    #     # Iterate through all registered config entries
+    #     for config_entry_id, coordinator in hass.data[DOMAIN].items():            
+    #         # If entry_id is specified, only use the matching entry
+    #         if entry_id and entry_id != config_entry_id:
+    #             continue
                 
-            # Get the API from coordinator
-            api = coordinator.api
-            if api and api._connected:
-                try:
-                    _LOGGER.debug(
-                        "Executing CLI command: %s", command
-                    )
+    #         # Get the API from coordinator
+    #         api = coordinator.api
+    #         if api and api._connected:
+    #             try:
+    #                 _LOGGER.debug(
+    #                     "Executing CLI command: %s", command
+    #                 )
                     
-                    result = await api.send_cli_command(command)
+    #                 result = await api.send_cli_command(command)
                     
-                    if result.get("success", False):
-                        command_success = True
-                        _LOGGER.info(
-                            "Successfully executed CLI command: %s", command
-                        )
-                    else:
-                        _LOGGER.warning(
-                            "CLI command execution failed: %s, error: %s", 
-                            command, result.get("error", "Unknown error")
-                        )
+    #                 if result.get("success", False):
+    #                     command_success = True
+    #                     _LOGGER.info(
+    #                         "Successfully executed CLI command: %s", command
+    #                     )
+    #                 else:
+    #                     _LOGGER.warning(
+    #                         "CLI command execution failed: %s, error: %s", 
+    #                         command, result.get("error", "Unknown error")
+    #                     )
                         
-                except Exception as ex:
-                    _LOGGER.error(
-                        "Error executing CLI command %s: %s", command, ex
-                    )
+    #             except Exception as ex:
+    #                 _LOGGER.error(
+    #                     "Error executing CLI command %s: %s", command, ex
+    #                 )
                 
-                # Only attempt with the first available API if no entry_id specified
-                if not entry_id:
-                    return
+    #             # Only attempt with the first available API if no entry_id specified
+    #             if not entry_id:
+    #                 return
         
-        if not command_success:
-            _LOGGER.error("Failed to execute CLI command on any device: %s", command)
+    #     if not command_success:
+    #         _LOGGER.error("Failed to execute CLI command on any device: %s", command)
 
     # Create combined message script service
     async def async_message_script_service(call: ServiceCall) -> None:
@@ -333,6 +335,213 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         except Exception as ex:
             _LOGGER.warning(f"Could not clear message input: {ex}")
     
+    async def async_execute_command_service(call: ServiceCall) -> None:
+        """Handle execute command service call."""
+        command_str = call.data[ATTR_COMMAND]
+        entry_id = call.data.get(ATTR_ENTRY_ID)
+        
+        # Parse the command using shlex to handle quoted arguments properly
+        try:
+            parts = shlex.split(command_str)
+        except Exception as ex:
+            _LOGGER.error("Error parsing command: %s", ex)
+            return
+            
+        if not parts:
+            _LOGGER.error("No command specified")
+            return
+            
+        # Extract the command name and arguments
+        command_name = parts[0]
+        arguments = parts[1:]
+        
+        _LOGGER.debug("Executing command: %s with arguments: %s", command_name, arguments)
+        
+        # Iterate through all registered config entries
+        for config_entry_id, coordinator in hass.data[DOMAIN].items():            
+            # If entry_id is specified, only use the matching entry
+            if entry_id and entry_id != config_entry_id:
+                continue
+                
+            # Get the API from coordinator
+            api = coordinator.api
+            if api and api.connected:
+                try:
+                    # Get the command method from the commands object
+                    command_method = getattr(api.mesh_core.commands, command_name, None)
+                    
+                    if not command_method:
+                        _LOGGER.error("Command not found: %s", command_name)
+                        continue
+                    
+                    # Define known command parameter types
+                    # Format: {command_name: [param1_type, param2_type, ...]}
+                    command_param_types = {
+                        # Commands with no parameters
+                        "send_appstart": [],
+                        "send_device_query": [],
+                        "reboot": [],
+                        "get_bat": [],
+                        "get_time": [],
+                        "get_contacts": [],
+                        
+                        # Commands taking DestinationType (contact)
+                        "send_login": ["contact", "str"],
+                        "send_logout": ["contact"],
+                        "send_statusreq": ["contact"],
+                        "send_telemetry_req": ["contact"],
+                        "reset_path": ["contact"],
+                        "share_contact": ["contact"],
+                        "export_contact": ["contact"],
+                        "remove_contact": ["contact"],
+                        
+                        # Commands taking other parameter types
+                        "send_advert": ["bool"],
+                        "set_name": ["str"],
+                        "set_time": ["int"],
+                        "set_tx_power": ["int"],
+                        "set_devicepin": ["int"],
+                        "set_coords": ["float", "float"],
+                        "set_radio": ["float", "float", "int", "int"],
+                        "set_tuning": ["int", "int"],
+                        "set_telemetry_mode_base": ["int"],
+                        "set_telemetry_mode_loc": ["int"],
+                        "set_manual_add_contacts": ["bool"],
+                        "set_other_params": ["bool", "int", "int"],
+                        
+                        # Commands with multiple parameters
+                        "send_msg": ["contact", "str"],
+                        "send_chan_msg": ["int", "str"],
+                        "send_cmd": ["contact", "str"],
+                        "change_contact_path": ["contact", "str"]
+                    }
+                    
+                    # Get parameter types for this command
+                    param_types = command_param_types.get(command_name, [])
+                    
+                    # Prepare arguments with proper types
+                    prepared_args = []
+                    
+                    # Process each argument according to the expected parameter type
+                    for i, arg in enumerate(arguments):
+                        param_type = param_types[i] if i < len(param_types) else "str"
+                        
+                        if param_type == "contact":
+                            # For contact params, try to get contact by key prefix
+                            if len(arg) >= 6:  # Ensure it's a reasonable pubkey prefix
+                                contact = api.mesh_core.get_contact_by_key_prefix(arg)
+                                if contact:
+                                    prepared_args.append(contact)
+                                else:
+                                    # If no contact found, try by name
+                                    contact = api.mesh_core.get_contact_by_name(arg)
+                                    if contact:
+                                        prepared_args.append(contact)
+                                    else:
+                                        _LOGGER.error(f"Contact not found with key or name: {arg}")
+                                        return
+                            else:
+                                _LOGGER.error(f"Invalid pubkey prefix length: {arg}")
+                                return
+                                
+                        elif param_type == "int":
+                            # Convert to integer
+                            try:
+                                prepared_args.append(int(arg))
+                            except ValueError:
+                                _LOGGER.error(f"Could not convert '{arg}' to integer")
+                                return
+                                
+                        elif param_type == "float":
+                            # Convert to float
+                            try:
+                                prepared_args.append(float(arg))
+                            except ValueError:
+                                _LOGGER.error(f"Could not convert '{arg}' to float")
+                                return
+                                
+                        elif param_type == "bool":
+                            # Handle boolean parameters
+                            if arg.lower() in ('true', 'yes', 'y', '1'):
+                                prepared_args.append(True)
+                            elif arg.lower() in ('false', 'no', 'n', '0'):
+                                prepared_args.append(False)
+                            else:
+                                _LOGGER.error(f"Could not convert '{arg}' to boolean")
+                                return
+                        
+                        else:
+                            # For any other type, pass the argument as is
+                            prepared_args.append(arg)
+                    
+                    # Execute the command with the converted arguments
+                    _LOGGER.debug(f"Executing {command_name} with prepared arguments: {prepared_args}")
+                    result = await command_method(*prepared_args)
+                    
+                    # Convert any binary data to hex strings for logging and events
+                    if hasattr(result, 'payload') and isinstance(result.payload, dict):
+                        # Create a JSON-serializable version of the payload
+                        json_safe_payload = {}
+                        for key, value in result.payload.items():
+                            if isinstance(value, bytes):
+                                json_safe_payload[key] = value.hex()
+                            else:
+                                json_safe_payload[key] = value
+                        
+                        # Log only the JSON-safe version
+                        _LOGGER.info("Command result: %s with payload: %s", 
+                                    result.type, json_safe_payload)
+                    else:
+                        _LOGGER.info("Command result: %s", result)
+                    
+                    return
+                    
+                except Exception as ex:
+                    _LOGGER.error("Error executing command %s: %s", command_name, ex)
+                
+                # Only attempt with the first available API if no entry_id specified
+                if not entry_id:
+                    return
+        
+        _LOGGER.error("Failed to execute command on any device: %s", command_name)
+    
+    async def async_execute_command_ui_service(call: ServiceCall) -> None:
+        """Execute command from the text helper entity."""
+        entry_id = call.data.get(ATTR_ENTRY_ID)
+        
+        # Get command from command text entity
+        command_entity = hass.states.get("text.meshcore_command")
+        if not command_entity:
+            _LOGGER.error("Command input helper not found: text.meshcore_command")
+            return
+            
+        command = command_entity.state
+        
+        if not command:
+            _LOGGER.warning("No command to execute - command input is empty")
+            return
+        
+        # Create command service call
+        command_call = create_service_call(
+            DOMAIN, 
+            SERVICE_EXECUTE_COMMAND, 
+            {"command": command, "entry_id": entry_id}
+        )
+        
+        # Execute the command
+        await async_execute_command_service(command_call)
+        
+        # Clear the command input after execution
+        try:
+            await hass.services.async_call(
+                "text", 
+                "set_value", 
+                {"entity_id": "text.meshcore_command", "value": ""},
+                blocking=False
+            )
+        except Exception as ex:
+            _LOGGER.warning(f"Could not clear command input: {ex}")
+
     # Register services
     hass.services.async_register(
         DOMAIN,
@@ -348,12 +557,27 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         schema=SEND_CHANNEL_MESSAGE_SCHEMA,
     )
     
+    # Register the execute command services
     hass.services.async_register(
         DOMAIN,
-        SERVICE_CLI_COMMAND,
-        async_cli_command_service,
-        schema=CLI_COMMAND_SCHEMA,
+        SERVICE_EXECUTE_COMMAND,
+        async_execute_command_service,
+        schema=EXECUTE_COMMAND_SCHEMA,
     )
+    
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_EXECUTE_COMMAND_UI,
+        async_execute_command_ui_service,
+        schema=UI_MESSAGE_SCHEMA,
+    )
+    
+    # hass.services.async_register(
+    #     DOMAIN,
+    #     SERVICE_CLI_COMMAND,
+    #     async_cli_command_service,
+    #     schema=CLI_COMMAND_SCHEMA,
+    # )
     
     # Register the combined UI message service
     hass.services.async_register(
@@ -364,50 +588,50 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     )
     
     # Create CLI command execution service from UI helper
-    async def async_execute_cli_command_ui(call: ServiceCall) -> None:
-        """Execute CLI command from the text helper entity."""
-        entry_id = call.data.get(ATTR_ENTRY_ID)
+    # async def async_execute_cli_command_ui(call: ServiceCall) -> None:
+    #     """Execute CLI command from the text helper entity."""
+    #     entry_id = call.data.get(ATTR_ENTRY_ID)
         
-        # Get command from CLI command text entity
-        cli_command_entity = hass.states.get("text.meshcore_cli_command")
-        if not cli_command_entity:
-            _LOGGER.error("CLI command input helper not found: text.meshcore_cli_command")
-            return
+    #     # Get command from CLI command text entity
+    #     cli_command_entity = hass.states.get("text.meshcore_cli_command")
+    #     if not cli_command_entity:
+    #         _LOGGER.error("CLI command input helper not found: text.meshcore_cli_command")
+    #         return
             
-        command = cli_command_entity.state
+    #     command = cli_command_entity.state
         
-        if not command:
-            _LOGGER.warning("No command to execute - CLI input is empty")
-            return
+    #     if not command:
+    #         _LOGGER.warning("No command to execute - CLI input is empty")
+    #         return
         
-        # Create CLI command service call
-        cli_call = create_service_call(
-            DOMAIN, 
-            SERVICE_CLI_COMMAND, 
-            {"command": command, "entry_id": entry_id}
-        )
+    #     # Create CLI command service call
+    #     cli_call = create_service_call(
+    #         DOMAIN, 
+    #         SERVICE_CLI_COMMAND, 
+    #         {"command": command, "entry_id": entry_id}
+    #     )
         
-        # Execute the CLI command
-        await async_cli_command_service(cli_call)
+    #     # Execute the CLI command
+    #     await async_cli_command_service(cli_call)
         
-        # Clear the command input after execution
-        try:
-            await hass.services.async_call(
-                "text", 
-                "set_value", 
-                {"entity_id": "text.meshcore_cli_command", "value": ""},
-                blocking=False
-            )
-        except Exception as ex:
-            _LOGGER.warning(f"Could not clear CLI command input: {ex}")
+    #     # Clear the command input after execution
+    #     try:
+    #         await hass.services.async_call(
+    #             "text", 
+    #             "set_value", 
+    #             {"entity_id": "text.meshcore_cli_command", "value": ""},
+    #             blocking=False
+    #         )
+    #     except Exception as ex:
+    #         _LOGGER.warning(f"Could not clear CLI command input: {ex}")
     
     # Register the CLI command execution service
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_EXECUTE_CLI_COMMAND_UI,
-        async_execute_cli_command_ui,
-        schema=UI_MESSAGE_SCHEMA,
-    )
+    # hass.services.async_register(
+    #     DOMAIN,
+    #     SERVICE_EXECUTE_CLI_COMMAND_UI,
+    #     async_execute_cli_command_ui,
+    #     schema=UI_MESSAGE_SCHEMA,
+    # )
 
 async def async_unload_services(hass: HomeAssistant) -> None:
     """Unload MeshCore services."""
@@ -417,14 +641,17 @@ async def async_unload_services(hass: HomeAssistant) -> None:
     if hass.services.has_service(DOMAIN, SERVICE_SEND_CHANNEL_MESSAGE):
         hass.services.async_remove(DOMAIN, SERVICE_SEND_CHANNEL_MESSAGE)
         
-    if hass.services.has_service(DOMAIN, SERVICE_CLI_COMMAND):
-        hass.services.async_remove(DOMAIN, SERVICE_CLI_COMMAND)
+    # if hass.services.has_service(DOMAIN, SERVICE_CLI_COMMAND):
+    #     hass.services.async_remove(DOMAIN, SERVICE_CLI_COMMAND)
         
     if hass.services.has_service(DOMAIN, SERVICE_MESSAGE_SCRIPT):
         hass.services.async_remove(DOMAIN, SERVICE_MESSAGE_SCRIPT)
         
-    if hass.services.has_service(DOMAIN, SERVICE_EXECUTE_CLI_COMMAND_UI):
-        hass.services.async_remove(DOMAIN, SERVICE_EXECUTE_CLI_COMMAND_UI)
+    if hass.services.has_service(DOMAIN, SERVICE_EXECUTE_COMMAND):
+        hass.services.async_remove(DOMAIN, SERVICE_EXECUTE_COMMAND)
+        
+    if hass.services.has_service(DOMAIN, SERVICE_EXECUTE_COMMAND_UI):
+        hass.services.async_remove(DOMAIN, SERVICE_EXECUTE_COMMAND_UI)
 
 
 def create_service_call(
