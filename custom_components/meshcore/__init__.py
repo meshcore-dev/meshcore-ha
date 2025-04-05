@@ -382,13 +382,9 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                             self.logger.debug(f"Skipping room server ping to {repeater_name} - last ping was {time_since_ping:.1f}s ago")
                 else:
                     self.logger.error(f"Failed to login to repeater: {repeater_name} - using password: {'yes' if password else 'no (guest)'}")
-                    # Update timestamp even on failure to avoid hammering with login attempts
-                    self._last_repeater_updates[repeater_name] = current_time
-                    continue
             else:
                 self.logger.debug(f"No login needed for {repeater_name} - last login was {time_since_login:.1f}s ago")
             
-            # Get stats from the repeater
             try:
                 self.logger.info(f"Fetching stats from repeater: {repeater_name}")
                 stats = await self.api.get_repeater_stats(repeater_name)
@@ -413,17 +409,13 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     # Add the stats to our results
                     self._repeater_stats[repeater_name] = stats
                     all_repeater_stats[repeater_name] = stats
-                    # Update last update time
-                    self._last_repeater_updates[repeater_name] = current_time
                     self.logger.info(f"Successfully updated stats for repeater: {repeater_name}")
                 else:
                     self.logger.warning(f"No stats received for repeater: {repeater_name}")
-                    # Update timestamp even on empty results to avoid constant retries
-                    self._last_repeater_updates[repeater_name] = current_time
             except Exception as ex:
                 self.logger.error(f"Error fetching stats for repeater {repeater_name}: {ex}")
-                # Update timestamp even on error to avoid constant retries
-                self._last_repeater_updates[repeater_name] = current_time
+            
+            self._last_repeater_updates[repeater_name] = current_time
         
         # Add all repeater stats to the result data
         if all_repeater_stats:
