@@ -660,8 +660,8 @@ class MeshCore:
         adv_name_hex = adv_name_hex + (64-len(adv_name_hex)) * "0"
         data = b"\x09" \
             + bytes.fromhex(contact["public_key"])\
-            + contact["type"].to_bytes(1)\
-            + contact["flags"].to_bytes(1)\
+            + contact["type"].to_bytes(1, 'little')\
+            + contact["flags"].to_bytes(1, 'little')\
             + contact["out_path_len"].to_bytes(1, 'little', signed=True)\
             + bytes.fromhex(out_path_hex)\
             + bytes.fromhex(adv_name_hex)\
