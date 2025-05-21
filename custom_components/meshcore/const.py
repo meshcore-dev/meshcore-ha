@@ -13,6 +13,8 @@ CONF_TCP_PORT: Final = "tcp_port"
 CONF_BAUDRATE: Final = "baudrate"
 DEFAULT_BAUDRATE: Final = 115200
 DEFAULT_TCP_PORT: Final = 5000
+CONF_NAME: Final = "name"
+CONF_PUBKEY: Final = "pubkey"
 
 # Connection type options
 CONNECTION_TYPE_USB: Final = "usb"
@@ -26,14 +28,14 @@ DEFAULT_SCAN_INTERVAL: Final = 30  # seconds
 # Services
 SERVICE_SEND_MESSAGE: Final = "send_message"
 SERVICE_SEND_CHANNEL_MESSAGE: Final = "send_channel_message"
-SERVICE_CLI_COMMAND: Final = "cli_command"
+SERVICE_EXECUTE_COMMAND: Final = "execute_command"
+SERVICE_EXECUTE_COMMAND_UI: Final = "execute_command_ui"
 SERVICE_MESSAGE_SCRIPT: Final = "send_ui_message"
-SERVICE_EXECUTE_CLI_COMMAND_UI: Final = "execute_cli_command_ui"
 ATTR_NODE_ID: Final = "node_id"
 ATTR_PUBKEY_PREFIX: Final = "pubkey_prefix"
 ATTR_CHANNEL_IDX: Final = "channel_idx"
 ATTR_MESSAGE: Final = "message"
-ATTR_CLI_COMMAND: Final = "command"
+ATTR_COMMAND: Final = "command"
 ATTR_ENTRY_ID: Final = "entry_id"
 
 # Platform constants
@@ -53,13 +55,14 @@ CONF_REPEATER_NAME: Final = "repeater_name"
 CONF_REPEATER_PASSWORD: Final = "repeater_password"
 CONF_REPEATER_UPDATE_INTERVAL: Final = "repeater_update_interval"
 DEFAULT_REPEATER_UPDATE_INTERVAL: Final = 300  # 5 minutes in seconds
+REPEATER_UPDATE_TASK_TIMEOUT: Final = 30  # 30 seconds timeout for update tasks
+MAX_REPEATER_FAILURES_BEFORE_LOGIN: Final = 3  # After this many failures, try login
 
 # Update intervals for different data types
 CONF_INFO_INTERVAL: Final = "info_interval"  # For both node info and contacts
 CONF_MESSAGES_INTERVAL: Final = "messages_interval"
 
-DEFAULT_INFO_INTERVAL: Final = 60  # 1 minute in seconds
-DEFAULT_MESSAGES_INTERVAL: Final = 10   # 10 seconds - base polling interval
+DEFAULT_MESSAGES_INTERVAL: Final = 5   # base polling interval
 
 # Other constants
 CONNECTION_TIMEOUT: Final = 10  # seconds

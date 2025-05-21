@@ -24,7 +24,7 @@ async def async_setup_entry(
     """Set up MeshCore text entities from a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
     
-    entities = [MeshCoreMessageInput(coordinator), MeshCoreCliCommandInput(coordinator)]
+    entities = [MeshCoreMessageInput(coordinator), MeshCoreCommandInput(coordinator)]
     async_add_entities(entities)
 
 
@@ -62,19 +62,19 @@ class MeshCoreMessageInput(CoordinatorEntity, TextEntity):
         self.async_write_ha_state()
 
 
-class MeshCoreCliCommandInput(CoordinatorEntity, TextEntity):
-    """Text input entity for CLI commands."""
+class MeshCoreCommandInput(CoordinatorEntity, TextEntity):
+    """Text input entity for MeshCore commands."""
     
     def __init__(self, coordinator: DataUpdateCoordinator) -> None:
-        """Initialize the CLI command input entity."""
+        """Initialize the command input entity."""
         super().__init__(coordinator)
         
         # Set unique ID and entity ID
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_cli_command_input"
-        self.entity_id = "text.meshcore_cli_command"
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_command_input"
+        self.entity_id = "text.meshcore_command"
         
         # Set name and icon
-        self._attr_name = "MeshCore CLI Command"
+        self._attr_name = "MeshCore Command"
         self._attr_icon = "mdi:console"
         
         # Hide from device page

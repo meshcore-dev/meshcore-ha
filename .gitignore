@@ -1,3 +1,5 @@
 sync-to-ha.sh
 .DS_Store
 script_venv
+.venv
+**/.claude/settings.local.json

@@ -114,41 +114,47 @@ class MeshCoreContactSelect(CoordinatorEntity, SelectEntity):
         self._attr_entity_registry_visible_default = False
     
     def _get_contact_options(self) -> List[str]:
-        """Get the list of contact options from the coordinator."""
-        if not self.coordinator.data or not isinstance(self.coordinator.data, dict):
+        """Get the list of contact options directly from the API."""
+        # Check if we have access to the API and mesh_core
+        if not hasattr(self.coordinator, "api") or not self.coordinator.api or not self.coordinator.api.mesh_core:
             return ["No contacts"]
             
-        contacts = self.coordinator.data.get("contacts", [])
-        if not contacts:
+        try:
+            # Access contacts directly from the mesh_core API
+            contacts = self.coordinator.api.mesh_core.contacts.values()
+            if not contacts:
+                return ["No contacts"]
+                
+            # Include only client type contacts, not repeaters
+            contact_options = []
+            
+            for contact in contacts:
+                if not isinstance(contact, dict):
+                    continue
+                    
+                # Skip repeaters, only include clients
+                if contact.get("type") == NodeType.REPEATER:
+                    continue
+                    
+                # Get contact name
+                name = contact.get("adv_name", "Unknown")
+                public_key = contact.get("public_key", "")
+                
+                if not public_key:
+                    continue
+                    
+                # Format as "Name (pubkey12345)"
+                option = f"{name} ({public_key[:12]})"
+                contact_options.append(option)
+            
+            # Add a default option if no contacts found
+            if not contact_options:
+                return ["No contacts"]
+                
+            return contact_options
+        except Exception as ex:
+            _LOGGER.error(f"Error getting contacts from API: {ex}")
             return ["No contacts"]
-            
-        # Include only client type contacts, not repeaters
-        contact_options = []
-        
-        for contact in contacts:
-            if not isinstance(contact, dict):
-                continue
-                
-            # Skip repeaters, only include clients
-            if contact.get("type") == NodeType.REPEATER:
-                continue
-                
-            # Get contact name
-            name = contact.get("adv_name", "Unknown")
-            public_key = contact.get("public_key", "")
-            
-            if not public_key:
-                continue
-                
-            # Format as "Name (pubkey12345)"
-            option = f"{name} ({public_key[:12]})"
-            contact_options.append(option)
-        
-        # Add a default option if no contacts found
-        if not contact_options:
-            return ["No contacts"]
-            
-        return contact_options
     
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -181,18 +187,16 @@ class MeshCoreContactSelect(CoordinatorEntity, SelectEntity):
                     pubkey_part = self._attr_current_option.split("(")[1].split(")")[0]
                     attributes["public_key_prefix"] = pubkey_part
                     
-                    # Find the full public key
-                    contacts = self.coordinator.data.get("contacts", [])
-                    for contact in contacts:
-                        if contact.get("public_key", "").startswith(pubkey_part):
+                    # Find the full contact details from the API
+                    if hasattr(self.coordinator, "api") and self.coordinator.api and self.coordinator.api.mesh_core:
+                        contact = self.coordinator.api.mesh_core.get_contact_by_key_prefix(pubkey_part)
+                        if contact:
                             attributes["public_key"] = contact.get("public_key")
                             attributes["contact_name"] = contact.get("adv_name")
-                            break
-            except (IndexError, AttributeError):
-                pass
+            except (IndexError, AttributeError, Exception) as ex:
+                _LOGGER.error(f"Error retrieving contact details: {ex}")
                 
         return attributes
-
 
 
 class MeshCoreRecipientTypeSelect(CoordinatorEntity, SelectEntity):

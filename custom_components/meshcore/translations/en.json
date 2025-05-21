@@ -6,7 +6,10 @@
     "error": {
       "cannot_connect": "Failed to connect",
       "unknown": "Unexpected error",
-      "already_configured": "Repeater is already configured"
+      "already_configured": "Repeater is already configured",
+      "login_failed": "Failed to log in to repeater. Check password and try again.",
+      "login_timeout": "Timed out waiting for login response",
+      "contact_not_found": "Contact not found"
     },
     "title": "MeshCore",
     "step": {
@@ -58,7 +61,7 @@
           "repeater_password": "Password (leave empty for guest login)",
           "repeater_update_interval": "Repeater Stats Update Interval (seconds)"
         },
-        "description": "Select a repeater from your contacts list to monitor",
+        "description": "Select a repeater from your contacts list to monitor.",
         "title": "Add Repeater Subscription"
       }
     }

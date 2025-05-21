@@ -1,7 +1,7 @@
 """Utility functions for the MeshCore integration."""
 from __future__ import annotations
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
@@ -41,21 +41,6 @@ def sanitize_name(name: str, replace_hyphens: bool = True) -> str:
     if replace_hyphens:
         safe_name = safe_name.replace("-", "_")
     return safe_name.replace("__", "_")
-
-def get_device_key(coordinator: DataUpdateCoordinator, default: str = "") -> str:
-    """Get the sanitized device name from coordinator data."""
-    if not coordinator or not hasattr(coordinator, "data") or not coordinator.data:
-        return sanitize_name(default)
-        
-    return coordinator.data.get("public_key", default)
-
-def get_device_name(coordinator: DataUpdateCoordinator, default: str = DEFAULT_DEVICE_NAME) -> str:
-    """Get the sanitized device name from coordinator data."""
-    if not coordinator or not hasattr(coordinator, "data") or not coordinator.data:
-        return sanitize_name(default)
-        
-    raw_name = coordinator.data.get("name", default)
-    return sanitize_name(raw_name)
 
 
 def format_entity_id(domain: str, device_name: str, entity_key: str, suffix: str = "") -> str:
@@ -108,21 +93,29 @@ def extract_channel_idx(entity_key: str) -> int:
     return 0  # Default to channel 0 on error
 
 
-def find_coordinator_with_device_name(hass_data: Dict[str, Any]) -> tuple[Optional[DataUpdateCoordinator], str]:
-    """Find a coordinator with device name information.
+def sanitize_event_data(data: Any) -> Any:
+    """Make event data JSON serializable by converting bytes to hex strings.
     
+    This function recursively processes dictionaries, lists and other data types
+    to ensure they're safe for serialization in Home Assistant events.
+    
+    Args:
+        data: The event data to sanitize
+        
     Returns:
-        Tuple of (coordinator, device_name)
+        JSON-serializable version of the data with bytes converted to hex strings
     """
-    device_name = DEFAULT_DEVICE_NAME
-    coordinator = None
-    
-    # Look through all coordinators to find one with a device name
-    if hass_data and DOMAIN in hass_data:
-        for entry_id, coord in hass_data[DOMAIN].items():
-            if hasattr(coord, "data") and "name" in coord.data:
-                coordinator = coord
-                device_name = get_device_name(coordinator)
-                break
-                
-    return coordinator, device_name
+    if isinstance(data, dict):
+        return {k: sanitize_event_data(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [sanitize_event_data(v) for v in data]
+    elif isinstance(data, tuple):
+        return tuple(sanitize_event_data(v) for v in data)
+    elif isinstance(data, bytes):
+        return data.hex()
+    elif hasattr(data, "__dict__") and not isinstance(data, type):
+        # For objects with __dict__, convert to a sanitized dict
+        # Skip for class objects (they have __dict__ but we don't want to process them)
+        return sanitize_event_data(vars(data))
+    else:
+        return data
