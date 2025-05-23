@@ -1,4 +1,5 @@
 """Logbook integration for MeshCore."""
+from calendar import c
 import logging
 from typing import Any, Callable, Dict
 from datetime import datetime
@@ -56,132 +57,144 @@ def async_describe_events(
 
 def handle_channel_message(event, coordinator) -> None:
     """Handle channel message event."""
-    if not event or not hasattr(event, "payload") or not event.payload:
+    if not event or not event.payload:
+        _LOGGER.debug("Invalid event data for channel message")
         return
 
-    # Extract message data
-    payload = event.payload
-    message_text = payload.get("text", "")
-    channel_idx = payload.get("channel_idx", 0)
-    channel_name = "public" if channel_idx == 0 else f"{channel_idx}"
+    try:
+        # Extract message data
+        payload = event.payload
+        message_text = payload.get("text", "")
+        channel_idx = payload.get("channel_idx", 0)
+        
+        # Get channel name
+        channel_name = "public" if channel_idx == 0 else f"{channel_idx}"
 
-    # Try to extract sender name from message format "Name: Message"
-    sender_name = "Unknown"
-    sender_pubkey = ""
-    if message_text and ":" in message_text:
-        parts = message_text.split(":", 1)
-        if len(parts) == 2 and parts[0].strip():
-            sender_name = parts[0].strip()
-            message_text = parts[1].strip()
+        # Try to extract sender name from message format "Name: Message"
+        sender_name = "Unknown"
+        sender_pubkey = ""
+        if message_text and ":" in message_text:
+            parts = message_text.split(":", 1)
+            if len(parts) == 2 and parts[0].strip():
+                sender_name = parts[0].strip()
+                message_text = parts[1].strip()
 
-            # Use the provided coordinator for contact lookup
-            if coordinator and hasattr(coordinator, "api") and coordinator.api.mesh_core:
-                # Try to find contact by name to get public key
-                contact = coordinator.api.mesh_core.get_contact_by_name(sender_name)
-                if contact and isinstance(contact, dict):
-                    sender_pubkey = contact.get("public_key", "")[:12]
+                # Use the provided coordinator for contact lookup
+                if coordinator and hasattr(coordinator, "api") and coordinator.api.mesh_core:
+                    # Try to find contact by name to get public key
+                    contact = coordinator.api.mesh_core.get_contact_by_name(sender_name)
+                    if contact and isinstance(contact, dict):
+                        sender_pubkey = contact.get("public_key", "")[:12]
 
-    # Get device key directly from the coordinator
-    if not hasattr(coordinator, "hass"):
-        _LOGGER.warning("Cannot log channel message: coordinator.hass not available")
-        return
+        # Check for Home Assistant instance
+        if not hasattr(coordinator, "hass"):
+            _LOGGER.warning("Cannot log channel message: coordinator.hass not available")
+            return
 
-    hass = coordinator.hass
-    device_key = (coordinator)
+        hass = coordinator.hass
+        device_key = coordinator.pubkey if hasattr(coordinator, "pubkey") else "unknown"
 
-    # Generate entity ID matching MeshCoreMessageEntity
-    entity_id = get_channel_entity_id(
-        ENTITY_DOMAIN_BINARY_SENSOR,
-        device_key[:6],
-        channel_idx
-    )
+        # Generate entity ID matching MeshCoreMessageEntity
+        entity_id = get_channel_entity_id(
+            ENTITY_DOMAIN_BINARY_SENSOR,
+            device_key[:6] if device_key else "unknown",
+            channel_idx
+        )
 
-    # Create event data
-    event_data = {
-        "message": message_text,
-        "sender_name": sender_name,
-        "channel": channel_name,
-        "channel_idx": channel_idx,
-        "entity_id": entity_id,
-        "domain": DOMAIN,
-        "timestamp": datetime.now().isoformat(),
-    }
+        # Create event data
+        event_data = {
+            "message": message_text,
+            "sender_name": sender_name,
+            "channel": channel_name,
+            "channel_idx": channel_idx,
+            "entity_id": entity_id,
+            "domain": DOMAIN,
+            "timestamp": datetime.now().isoformat(),
+            "message_type": "channel"  # Explicit message type for filtering
+        }
 
-    # Add sender pubkey if available
-    if sender_pubkey:
-        event_data["pubkey_prefix"] = sender_pubkey
+        # Add sender pubkey if available
+        if sender_pubkey:
+            event_data["pubkey_prefix"] = sender_pubkey
 
-    # Fire event
-    hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, event_data)
+        # Fire event
+        hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, event_data)
 
-    _LOGGER.debug(
-        "Logged channel message in %s from %s%s: %s",
-        channel_name,
-        sender_name,
-        f" ({sender_pubkey[:6]})" if sender_pubkey else "",
-        message_text[:50] + ("..." if len(message_text) > 50 else "")
-    )
+        _LOGGER.debug(
+            "Logged channel message in %s from %s%s: %s",
+            channel_name,
+            sender_name,
+            f" ({sender_pubkey[:6]})" if sender_pubkey else "",
+            message_text[:50] + ("..." if len(message_text) > 50 else "")
+        )
+    except Exception as ex:
+        _LOGGER.error("Error handling channel message: %s", ex, exc_info=True)
 
 def handle_contact_message(event, coordinator) -> None:
     """Handle contact message event."""
     if not event or not hasattr(event, "payload") or not event.payload:
+        _LOGGER.debug("Invalid event data for contact message")
         return
 
-    # Extract message data from the event
-    payload = event.payload
-    message_text = payload.get("text", "")
-    pubkey_prefix = payload.get("pubkey_prefix", "")
+    try:
+        # Extract message data from the event
+        payload = event.payload
+        message_text = payload.get("text", "")
+        pubkey_prefix = payload.get("pubkey_prefix", "")
 
-    if not pubkey_prefix:
-        _LOGGER.warning("Contact message received without pubkey_prefix")
-        return
+        if not pubkey_prefix:
+            _LOGGER.warning("Contact message received without pubkey_prefix")
+            return
 
-    # Get coordinator info
-    if not hasattr(coordinator, "hass"):
-        _LOGGER.warning("Cannot log contact message: coordinator.hass not available")
-        return
+        # Get coordinator info
+        if not hasattr(coordinator, "hass"):
+            _LOGGER.warning("Cannot log contact message: coordinator.hass not available")
+            return
 
-    hass = coordinator.hass
-    device_key = coordinator.pubkey
+        hass = coordinator.hass
+        device_key = coordinator.pubkey if hasattr(coordinator, "pubkey") else "unknown"
 
-    # Look up contact name from pubkey_prefix using MeshCore API
-    contact_name = "Unknown"
-    if hasattr(coordinator, "api") and coordinator.api.mesh_core:
-        # Try to find contact by public key prefix
-        contact = coordinator.api.mesh_core.get_contact_by_key_prefix(pubkey_prefix)
-        if contact and isinstance(contact, dict):
-            contact_name = contact.get("adv_name", "Unknown")
+        # Look up contact name from pubkey_prefix using MeshCore API
+        contact_name = "Unknown"
+        if hasattr(coordinator, "api") and coordinator.api.mesh_core:
+            # Try to find contact by public key prefix
+            contact = coordinator.api.mesh_core.get_contact_by_key_prefix(pubkey_prefix)
+            if contact and isinstance(contact, dict):
+                contact_name = contact.get("adv_name", "Unknown")
 
-    if contact_name == "Unknown" and pubkey_prefix:
-        contact_name = f"Unknown ({pubkey_prefix[:6]})"
+        if contact_name == "Unknown" and pubkey_prefix:
+            contact_name = f"Unknown ({pubkey_prefix[:6]})"
 
-    # Generate entity ID matching MeshCoreMessageEntity
-    entity_id = get_contact_entity_id(
-        ENTITY_DOMAIN_BINARY_SENSOR,
-        device_key[:6],
-        pubkey_prefix[:6]
-    )
+        # Generate entity ID matching MeshCoreMessageEntity
+        entity_id = get_contact_entity_id(
+            ENTITY_DOMAIN_BINARY_SENSOR,
+            device_key[:6] if device_key else "unknown",
+            pubkey_prefix[:6]
+        )
 
-    # Create event data
-    event_data = {
-        "message": message_text,
-        "sender_name": contact_name,
-        "pubkey_prefix": pubkey_prefix,
-        "receiver_name": DEFAULT_DEVICE_NAME,
-        "entity_id": entity_id,
-        "domain": DOMAIN,
-        "timestamp": datetime.now().isoformat(),
-    }
+        # Create event data
+        event_data = {
+            "message": message_text,
+            "sender_name": contact_name,
+            "pubkey_prefix": pubkey_prefix,
+            "receiver_name": DEFAULT_DEVICE_NAME,
+            "entity_id": entity_id,
+            "domain": DOMAIN,
+            "timestamp": datetime.now().isoformat(),
+            "message_type": "direct"  # Explicit message type for filtering
+        }
 
-    # Fire event
-    hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, event_data)
+        # Fire event
+        hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, event_data)
 
-    _LOGGER.debug(
-        "Logged direct message from %s (%s): %s",
-        contact_name,
-        pubkey_prefix[:6],
-        message_text[:50] + ("..." if len(message_text) > 50 else "")
-    )
+        _LOGGER.debug(
+            "Logged direct message from %s (%s): %s",
+            contact_name,
+            pubkey_prefix[:6],
+            message_text[:50] + ("..." if len(message_text) > 50 else "")
+        )
+    except Exception as ex:
+        _LOGGER.error("Error handling contact message: %s", ex, exc_info=True)
 
 def handle_outgoing_message(event_data, coordinator) -> None:
     """Handle outgoing message events from the new message_sent event."""

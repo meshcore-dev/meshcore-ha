@@ -135,9 +135,6 @@ def handle_channel_message(event, coordinator, async_add_entities):
     payload = event.payload
     channel_idx = payload.get("channel_idx")
     
-    # Log message to the logbook
-    log_channel_message(event, coordinator)
-    
     # Skip if no channel_idx or if channels are already added
     if channel_idx is None or hasattr(coordinator, "channels_added") and coordinator.channels_added:
         return
@@ -146,22 +143,19 @@ def handle_channel_message(event, coordinator, async_add_entities):
     if not hasattr(coordinator, "tracked_channels"):
         coordinator.tracked_channels = set()
     
-    # Skip if this channel is already tracked
-    if channel_idx in coordinator.tracked_channels:
-        return
         
-    # Create channel entity
-    safe_channel = f"{CHANNEL_PREFIX}{channel_idx}"
-    channel_entity = MeshCoreMessageEntity(
-        coordinator, safe_channel, f"Channel {channel_idx} Messages"
-    )
+    # Add channel if it doesnt exist
+    if channel_idx not in coordinator.tracked_channels:
+        safe_channel = f"{CHANNEL_PREFIX}{channel_idx}"
+        channel_entity = MeshCoreMessageEntity(
+            coordinator, safe_channel, f"Channel {channel_idx} Messages"
+        )
+        coordinator.tracked_channels.add(channel_idx)
+        _LOGGER.info(f"Adding message entity for channel {channel_idx} after receiving message")
+        async_add_entities([channel_entity])
     
-    # Track this channel
-    coordinator.tracked_channels.add(channel_idx)
-    
-    # Add the entity
-    _LOGGER.info(f"Adding message entity for channel {channel_idx} after receiving message")
-    async_add_entities([channel_entity])
+     # Log message to the logbook
+    log_channel_message(event, coordinator)
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
