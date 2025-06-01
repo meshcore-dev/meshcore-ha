@@ -244,8 +244,10 @@ async def async_setup_entry(
         # Log the message to the logbook using our dedicated handler
         handle_outgoing_message(event.data, coordinator)
     
-    # Register for the message_sent event
-    hass.bus.async_listen(f"{DOMAIN}_message_sent", message_sent_handler)
+    # Register for the message_sent event only if not already registered
+    if not hasattr(coordinator, "_message_sent_listener_registered"):
+        hass.bus.async_listen(f"{DOMAIN}_message_sent", message_sent_handler)
+        coordinator._message_sent_listener_registered = True
     
 
 class MeshCoreMessageEntity(CoordinatorEntity, BinarySensorEntity):
