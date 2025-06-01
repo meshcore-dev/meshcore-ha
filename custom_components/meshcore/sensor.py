@@ -77,7 +77,7 @@ SENSORS = [
     SensorEntityDescription(
         key="tx_power",
         name="TX Power",
-        device_class=SensorDeviceClass.POWER,
+        device_class=SensorDeviceClass.SIGNAL_STRENGTH,
         native_unit_of_measurement="dBm",
         suggested_display_precision="0",
         state_class=SensorStateClass.MEASUREMENT,

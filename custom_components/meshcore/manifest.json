@@ -5,8 +5,8 @@
   "dependencies": ["logbook"],
   "codeowners": ["@awolden"],
   "loggers": ["custom_components.meshcore"],
-  "requirements": ["meshcore>=1.9.8.dev6", "meshcore-cli>=0.0.0"],
+  "requirements": ["meshcore>=1.9.9", "meshcore-cli>=0.0.0"],
   "iot_class": "local_polling",
-  "version": "2.0.1",
+  "version": "2.0.3",
   "config_flow": true
 }
