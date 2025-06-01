@@ -178,6 +178,14 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Remove entry
         hass.data[DOMAIN].pop(entry.entry_id)
         
+        # Unsubscribe from the message_sent event listener for this entry
+        event_key = f"{DOMAIN}_message_sent_listener_{entry.entry_id}"
+        if event_key in hass.data[DOMAIN]:
+            unsubscribe_func = hass.data[DOMAIN].pop(event_key)
+            if callable(unsubscribe_func):
+                unsubscribe_func()
+                _LOGGER.debug("Unsubscribed message_sent event listener")
+        
         # If no more entries, unload services
         if not hass.data[DOMAIN]:
             await async_unload_services(hass)

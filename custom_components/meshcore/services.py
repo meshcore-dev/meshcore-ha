@@ -85,6 +85,10 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         
         # Iterate through all registered config entries
         for config_entry_id, coordinator in hass.data[DOMAIN].items():
+            # Skip non-coordinator entries (like event listener flags)
+            if not hasattr(coordinator, 'api'):
+                continue
+                
             _LOGGER.debug("Entry ID: %s, coordinator: %s", config_entry_id, coordinator)
             # If entry_id is specified, only use the matching entry
             if entry_id and entry_id != config_entry_id:
@@ -154,6 +158,10 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         
         # Iterate through all registered config entries
         for config_entry_id, coordinator in hass.data[DOMAIN].items():
+            # Skip non-coordinator entries (like event listener flags)
+            if not hasattr(coordinator, 'api'):
+                continue
+                
             _LOGGER.debug("Entry ID: %s, coordinator: %s", config_entry_id, coordinator.name)
             # If entry_id is specified, only use the matching entry
             if entry_id and entry_id != config_entry_id:
@@ -358,7 +366,11 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         _LOGGER.debug("Executing command: %s with arguments: %s", command_name, arguments)
         
         # Iterate through all registered config entries
-        for config_entry_id, coordinator in hass.data[DOMAIN].items():            
+        for config_entry_id, coordinator in hass.data[DOMAIN].items():
+            # Skip non-coordinator entries (like event listener flags)
+            if not hasattr(coordinator, 'api'):
+                continue
+                
             # If entry_id is specified, only use the matching entry
             if entry_id and entry_id != config_entry_id:
                 continue
