@@ -241,6 +241,9 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         # Track connected state
         self._is_connected = False
         
+        # Track last time sync (sync every 6 hours)
+        self._last_time_sync = 0
+        
         # Register listener for connection state changes
         if hass:
             self._remove_listeners = [
@@ -417,6 +420,17 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         
         # Always get battery status
         await self.api.mesh_core.commands.get_bat()
+        
+        # Sync time every 6 hours (21600 seconds)
+        if current_time - self._last_time_sync >= 21600:
+            try:
+                self.logger.info("Syncing time with MeshCore node...")
+                current_timestamp = int(current_time)
+                await self.api.mesh_core.commands.set_time(current_timestamp)
+                self._last_time_sync = current_time
+                self.logger.debug(f"Time sync completed: {current_timestamp}")
+            except Exception as ex:
+                self.logger.error(f"Failed to sync time with node: {ex}")
         
         # Fetch device info if we don't have it yet or don't have complete info
         if not self._device_info_initialized:
