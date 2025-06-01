@@ -344,11 +344,11 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 
             # Handle response
             if not result:
-                self.logger.error(f"Error requesting status from repeater {repeater_name}: {result}")
+                self.logger.warn(f"Error requesting status from repeater {repeater_name}: {result}")
                 # Increment failure count
                 self._repeater_consecutive_failures[pubkey_prefix] = failure_count + 1
             elif result.payload.get('uptime', 0) == 0:
-                self.logger.error(f"Malformed status response from repeater {repeater_name}: {result.payload}")
+                self.logger.warn(f"Malformed status response from repeater {repeater_name}: {result.payload}")
                 self._repeater_consecutive_failures[pubkey_prefix] = failure_count + 1
             else:
                 self.logger.debug(f"Successfully updated repeater {repeater_name}")
@@ -364,7 +364,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 self._next_repeater_update_times[pubkey_prefix] = next_update_time
             
         except Exception as ex:
-            self.logger.error(f"Exception updating repeater {repeater_name}: {ex}")
+            self.logger.warn(f"Exception updating repeater {repeater_name}: {ex}")
             # Increment failure count
             failure_count = self._repeater_consecutive_failures.get(pubkey_prefix, 0)
             self._repeater_consecutive_failures[pubkey_prefix] = failure_count + 1
