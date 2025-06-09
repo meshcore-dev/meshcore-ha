@@ -203,6 +203,22 @@ REPEATER_SENSORS = [
         icon="mdi:message-arrow-right",
     ),
     SensorEntityDescription(
+        key="last_rssi",
+        name="Last RSSI",
+        native_unit_of_measurement="dBm",
+        suggested_display_precision="0",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:signal"
+    ),
+    SensorEntityDescription(
+        key="last_snr",
+        name="Last SNR",
+        native_unit_of_measurement="dB",
+        suggested_display_precision="1",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:signal"
+    ),
+    SensorEntityDescription(
         key="nb_recv",
         name="Messages Received",
         state_class=SensorStateClass.TOTAL_INCREASING,
@@ -370,7 +386,7 @@ class MeshCoreSensor(CoordinatorEntity, SensorEntity):
         
         if key == "node_status":
             def update_status(event: Event):
-                if getattr(self.coordinator, "_is_connected", False):
+                if self.coordinator.api.connected:
                     self._native_value = "online"
                 else:
                     self._native_value = "offline"

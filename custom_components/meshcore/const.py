@@ -54,8 +54,7 @@ CONF_REPEATER_SUBSCRIPTIONS: Final = "repeater_subscriptions"
 CONF_REPEATER_NAME: Final = "repeater_name"
 CONF_REPEATER_PASSWORD: Final = "repeater_password"
 CONF_REPEATER_UPDATE_INTERVAL: Final = "repeater_update_interval"
-DEFAULT_REPEATER_UPDATE_INTERVAL: Final = 300  # 5 minutes in seconds
-REPEATER_UPDATE_TASK_TIMEOUT: Final = 30  # 30 seconds timeout for update tasks
+DEFAULT_REPEATER_UPDATE_INTERVAL: Final = 900  # 15 minutes in seconds
 MAX_REPEATER_FAILURES_BEFORE_LOGIN: Final = 3  # After this many failures, try login
 
 # Update intervals for different data types

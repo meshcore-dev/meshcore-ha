@@ -85,6 +85,10 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         
         # Iterate through all registered config entries
         for config_entry_id, coordinator in hass.data[DOMAIN].items():
+            # Skip non-coordinator entries (like event listener flags)
+            if not hasattr(coordinator, 'api'):
+                continue
+                
             _LOGGER.debug("Entry ID: %s, coordinator: %s", config_entry_id, coordinator)
             # If entry_id is specified, only use the matching entry
             if entry_id and entry_id != config_entry_id:
@@ -154,6 +158,10 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         
         # Iterate through all registered config entries
         for config_entry_id, coordinator in hass.data[DOMAIN].items():
+            # Skip non-coordinator entries (like event listener flags)
+            if not hasattr(coordinator, 'api'):
+                continue
+                
             _LOGGER.debug("Entry ID: %s, coordinator: %s", config_entry_id, coordinator.name)
             # If entry_id is specified, only use the matching entry
             if entry_id and entry_id != config_entry_id:
@@ -197,53 +205,6 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                 # Only attempt with the first available API if no entry_id specified
                 if not entry_id:
                     return
-    
-    # async def async_cli_command_service(call: ServiceCall) -> None:
-    #     """Handle CLI command service call."""
-    #     command = call.data[ATTR_CLI_COMMAND]
-    #     entry_id = call.data.get(ATTR_ENTRY_ID)
-        
-    #     # Track if any command executed successfully
-    #     command_success = False
-        
-    #     # Iterate through all registered config entries
-    #     for config_entry_id, coordinator in hass.data[DOMAIN].items():            
-    #         # If entry_id is specified, only use the matching entry
-    #         if entry_id and entry_id != config_entry_id:
-    #             continue
-                
-    #         # Get the API from coordinator
-    #         api = coordinator.api
-    #         if api and api._connected:
-    #             try:
-    #                 _LOGGER.debug(
-    #                     "Executing CLI command: %s", command
-    #                 )
-                    
-    #                 result = await api.send_cli_command(command)
-                    
-    #                 if result.get("success", False):
-    #                     command_success = True
-    #                     _LOGGER.info(
-    #                         "Successfully executed CLI command: %s", command
-    #                     )
-    #                 else:
-    #                     _LOGGER.warning(
-    #                         "CLI command execution failed: %s, error: %s", 
-    #                         command, result.get("error", "Unknown error")
-    #                     )
-                        
-    #             except Exception as ex:
-    #                 _LOGGER.error(
-    #                     "Error executing CLI command %s: %s", command, ex
-    #                 )
-                
-    #             # Only attempt with the first available API if no entry_id specified
-    #             if not entry_id:
-    #                 return
-        
-    #     if not command_success:
-    #         _LOGGER.error("Failed to execute CLI command on any device: %s", command)
 
     # Create combined message script service
     async def async_message_script_service(call: ServiceCall) -> None:
@@ -358,7 +319,11 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         _LOGGER.debug("Executing command: %s with arguments: %s", command_name, arguments)
         
         # Iterate through all registered config entries
-        for config_entry_id, coordinator in hass.data[DOMAIN].items():            
+        for config_entry_id, coordinator in hass.data[DOMAIN].items():
+            # Skip non-coordinator entries (like event listener flags)
+            if not hasattr(coordinator, 'api'):
+                continue
+                
             # If entry_id is specified, only use the matching entry
             if entry_id and entry_id != config_entry_id:
                 continue
@@ -384,6 +349,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                         "get_bat": [],
                         "get_time": [],
                         "get_contacts": [],
+                        "get_channel": [int],
+                        "set_channel": [int, str, bytes],
                         
                         # Commands taking DestinationType (contact)
                         "send_login": ["contact", "str"],
@@ -394,6 +361,9 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                         "share_contact": ["contact"],
                         "export_contact": ["contact"],
                         "remove_contact": ["contact"],
+                        "update_contact": ["contact", "str", "str"],
+                        "change_contact_path": ["contact", "str"],
+                        "change_contact_flags": ["contact", "str"],
                         
                         # Commands taking other parameter types
                         "send_advert": ["bool"],

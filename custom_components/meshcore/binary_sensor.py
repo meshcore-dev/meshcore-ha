@@ -244,10 +244,14 @@ async def async_setup_entry(
         # Log the message to the logbook using our dedicated handler
         handle_outgoing_message(event.data, coordinator)
     
-    # Register for the message_sent event only if not already registered
-    if not hasattr(coordinator, "_message_sent_listener_registered"):
-        hass.bus.async_listen(f"{DOMAIN}_message_sent", message_sent_handler)
-        coordinator._message_sent_listener_registered = True
+    # Register for the message_sent event - use a global check to prevent duplicates
+    event_key = f"{DOMAIN}_message_sent_listener_{entry.entry_id}"
+    if not hasattr(hass.data[DOMAIN], event_key):
+        _LOGGER.debug("Registering message_sent event listener")
+        unsubscribe_func = hass.bus.async_listen(f"{DOMAIN}_message_sent", message_sent_handler)
+        hass.data[DOMAIN][event_key] = unsubscribe_func
+    else:
+        _LOGGER.debug("Message_sent event listener already registered, skipping")
     
 
 class MeshCoreMessageEntity(CoordinatorEntity, BinarySensorEntity):
