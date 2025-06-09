@@ -370,7 +370,7 @@ class MeshCoreSensor(CoordinatorEntity, SensorEntity):
         
         if key == "node_status":
             def update_status(event: Event):
-                if getattr(self.coordinator, "_is_connected", False):
+                if self.coordinator.api.connected:
                     self._native_value = "online"
                 else:
                     self._native_value = "offline"

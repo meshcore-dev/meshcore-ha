@@ -246,19 +246,9 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self._active_repeater_tasks = {}  # Track active update tasks by pubkey_prefix
         self._repeater_consecutive_failures = {}  # Track consecutive failed updates by pubkey_prefix
         
-        # Track connected state
-        self._is_connected = False
-        
         # Track last time sync (sync every 6 hours)
         self._last_time_sync = 0
         
-        # Register listener for connection state changes
-        if hass:
-            self._remove_listeners = [
-                hass.bus.async_listen(f"{DOMAIN}_connected", self._handle_connected),
-                hass.bus.async_listen(f"{DOMAIN}_disconnected", self._handle_disconnected)
-            ]
-            
         # Initialize tracking sets for entities
         self.tracked_contacts = set()
         self.tracked_diagnostic_binary_contacts = set()
@@ -274,26 +264,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         
         if not hasattr(self, "last_update_success_time"):
             self.last_update_success_time = time.time()
-        
-    async def _handle_connected(self, event):
-        """Handle connected event."""
-        self._is_connected = True
-        self.logger.info("MeshCore device connected")
-        
-    async def _handle_disconnected(self, event):
-        """Handle disconnected event."""
-        self._is_connected = False
-        # Reset initialization flags so we'll re-initialize on reconnection
-        self._appstart_initialized = False
-        self._device_info_initialized = False
-        
-        # Cancel any active repeater update tasks
-        for task in self._active_repeater_tasks.values():
-            if not task.done():
-                task.cancel()
-        self._active_repeater_tasks.clear()
-        
-        self.logger.info("MeshCore device disconnected")
+    
         
     async def _update_repeater(self, repeater_config):
         """Update a repeater and schedule the next update.
