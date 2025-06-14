@@ -15,7 +15,10 @@ from .const import (
     CONF_REPEATER_PASSWORD, 
     CONF_REPEATER_UPDATE_INTERVAL,
     DEFAULT_REPEATER_UPDATE_INTERVAL,
+    DEFAULT_UPDATE_TICK,
     MAX_REPEATER_FAILURES_BEFORE_LOGIN,
+    REPEATER_BACKOFF_BASE,
+    REPEATER_BACKOFF_MAX_MULTIPLIER,
     NodeType
 )
 
@@ -39,7 +42,7 @@ from .const import (
 
     CONF_REPEATER_SUBSCRIPTIONS,
     CONF_MESSAGES_INTERVAL,
-    DEFAULT_MESSAGES_INTERVAL,
+    DEFAULT_UPDATE_TICK,
     NodeType,
 )
 from .meshcore_api import MeshCoreAPI
@@ -80,7 +83,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Check options first, then data, then use default
     messages_interval = entry.options.get(
         CONF_MESSAGES_INTERVAL, 
-        entry.data.get(CONF_MESSAGES_INTERVAL, DEFAULT_MESSAGES_INTERVAL)
+        entry.data.get(CONF_MESSAGES_INTERVAL, DEFAULT_UPDATE_TICK)
     )
     
     # Create update coordinator with the messages interval (fastest polling rate)
@@ -324,11 +327,15 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             # Handle response
             if not result:
                 self.logger.warn(f"Error requesting status from repeater {repeater_name}: {result}")
-                # Increment failure count
-                self._repeater_consecutive_failures[pubkey_prefix] = failure_count + 1
+                # Increment failure count and apply backoff
+                new_failure_count = failure_count + 1
+                self._repeater_consecutive_failures[pubkey_prefix] = new_failure_count
+                self._apply_repeater_backoff(pubkey_prefix, new_failure_count)
             elif result.payload.get('uptime', 0) == 0:
                 self.logger.warn(f"Malformed status response from repeater {repeater_name}: {result.payload}")
-                self._repeater_consecutive_failures[pubkey_prefix] = failure_count + 1
+                new_failure_count = failure_count + 1
+                self._repeater_consecutive_failures[pubkey_prefix] = new_failure_count
+                self._apply_repeater_backoff(pubkey_prefix, new_failure_count)
             else:
                 self.logger.debug(f"Successfully updated repeater {repeater_name}")
                 # Reset failure count on success
@@ -337,21 +344,37 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 # Trigger state updates for any entities listening for this repeater
                 self.async_set_updated_data(self.data)
                 
-                # Only schedule next update on success
+                # Schedule next update based on configured interval
                 update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
                 next_update_time = time.time() + update_interval
                 self._next_repeater_update_times[pubkey_prefix] = next_update_time
             
         except Exception as ex:
             self.logger.warn(f"Exception updating repeater {repeater_name}: {ex}")
-            # Increment failure count
-            failure_count = self._repeater_consecutive_failures.get(pubkey_prefix, 0)
-            self._repeater_consecutive_failures[pubkey_prefix] = failure_count + 1
+            # Increment failure count and apply backoff
+            new_failure_count = self._repeater_consecutive_failures.get(pubkey_prefix, 0) + 1
+            self._repeater_consecutive_failures[pubkey_prefix] = new_failure_count
+            self._apply_repeater_backoff(pubkey_prefix, new_failure_count)
         finally:
             # Remove this task from active tasks
             if pubkey_prefix in self._active_repeater_tasks:
                 self._active_repeater_tasks.pop(pubkey_prefix)
 
+    def _apply_repeater_backoff(self, pubkey_prefix: str, failure_count: int) -> None:
+        """Apply exponential backoff delay for failed repeater updates.
+        
+        Uses DEFAULT_UPDATE_TICK as base since that's how often we check for updates.
+        """
+        backoff_multiplier = min(REPEATER_BACKOFF_BASE ** failure_count, REPEATER_BACKOFF_MAX_MULTIPLIER)
+        backoff_delay = DEFAULT_UPDATE_TICK * backoff_multiplier
+        next_update_time = time.time() + backoff_delay
+        
+        self._next_repeater_update_times[pubkey_prefix] = next_update_time
+        
+        self.logger.debug(f"Applied backoff for repeater {pubkey_prefix}: "
+                         f"failure_count={failure_count}, "
+                         f"multiplier={backoff_multiplier}, "
+                         f"delay={backoff_delay}s")
                 
     # function just looks at update intervals and triggers commands
     async def _async_update_data(self) -> None:
