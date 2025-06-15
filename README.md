@@ -2,6 +2,9 @@
 
 # MeshCore for Home Assistant
 
+[![Add Integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=meshcore)
+[![Add Repository](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=awolden&repository=meshcore-ha&category=integration)
+
 This is a custom Home Assistant integration for MeshCore mesh radio nodes. It allows you to monitor and control MeshCore nodes via USB, BLE, or TCP connections.
 
 > :warning: **Work in Progress**: This integration is under active development. BLE connection method hasn't been thoroughly tested yet.
