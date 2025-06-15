@@ -231,10 +231,12 @@ REPEATER_SENSORS = [
         icon="mdi:playlist-edit",
     ),
     SensorEntityDescription(
-        key="free_queue_len",
-        name="Free Queue Length",
+        key="noise_floor",
+        name="Noise Floor",
+        native_unit_of_measurement="dBm",
+        suggested_display_precision="0",
         state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:playlist-plus",
+        icon="mdi:waveform",
     ),
     SensorEntityDescription(
         key="sent_flood",

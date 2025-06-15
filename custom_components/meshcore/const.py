@@ -57,11 +57,15 @@ CONF_REPEATER_UPDATE_INTERVAL: Final = "repeater_update_interval"
 DEFAULT_REPEATER_UPDATE_INTERVAL: Final = 900  # 15 minutes in seconds
 MAX_REPEATER_FAILURES_BEFORE_LOGIN: Final = 3  # After this many failures, try login
 
+# Backoff constants for repeater failures
+REPEATER_BACKOFF_BASE: Final = 2  # Base multiplier for exponential backoff
+REPEATER_BACKOFF_MAX_MULTIPLIER: Final = 120  # Maximum backoff multiplier (10 minutes when * 5 seconds)
+
 # Update intervals for different data types
 CONF_INFO_INTERVAL: Final = "info_interval"  # For both node info and contacts
 CONF_MESSAGES_INTERVAL: Final = "messages_interval"
 
-DEFAULT_MESSAGES_INTERVAL: Final = 5   # base polling interval
+DEFAULT_UPDATE_TICK: Final = 5   # base polling interval
 
 # Other constants
 CONNECTION_TIMEOUT: Final = 10  # seconds
