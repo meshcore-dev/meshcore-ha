@@ -11,6 +11,7 @@ from .const import (
     MESSAGES_SUFFIX,
     CHANNEL_PREFIX,
     NodeType,
+    BATTERY_CURVE,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -119,3 +120,34 @@ def sanitize_event_data(data: Any) -> Any:
         return sanitize_event_data(vars(data))
     else:
         return data
+
+
+def calculate_battery_percentage(voltage_mv: float) -> float:
+    """Calculate battery percentage using generic battery discharge curve.
+    
+    Args:
+        voltage_mv: Battery voltage in millivolts
+        
+    Returns:
+        Battery percentage (0-100)
+    """
+    voltage_v = voltage_mv / 1000.0  # Convert millivolts to volts
+    
+    # Handle edge cases
+    if voltage_v >= BATTERY_CURVE[0][0]:  # Above maximum voltage
+        return 100.0
+    if voltage_v <= BATTERY_CURVE[-1][0]:  # Below minimum voltage
+        return 0.0
+    
+    # Find the two closest points in the curve for interpolation
+    for i in range(len(BATTERY_CURVE) - 1):
+        v1, p1 = BATTERY_CURVE[i]
+        v2, p2 = BATTERY_CURVE[i + 1]
+        
+        if voltage_v <= v1 and voltage_v >= v2:
+            # Linear interpolation between the two points
+            percentage = p2 + (p1 - p2) * (voltage_v - v2) / (v1 - v2)
+            return round(max(0, min(100, percentage)), 1)
+    
+    # Fallback (should not happen with proper curve data)
+    return 0.0

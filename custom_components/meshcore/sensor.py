@@ -35,13 +35,11 @@ from .utils import get_node_type_str
 from .utils import (
     sanitize_name,
     format_entity_id,
+    calculate_battery_percentage,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-# Battery voltage constants
-MIN_BATTERY_VOLTAGE = 3.2  # Minimum LiPo voltage
-MAX_BATTERY_VOLTAGE = 4.2  # Maximum LiPo voltage
 
 # Define sensors for the main device
 SENSORS = [
@@ -408,14 +406,8 @@ class MeshCoreSensor(CoordinatorEntity, SensorEntity):
             
         elif key == "battery_percentage":
             def update_battery(event: Event):
-                voltage = event.payload.get("level") / 1000.0  # Convert millivolts to volts
-                # Calculate percentage based on min/max voltage range
-                percentage = ((voltage - MIN_BATTERY_VOLTAGE) / 
-                             (MAX_BATTERY_VOLTAGE - MIN_BATTERY_VOLTAGE)) * 100
-                
-                # Ensure percentage is within 0-100 range
-                percentage = max(0, min(100, percentage))
-                self._native_value = round(percentage, 1)  # Convert from mV to V
+                voltage_mv = event.payload.get("level")
+                self._native_value = calculate_battery_percentage(voltage_mv)
             meshcore.dispatcher.subscribe(
                 EventType.BATTERY,
                 update_battery,
@@ -599,12 +591,8 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
             return value / 1000.0  # Convert millivolts to volts
         
         elif key == "battery_percentage" and "bat" in self._cached_stats:
-            voltage = self._cached_stats["bat"]/ 1000.0  # Convert millivolts to volts
-            percentage = ((voltage - MIN_BATTERY_VOLTAGE) / 
-                            (MAX_BATTERY_VOLTAGE - MIN_BATTERY_VOLTAGE)) * 100
-            # Ensure percentage is within 0-100 range
-            percentage = max(0, min(100, percentage))
-            return round(percentage, 1)  
+            voltage_mv = self._cached_stats["bat"]
+            return calculate_battery_percentage(voltage_mv)  
         
         elif key == "uptime" and isinstance(value, (int, float)) and value > 0:
             return round(value / 60, 1)  # Convert seconds to minutes
