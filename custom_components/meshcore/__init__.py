@@ -459,8 +459,10 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         contacts_result = await self.api.mesh_core.commands.get_contacts()
         
         # Convert contacts to list and store
-        if contacts_result and hasattr(contacts_result, "payload"):
+        if contacts_result.type == EventType.CONTACTS:
             self._contacts = list(contacts_result.payload.values())
+        else:
+            self.logger.error(f"Failed to get contacts: {contacts_result.payload}")
             
         # Store contacts in result data
         result_data["contacts"] = self._contacts
