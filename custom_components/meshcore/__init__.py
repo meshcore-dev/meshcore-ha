@@ -131,15 +131,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Convert event type to string if possible
         event_type_str = str(event.type) if hasattr(event, "type") else "UNKNOWN"
         
-        # Import the sanitize function for JSON serialization
-        from .utils import sanitize_event_data
-            
-        # Fire event to HA event bus with sanitized payload
-        hass.bus.async_fire(f"{DOMAIN}_raw_event", {
-            "event_type": event_type_str,
-            "payload": sanitize_event_data(event.payload),
-            "timestamp": time.time()
-        })
+        try:
+            # Import the sanitize function for JSON serialization
+            from .utils import sanitize_event_data
+                
+            # Fire event to HA event bus with sanitized payload
+            hass.bus.async_fire(f"{DOMAIN}_raw_event", {
+                "event_type": event_type_str,
+                "payload": sanitize_event_data(event.payload),
+                "timestamp": time.time()
+            })
+        except Exception as ex:
+            _LOGGER.error(f"Error serializing event payload: {ex}")
+            # Fire event without payload to ensure delivery
+            hass.bus.async_fire(f"{DOMAIN}_raw_event", {
+                "event_type": event_type_str,
+                "payload": None,
+                "timestamp": time.time(),
+                "serialization_error": str(ex)
+            })
         
     # Add the all-events listener
     if coordinator.api.mesh_core:

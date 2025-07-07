@@ -214,11 +214,13 @@ class MeshCoreAPI:
                 
                 if not self._connected:
                     _LOGGER.info("Attempting periodic reconnect...")
-                    if await self.connect():
+                    try:
+                        await self._mesh_core.connect()
+                        self._connected = True
                         _LOGGER.info("Periodic reconnect successful!")
                         break
-                    else:
-                        _LOGGER.debug("Periodic reconnect failed, will retry in 1 minute")
+                    except Exception as ex:
+                        _LOGGER.debug(f"Periodic reconnect failed: {ex}, will retry in 1 minute")
                         
             except asyncio.CancelledError:
                 _LOGGER.info("Periodic reconnect task cancelled")
