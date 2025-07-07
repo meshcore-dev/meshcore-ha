@@ -55,6 +55,9 @@ class MeshCoreAPI:
         # Add a lock to prevent concurrent access to the device
         self._device_lock = Lock()
         
+        # Periodic reconnect after SDK gives up
+        self._reconnect_task = None
+        
     @property
     def mesh_core(self) -> MeshCore:
         """Get the underlying MeshCore instance for direct event subscription."""
@@ -83,14 +86,18 @@ class MeshCoreAPI:
                 self._mesh_core = await MeshCore.create_serial(
                     self.usb_path, 
                     self.baudrate, 
-                    debug=False
+                    debug=False,
+                    auto_reconnect=True,
+                    max_reconnect_attempts=100
                 )
                 
             elif self.connection_type == CONNECTION_TYPE_BLE:
                 _LOGGER.info(f"Using BLE connection with address {self.ble_address}")
                 self._mesh_core = await MeshCore.create_ble(
                     self.ble_address if self.ble_address else "", 
-                    debug=False
+                    debug=False,
+                    auto_reconnect=True,
+                    max_reconnect_attempts=100
                 )
                 
             elif self.connection_type == CONNECTION_TYPE_TCP and self.tcp_host:
@@ -98,7 +105,9 @@ class MeshCoreAPI:
                 self._mesh_core = await MeshCore.create_tcp(
                     self.tcp_host, 
                     self.tcp_port, 
-                    debug=False
+                    debug=False,
+                    auto_reconnect=True,
+                    max_reconnect_attempts=100
                 )
                 
             else:
@@ -109,6 +118,9 @@ class MeshCoreAPI:
                 _LOGGER.error("Failed to create MeshCore instance")
                 return False
                 
+            # Set up disconnect event handler for backup reconnect
+            self._setup_disconnect_handler()
+            
             # Load contacts
             _LOGGER.info("Loading contacts...")
             await self._mesh_core.ensure_contacts()
@@ -120,7 +132,10 @@ class MeshCoreAPI:
                 })
                 
             self._connected = True
-            _LOGGER.info("Successfully connected to MeshCore device")
+            # Cancel any existing reconnect task since we're now connected
+            if self._reconnect_task and not self._reconnect_task.done():
+                self._reconnect_task.cancel()
+            _LOGGER.info("Successfully connected to MeshCore device with auto-reconnect enabled")
             return True
             
         except Exception as ex:
@@ -160,3 +175,56 @@ class MeshCoreAPI:
             self._mesh_core = None
             _LOGGER.info("Disconnection complete")
         return
+    
+    def _setup_disconnect_handler(self) -> None:
+        """Set up disconnect event handler."""
+        if not self._mesh_core:
+            return
+            
+        try:
+            self._mesh_core.dispatcher.subscribe(
+                EventType.DISCONNECTED,
+                self._handle_disconnect_event
+            )
+            _LOGGER.info("Disconnect event handler registered")
+        except Exception as ex:
+            _LOGGER.error(f"Failed to set up disconnect handler: {ex}")
+    
+    def _handle_disconnect_event(self, event) -> None:
+        """Handle disconnect events after SDK gives up trying to reconnect."""
+        _LOGGER.warning("Device disconnected and SDK auto-reconnect has given up - starting periodic reconnect")
+        self._connected = False
+        
+        if self.hass:
+            self.hass.bus.async_fire(f"{DOMAIN}_disconnected", {
+                "unexpected": True
+            })
+        
+        # Start periodic reconnect task
+        if not self._reconnect_task or self._reconnect_task.done():
+            self._reconnect_task = asyncio.create_task(self._periodic_reconnect())
+    
+    async def _periodic_reconnect(self) -> None:
+        """Periodically try to reconnect after SDK gives up."""
+        _LOGGER.info("Starting periodic reconnect task - will retry every minute")
+        
+        while not self._connected:
+            try:
+                await asyncio.sleep(60)  # Wait 1 minute
+                
+                if not self._connected:
+                    _LOGGER.info("Attempting periodic reconnect...")
+                    if await self.connect():
+                        _LOGGER.info("Periodic reconnect successful!")
+                        break
+                    else:
+                        _LOGGER.debug("Periodic reconnect failed, will retry in 1 minute")
+                        
+            except asyncio.CancelledError:
+                _LOGGER.info("Periodic reconnect task cancelled")
+                break
+            except Exception as ex:
+                _LOGGER.error(f"Error in periodic reconnect: {ex}")
+                await asyncio.sleep(60)  # Wait before retrying
+        
+        _LOGGER.info("Periodic reconnect task ended")
