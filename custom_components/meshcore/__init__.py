@@ -131,15 +131,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Convert event type to string if possible
         event_type_str = str(event.type) if hasattr(event, "type") else "UNKNOWN"
         
-        # Import the sanitize function for JSON serialization
-        from .utils import sanitize_event_data
-            
-        # Fire event to HA event bus with sanitized payload
-        hass.bus.async_fire(f"{DOMAIN}_raw_event", {
-            "event_type": event_type_str,
-            "payload": sanitize_event_data(event.payload),
-            "timestamp": time.time()
-        })
+        try:
+            # Import the sanitize function for JSON serialization
+            from .utils import sanitize_event_data
+                
+            # Fire event to HA event bus with sanitized payload
+            hass.bus.async_fire(f"{DOMAIN}_raw_event", {
+                "event_type": event_type_str,
+                "payload": sanitize_event_data(event.payload),
+                "timestamp": time.time()
+            })
+        except Exception as ex:
+            _LOGGER.error(f"Error serializing event payload: {ex}")
+            # Fire event without payload to ensure delivery
+            hass.bus.async_fire(f"{DOMAIN}_raw_event", {
+                "event_type": event_type_str,
+                "payload": None,
+                "timestamp": time.time(),
+                "serialization_error": str(ex)
+            })
         
     # Add the all-events listener
     if coordinator.api.mesh_core:
@@ -249,8 +259,6 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self._active_repeater_tasks = {}  # Track active update tasks by pubkey_prefix
         self._repeater_consecutive_failures = {}  # Track consecutive failed updates by pubkey_prefix
         
-        # Track last time sync (sync every 6 hours)
-        self._last_time_sync = 0
         
         # Initialize tracking sets for entities
         self.tracked_contacts = set()
@@ -423,17 +431,6 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         # Always get battery status
         await self.api.mesh_core.commands.get_bat()
         
-        # Sync time every 6 hours (21600 seconds)
-        if current_time - self._last_time_sync >= 21600:
-            try:
-                self.logger.info("Syncing time with MeshCore node...")
-                current_timestamp = int(current_time)
-                await self.api.mesh_core.commands.set_time(current_timestamp)
-                self._last_time_sync = current_time
-                self.logger.debug(f"Time sync completed: {current_timestamp}")
-            except Exception as ex:
-                self.logger.error(f"Failed to sync time with node: {ex}")
-        
         # Fetch device info if we don't have it yet or don't have complete info
         if not self._device_info_initialized:
             try:
@@ -459,8 +456,10 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         contacts_result = await self.api.mesh_core.commands.get_contacts()
         
         # Convert contacts to list and store
-        if contacts_result and hasattr(contacts_result, "payload"):
+        if contacts_result.type == EventType.CONTACTS:
             self._contacts = list(contacts_result.payload.values())
+        else:
+            self.logger.error(f"Failed to get contacts: {contacts_result.payload}")
             
         # Store contacts in result data
         result_data["contacts"] = self._contacts

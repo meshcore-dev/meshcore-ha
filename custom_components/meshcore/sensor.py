@@ -35,13 +35,11 @@ from .utils import get_node_type_str
 from .utils import (
     sanitize_name,
     format_entity_id,
+    calculate_battery_percentage,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-# Battery voltage constants
-MIN_BATTERY_VOLTAGE = 3.2  # Minimum LiPo voltage
-MAX_BATTERY_VOLTAGE = 4.2  # Maximum LiPo voltage
 
 # Define sensors for the main device
 SENSORS = [
@@ -280,6 +278,15 @@ REPEATER_SENSORS = [
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:content-duplicate",
     ),
+    SensorEntityDescription(
+        key="airtime_utilization",
+        name="Airtime Utilization",
+        device_class=SensorDeviceClass.POWER_FACTOR,
+        native_unit_of_measurement="%",
+        suggested_display_precision="1",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:percent",
+    ),
 ]
 
 
@@ -408,14 +415,8 @@ class MeshCoreSensor(CoordinatorEntity, SensorEntity):
             
         elif key == "battery_percentage":
             def update_battery(event: Event):
-                voltage = event.payload.get("level") / 1000.0  # Convert millivolts to volts
-                # Calculate percentage based on min/max voltage range
-                percentage = ((voltage - MIN_BATTERY_VOLTAGE) / 
-                             (MAX_BATTERY_VOLTAGE - MIN_BATTERY_VOLTAGE)) * 100
-                
-                # Ensure percentage is within 0-100 range
-                percentage = max(0, min(100, percentage))
-                self._native_value = round(percentage, 1)  # Convert from mV to V
+                voltage_mv = event.payload.get("level")
+                self._native_value = calculate_battery_percentage(voltage_mv)
             meshcore.dispatcher.subscribe(
                 EventType.BATTERY,
                 update_battery,
@@ -539,6 +540,7 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
         self._attr_device_info = DeviceInfo(**device_info)
         
         self._cached_stats = {}
+        self._previous_stats = {}
         
     async def async_added_to_hass(self):
         """Register event handlers when entity is added to hass."""
@@ -577,6 +579,8 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
             if event.payload.get('uptime', 0) == 0:
                 self.logger.error(f"Skipping event with malformed payload: {event.payload}")
                 return 
+            # Store previous stats before updating
+            self._previous_stats = self._cached_stats.copy()
             self._cached_stats = event.payload.copy()
         else:
             self._cached_stats = {}
@@ -599,18 +603,34 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
             return value / 1000.0  # Convert millivolts to volts
         
         elif key == "battery_percentage" and "bat" in self._cached_stats:
-            voltage = self._cached_stats["bat"]/ 1000.0  # Convert millivolts to volts
-            percentage = ((voltage - MIN_BATTERY_VOLTAGE) / 
-                            (MAX_BATTERY_VOLTAGE - MIN_BATTERY_VOLTAGE)) * 100
-            # Ensure percentage is within 0-100 range
-            percentage = max(0, min(100, percentage))
-            return round(percentage, 1)  
+            voltage_mv = self._cached_stats["bat"]
+            return calculate_battery_percentage(voltage_mv)  
         
         elif key == "uptime" and isinstance(value, (int, float)) and value > 0:
             return round(value / 60, 1)  # Convert seconds to minutes
             
         elif key == "airtime" and isinstance(value, (int, float)) and value > 0:
             return round(value / 60, 1)  # Convert seconds to minutes
+            
+        elif key == "airtime_utilization":
+            current_uptime = self._cached_stats.get("uptime")
+            current_airtime = self._cached_stats.get("airtime")
+            
+            if not isinstance(current_uptime, (int, float)) or not isinstance(current_airtime, (int, float)):
+                return None
+                
+            if self._previous_stats:
+                prev_uptime = self._previous_stats.get("uptime", 0)
+                prev_airtime = self._previous_stats.get("airtime", 0)
+                
+                if isinstance(prev_uptime, (int, float)) and isinstance(prev_airtime, (int, float)):
+                    uptime_delta = current_uptime - prev_uptime
+                    airtime_delta = current_airtime - prev_airtime
+                    
+                    if uptime_delta > 0 and airtime_delta >= 0:
+                        utilization_rate = (airtime_delta / uptime_delta) * 100
+                        return round(utilization_rate, 1)
+            return 0  # No previous data or no change
             
         # Return the value directly for other sensors
         return value
@@ -658,6 +678,20 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
                         minutes = (seconds % 3600) // 60
                         secs = seconds % 60
                         attributes["human_readable"] = f"{days}d {hours}h {minutes}m {secs}s"
+            elif key == "airtime_utilization":
+                uptime = self._cached_stats.get("uptime")
+                airtime = self._cached_stats.get("airtime")
+                
+                if isinstance(uptime, (int, float)) and isinstance(airtime, (int, float)):
+                    attributes["uptime_seconds"] = str(uptime)
+                    attributes["airtime_seconds"] = str(airtime)
+                    
+                    # Calculate airtime since last update if we have previous values
+                    if self._previous_stats:
+                        prev_airtime = self._previous_stats.get("airtime", 0)
+                        if isinstance(prev_airtime, (int, float)) and prev_airtime < airtime:
+                            airtime_delta = airtime - prev_airtime
+                            attributes["airtime_since_last_update"] = str(round(airtime_delta / 60, 1))  # in minutes
             
             return attributes
             
