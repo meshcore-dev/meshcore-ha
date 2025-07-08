@@ -1,6 +1,7 @@
 """API for communicating with MeshCore devices using the meshcore-py library."""
 import logging
 import asyncio
+import time
 from sched import Event
 from typing import Any, Dict, List, Optional
 from asyncio import Lock
@@ -125,6 +126,15 @@ class MeshCoreAPI:
             _LOGGER.info("Loading contacts...")
             await self._mesh_core.ensure_contacts()
             
+            # Sync time on connection
+            try:
+                _LOGGER.info("Syncing time with MeshCore device...")
+                current_timestamp = int(time.time())
+                await self._mesh_core.commands.set_time(current_timestamp)
+                _LOGGER.info(f"Time sync completed: {current_timestamp}")
+            except Exception as ex:
+                _LOGGER.error(f"Failed to sync time on connection: {ex}")
+            
             # Fire HA event for successful connection
             if self.hass:
                 self.hass.bus.async_fire(f"{DOMAIN}_connected", {
@@ -217,6 +227,16 @@ class MeshCoreAPI:
                     try:
                         await self._mesh_core.connect()
                         self._connected = True
+                        
+                        # Sync time after reconnection
+                        try:
+                            _LOGGER.info("Syncing time after reconnection...")
+                            current_timestamp = int(time.time())
+                            await self._mesh_core.commands.set_time(current_timestamp)
+                            _LOGGER.info(f"Time sync after reconnection completed: {current_timestamp}")
+                        except Exception as time_ex:
+                            _LOGGER.error(f"Failed to sync time after reconnection: {time_ex}")
+                        
                         _LOGGER.info("Periodic reconnect successful!")
                         break
                     except Exception as ex:
