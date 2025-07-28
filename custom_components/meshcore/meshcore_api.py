@@ -164,7 +164,7 @@ class MeshCoreAPI:
                 
             # Properly disconnect using the MeshCore instance
             if self._mesh_core:
-                self._mesh_core.cx.transport.close()
+                await self._mesh_core.disconnect()
                 try:
                     _LOGGER.info("Cleaning up event subscriptions")
                     if hasattr(self._mesh_core, "dispatcher") and hasattr(self._mesh_core.dispatcher, "subscriptions"):
