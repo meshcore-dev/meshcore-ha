@@ -440,6 +440,14 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                                 _LOGGER.error(f"Could not convert '{arg}' to boolean")
                                 return
                         
+                        elif param_type == "bytes":
+                            # Convert string to bytes
+                            try:
+                                prepared_args.append(arg.encode('utf-8'))
+                            except UnicodeEncodeError:
+                                _LOGGER.error(f"Could not convert '{arg}' to bytes")
+                                return
+                        
                         else:
                             # For any other type, pass the argument as is
                             prepared_args.append(arg)
