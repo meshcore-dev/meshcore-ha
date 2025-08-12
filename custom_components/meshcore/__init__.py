@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import random
 import re
 import time
 from pathlib import Path
@@ -42,7 +43,6 @@ from .const import (
 
     CONF_REPEATER_SUBSCRIPTIONS,
     CONF_MESSAGES_INTERVAL,
-    DEFAULT_UPDATE_TICK,
     NodeType,
 )
 from .meshcore_api import MeshCoreAPI
@@ -279,10 +279,17 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         
     async def _update_repeater(self, repeater_config):
         """Update a repeater and schedule the next update.
+
         
         This runs as a separate task so it doesn't block the main update loop.
         If we fail to get stats multiple times, we'll try to login.
         """
+        # add a random delay to avoid all repeaters updating at the same time
+        # 0-5 seconds random delay
+        random_delay = random.uniform(0, 5)
+        await asyncio.sleep(random_delay)
+
+        
         pubkey_prefix = repeater_config.get("pubkey_prefix")
         repeater_name = repeater_config.get("name")
         
