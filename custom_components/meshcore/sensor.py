@@ -287,6 +287,23 @@ REPEATER_SENSORS = [
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:percent",
     ),
+    SensorEntityDescription(
+        key="rx_airtime",
+        name="RX Airtime",
+        native_unit_of_measurement="min",
+        suggested_display_precision="1",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:radio",
+    ),
+    SensorEntityDescription(
+        key="rx_airtime_utilization",
+        name="RX Airtime Utilization",
+        device_class=SensorDeviceClass.POWER_FACTOR,
+        native_unit_of_measurement="%",
+        suggested_display_precision="1",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:percent",
+    ),
 ]
 
 
@@ -612,6 +629,9 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
         elif key == "airtime" and isinstance(value, (int, float)) and value > 0:
             return round(value / 60, 1)  # Convert seconds to minutes
             
+        elif key == "rx_airtime" and isinstance(value, (int, float)) and value > 0:
+            return round(value / 60, 1)  # Convert seconds to minutes
+            
         elif key == "airtime_utilization":
             current_uptime = self._cached_stats.get("uptime")
             current_airtime = self._cached_stats.get("airtime")
@@ -629,6 +649,26 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
                     
                     if uptime_delta > 0 and airtime_delta >= 0:
                         utilization_rate = (airtime_delta / uptime_delta) * 100
+                        return round(utilization_rate, 1)
+            return 0  # No previous data or no change
+            
+        elif key == "rx_airtime_utilization":
+            current_uptime = self._cached_stats.get("uptime")
+            current_rx_airtime = self._cached_stats.get("rx_airtime")
+            
+            if not isinstance(current_uptime, (int, float)) or not isinstance(current_rx_airtime, (int, float)):
+                return None
+                
+            if self._previous_stats:
+                prev_uptime = self._previous_stats.get("uptime", 0)
+                prev_rx_airtime = self._previous_stats.get("rx_airtime", 0)
+                
+                if isinstance(prev_uptime, (int, float)) and isinstance(prev_rx_airtime, (int, float)):
+                    uptime_delta = current_uptime - prev_uptime
+                    rx_airtime_delta = current_rx_airtime - prev_rx_airtime
+                    
+                    if uptime_delta > 0 and rx_airtime_delta >= 0:
+                        utilization_rate = (rx_airtime_delta / uptime_delta) * 100
                         return round(utilization_rate, 1)
             return 0  # No previous data or no change
             
@@ -668,7 +708,7 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
             # Add raw values for certain sensors
             if key == "bat" and "bat" in self._cached_stats:
                 attributes["raw_millivolts"] = self._cached_stats["bat"]
-            elif key in ["uptime", "airtime"] and key in self._cached_stats:
+            elif key in ["uptime", "airtime", "rx_airtime"] and key in self._cached_stats:
                 seconds = self._cached_stats[key]
                 if isinstance(seconds, (int, float)) and seconds > 0:
                     # Add human-readable format for uptime
@@ -692,6 +732,20 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
                         if isinstance(prev_airtime, (int, float)) and prev_airtime < airtime:
                             airtime_delta = airtime - prev_airtime
                             attributes["airtime_since_last_update"] = str(round(airtime_delta / 60, 1))  # in minutes
+            elif key == "rx_airtime_utilization":
+                uptime = self._cached_stats.get("uptime")
+                rx_airtime = self._cached_stats.get("rx_airtime")
+                
+                if isinstance(uptime, (int, float)) and isinstance(rx_airtime, (int, float)):
+                    attributes["uptime_seconds"] = str(uptime)
+                    attributes["rx_airtime_seconds"] = str(rx_airtime)
+                    
+                    # Calculate rx_airtime since last update if we have previous values
+                    if self._previous_stats:
+                        prev_rx_airtime = self._previous_stats.get("rx_airtime", 0)
+                        if isinstance(prev_rx_airtime, (int, float)) and prev_rx_airtime < rx_airtime:
+                            rx_airtime_delta = rx_airtime - prev_rx_airtime
+                            attributes["rx_airtime_since_last_update"] = str(round(rx_airtime_delta / 60, 1))  # in minutes
             
             return attributes
             
@@ -712,7 +766,7 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
             bat_value = repeater_stats.get("bat")
             if isinstance(bat_value, (int, float)) and bat_value > 0:
                 attributes["raw_millivolts"] = bat_value
-        elif key in ["uptime", "airtime"]:
+        elif key in ["uptime", "airtime", "rx_airtime"]:
             seconds = repeater_stats.get(key)
             if isinstance(seconds, (int, float)) and seconds > 0:
                 attributes["raw_seconds"] = seconds
