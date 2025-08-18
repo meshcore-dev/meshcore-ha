@@ -1,10 +1,7 @@
 """Config flow for MeshCore integration."""
 import logging
 import asyncio
-import os
 from typing import Any, Dict, Optional
-
-import meshcore
 
 import voluptuous as vol
 from homeassistant import config_entries
@@ -35,7 +32,14 @@ from .const import (
     CONF_REPEATER_NAME,
     CONF_REPEATER_PASSWORD,
     CONF_REPEATER_UPDATE_INTERVAL,
+    CONF_REPEATER_TELEMETRY_ENABLED,
     DEFAULT_REPEATER_UPDATE_INTERVAL,
+    CONF_TRACKED_CLIENTS,
+    CONF_CLIENT_NAME,
+    CONF_CLIENT_UPDATE_INTERVAL,
+    DEFAULT_CLIENT_UPDATE_INTERVAL,
+    CONF_CONTACT_REFRESH_INTERVAL,
+    DEFAULT_CONTACT_REFRESH_INTERVAL,
     NodeType,
 )
 from .meshcore_api import MeshCoreAPI
@@ -56,20 +60,23 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
 USB_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_USB_PATH): str,
-        vol.Optional(CONF_BAUDRATE, default=DEFAULT_BAUDRATE): cv.positive_int
+        vol.Optional(CONF_BAUDRATE, default=DEFAULT_BAUDRATE): cv.positive_int,
+        vol.Optional(CONF_CONTACT_REFRESH_INTERVAL, default=DEFAULT_CONTACT_REFRESH_INTERVAL): vol.All(cv.positive_int, vol.Range(min=30, max=3600))
     }
 )
 
 BLE_SCHEMA = vol.Schema(
     {
-        vol.Required(CONF_BLE_ADDRESS): str
+        vol.Required(CONF_BLE_ADDRESS): str,
+        vol.Optional(CONF_CONTACT_REFRESH_INTERVAL, default=DEFAULT_CONTACT_REFRESH_INTERVAL): vol.All(cv.positive_int, vol.Range(min=30, max=3600))
     }
 )
 
 TCP_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_TCP_HOST): str,
-        vol.Optional(CONF_TCP_PORT, default=DEFAULT_TCP_PORT): cv.port
+        vol.Optional(CONF_TCP_PORT, default=DEFAULT_TCP_PORT): cv.port,
+        vol.Optional(CONF_CONTACT_REFRESH_INTERVAL, default=DEFAULT_CONTACT_REFRESH_INTERVAL): vol.All(cv.positive_int, vol.Range(min=30, max=3600))
     }
 )
 
@@ -145,7 +152,7 @@ async def validate_tcp_input(hass: HomeAssistant, data: Dict[str, Any]) -> Dict[
 class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: ignore
     """Handle a config flow for MeshCore."""
 
-    VERSION = 1
+    VERSION = 2
 
     def __init__(self) -> None:
         """Initialize flow."""
@@ -187,9 +194,11 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                     CONF_CONNECTION_TYPE: CONNECTION_TYPE_USB,
                     CONF_USB_PATH: user_input[CONF_USB_PATH],
                     CONF_BAUDRATE: user_input[CONF_BAUDRATE],
+                    CONF_CONTACT_REFRESH_INTERVAL: user_input[CONF_CONTACT_REFRESH_INTERVAL],
                     CONF_NAME: info.get("name"),
                     CONF_PUBKEY: info.get("pubkey"),
-                    CONF_REPEATER_SUBSCRIPTIONS: [],  # Initialize with empty repeater subscriptions
+                    CONF_REPEATER_SUBSCRIPTIONS: [],
+                    CONF_TRACKED_CLIENTS: [],
                 })
             except CannotConnect:
                 errors["base"] = "cannot_connect"
@@ -204,6 +213,7 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
             data_schema=vol.Schema({
                 vol.Required(CONF_USB_PATH): str,
                 vol.Optional(CONF_BAUDRATE, default=DEFAULT_BAUDRATE): cv.positive_int,
+                vol.Optional(CONF_CONTACT_REFRESH_INTERVAL, default=DEFAULT_CONTACT_REFRESH_INTERVAL): vol.All(cv.positive_int, vol.Range(min=30, max=3600)),
             }),
             errors=errors
         )
@@ -218,9 +228,11 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                 return self.async_create_entry(title=info["title"], data={
                     CONF_CONNECTION_TYPE: CONNECTION_TYPE_BLE,
                     CONF_BLE_ADDRESS: user_input[CONF_BLE_ADDRESS],
+                    CONF_CONTACT_REFRESH_INTERVAL: user_input[CONF_CONTACT_REFRESH_INTERVAL],
                     CONF_NAME: info.get("name"),
                     CONF_PUBKEY: info.get("pubkey"),
-                    CONF_REPEATER_SUBSCRIPTIONS: [],  # Initialize with empty repeater subscriptions
+                    CONF_REPEATER_SUBSCRIPTIONS: [],
+                    CONF_TRACKED_CLIENTS: [],
                 })
             except CannotConnect:
                 errors["base"] = "cannot_connect"
@@ -244,12 +256,14 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
             schema = vol.Schema(
                 {
                     vol.Required(CONF_BLE_ADDRESS): vol.In(devices),
+                    vol.Optional(CONF_CONTACT_REFRESH_INTERVAL, default=DEFAULT_CONTACT_REFRESH_INTERVAL): vol.All(cv.positive_int, vol.Range(min=30, max=3600)),
                 }
             )
         else:
             # Otherwise, allow manual entry, but with simplified schema
             schema = vol.Schema({
                 vol.Required(CONF_BLE_ADDRESS): str,
+                vol.Optional(CONF_CONTACT_REFRESH_INTERVAL, default=DEFAULT_CONTACT_REFRESH_INTERVAL): vol.All(cv.positive_int, vol.Range(min=30, max=3600)),
             })
 
         return self.async_show_form(
@@ -267,9 +281,11 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                     CONF_CONNECTION_TYPE: CONNECTION_TYPE_TCP,
                     CONF_TCP_HOST: user_input[CONF_TCP_HOST],
                     CONF_TCP_PORT: user_input[CONF_TCP_PORT],
+                    CONF_CONTACT_REFRESH_INTERVAL: user_input[CONF_CONTACT_REFRESH_INTERVAL],
                     CONF_NAME: info.get("name"),
                     CONF_PUBKEY: info.get("pubkey"),
-                    CONF_REPEATER_SUBSCRIPTIONS: [] # Initialize with empty repeater subscriptions
+                    CONF_REPEATER_SUBSCRIPTIONS: [],
+                    CONF_TRACKED_CLIENTS: [],
                 })
             except CannotConnect:
                 errors["base"] = "cannot_connect"
@@ -281,7 +297,8 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
             step_id="tcp", 
             data_schema=vol.Schema({
                 vol.Required(CONF_TCP_HOST): str,
-                vol.Optional(CONF_TCP_PORT, default=DEFAULT_TCP_PORT): cv.port
+                vol.Optional(CONF_TCP_PORT, default=DEFAULT_TCP_PORT): cv.port,
+                vol.Optional(CONF_CONTACT_REFRESH_INTERVAL, default=DEFAULT_CONTACT_REFRESH_INTERVAL): vol.All(cv.positive_int, vol.Range(min=30, max=3600)),
             }),
             errors=errors
         )
@@ -292,95 +309,60 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
     def __init__(self, config_entry):
         """Initialize options flow."""
+        self.config_entry = config_entry
         self.repeater_subscriptions = list(config_entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, []))
+        self.tracked_clients = list(config_entry.data.get(CONF_TRACKED_CLIENTS, []))
         self.hass = None
 
     async def async_step_init(self, user_input=None):
-        """Handle options flow."""
+        """Handle options flow main menu."""
         if user_input is not None:
-            # Get the action from the input
             action = user_input.get("action")
             
             if action == "add_repeater":
-                # Go to add repeater screen
                 return await self.async_step_add_repeater()
-                
-            elif action == "remove_repeater" and user_input.get("repeater_to_remove"):
-                # Remove the selected repeater
-                repeater_to_remove = user_input.get("repeater_to_remove")
-
-                # The repeater_to_remove has format: "Name (prefix)"
-                selected_str = repeater_to_remove
-                # Extract the pubkey from between parentheses
-                start = selected_str.rfind("(") + 1
-                end = selected_str.rfind(")")
-                pubkey_prefix_to_remove = selected_str[start:end]
-
-                # Update the list without the removed repeater by comparing pubkey prefix
-                self.repeater_subscriptions = [
-                    r for r in self.repeater_subscriptions
-                    if not (r.get("pubkey_prefix") and
-                           r.get("pubkey_prefix").startswith(pubkey_prefix_to_remove))
-                ]
-                
-                # Update the config entry data
-                new_data = dict(self.config_entry.data)
-                new_data[CONF_REPEATER_SUBSCRIPTIONS] = self.repeater_subscriptions
-                self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
-                
-                # Return to the init step to show updated list
-                return await self.async_step_init()
-                
+            elif action == "add_client":
+                return await self.async_step_add_client()
+            elif action == "manage_devices":
+                return await self.async_step_manage_devices()
+            elif action == "global_settings":
+                return await self.async_step_global_settings()
             else:
-                # Save options
-                new_options = {}
-                return self.async_create_entry(title="", data=new_options)
+                return self.async_create_entry(title="", data={})
 
-        # Build the schema with a list of options
-        schema = {
-            vol.Optional(
-                "action"
-            ): vol.In({
-                "add_repeater": "Add Repeater",
-                "remove_repeater": "Remove Repeater",
-            }),
-        }
+        # Get device counts for display
+        repeater_count = len(self.repeater_subscriptions)
+        client_count = len(self.tracked_clients)
         
-        # If there are repeaters and the action is remove, add a selection dropdown
-        if self.repeater_subscriptions and "action" in schema:
-            # Create a dictionary for dropdown with pubkey_prefix as the value
-            repeater_entries = {}
-            for r in self.repeater_subscriptions:
-                name = r.get("name", "")
-                pubkey_prefix = r.get("pubkey_prefix", "")
-                if name and pubkey_prefix:
-                    # Display name includes pubkey prefix
-                    display_name = f"{name} ({pubkey_prefix})"
-                    # Value is the pubkey_prefix for unique identification
-                    repeater_entries[display_name] = display_name
-
-            if repeater_entries:
-                schema["repeater_to_remove"] = vol.In(repeater_entries)
+        # Build device status display
+        device_status_lines = []
+        connection_type = self.config_entry.data.get(CONF_CONNECTION_TYPE, "unknown")
+        primary_node_name = self.config_entry.data.get(CONF_NAME, "Unknown")
+        device_status_lines.append(f"Primary Node: {primary_node_name} ({connection_type})")
+        device_status_lines.append(f"Monitored Devices: {repeater_count + client_count} active")
         
-        # Filter out None values, defaults, or empty strings
-        repeater_display_names = []
-        for r in self.repeater_subscriptions:
-            name = r.get("name")
-            pubkey_prefix = r.get("pubkey_prefix", "")
-            if name and isinstance(name, str):
-                # Include prefix in display name if available
-                if pubkey_prefix:
-                    repeater_display_names.append(f"{name} ({pubkey_prefix})")
-                else:
-                    repeater_display_names.append(name)
-
-        repeater_str = ", ".join(repeater_display_names) if repeater_display_names else "None configured"
+        # Add device list if any exist
+        if repeater_count > 0:
+            device_status_lines.append(f"Repeaters: {repeater_count} configured")
+        if client_count > 0:
+            device_status_lines.append(f"Tracked Clients: {client_count} configured")
+            
+        device_status = "\n".join(device_status_lines)
+        
+        schema = vol.Schema({
+            vol.Required("action"): vol.In({
+                "add_repeater": "Add Repeater Station",
+                "add_client": "Add Tracked Client", 
+                "manage_devices": "Manage Monitored Devices",
+                "global_settings": "Global Settings",
+            })
+        })
 
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema(schema),
+            data_schema=schema,
             description_placeholders={
-                "repeaters": repeater_str
+                "device_status": device_status
             },
         )
         
@@ -431,17 +413,20 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         # Get values from user_input or use defaults
         default_password = ""
         default_interval = DEFAULT_REPEATER_UPDATE_INTERVAL
+        default_telemetry = False
         
         if user_input:
             default_password = user_input.get(CONF_REPEATER_PASSWORD, "")
             default_interval = user_input.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
+            default_telemetry = user_input.get(CONF_REPEATER_TELEMETRY_ENABLED, False)
             
         return self.async_show_form(
             step_id="add_repeater",
             data_schema=vol.Schema({
                 vol.Required(CONF_REPEATER_NAME): vol.In(repeater_dict.keys()),
                 vol.Optional(CONF_REPEATER_PASSWORD, default=default_password): str,
-                vol.Optional(CONF_REPEATER_UPDATE_INTERVAL, default=default_interval): int,
+                vol.Optional(CONF_REPEATER_TELEMETRY_ENABLED, default=default_telemetry): bool,
+                vol.Optional(CONF_REPEATER_UPDATE_INTERVAL, default=default_interval): vol.All(cv.positive_int, vol.Range(min=300, max=3600)),
             }),
             errors=errors,
         )
@@ -477,6 +462,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         selected_repeater = user_input.get(CONF_REPEATER_NAME)
         password = user_input.get(CONF_REPEATER_PASSWORD)
         update_interval = user_input.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
+        telemetry_enabled = user_input.get(CONF_REPEATER_TELEMETRY_ENABLED, True)
 
         # The selected_repeater has format: "Name (prefix)"
         selected_str = selected_repeater
@@ -548,8 +534,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             "pubkey_prefix": pubkey_prefix,
             "firmware_version": ver,
             "password": password,
+            "telemetry_enabled": telemetry_enabled,
             "update_interval": update_interval,
-            "enabled": True,
         })
 
         # Update the config entry data
@@ -559,4 +545,284 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
         # Return to the init step
         return await self.async_step_init() # type: ignore
+        
+    async def async_step_add_client(self, user_input=None):
+        """Handle adding a tracked client."""
+        errors = {}
+        
+        # Get client contacts
+        client_contacts = self._get_client_contacts()
+        
+        if not client_contacts:
+            return self.async_show_form(
+                step_id="add_client",
+                data_schema=vol.Schema({
+                    vol.Required("no_clients", default="No client devices found in contacts. Please ensure your device has client devices in its contacts list."): str,
+                }),
+                errors=errors,
+            )
+
+        # Create a dictionary with name as key and (prefix, name) tuple as value
+        client_dict = {}
+        for prefix, name in client_contacts:
+            display_name = f"{name} ({prefix})"
+            client_dict[display_name] = (prefix, name)
+            
+        if user_input is None:
+            return self.async_show_form(
+                step_id="add_client",
+                data_schema=vol.Schema({
+                    vol.Required(CONF_CLIENT_NAME): vol.In(client_dict.keys()),
+                    vol.Optional(CONF_CLIENT_UPDATE_INTERVAL, default=DEFAULT_CLIENT_UPDATE_INTERVAL): vol.All(cv.positive_int, vol.Range(min=600, max=7200)),
+                }),
+                errors=errors,
+            )
+            
+        selected_client = user_input.get(CONF_CLIENT_NAME)
+        update_interval = user_input.get(CONF_CLIENT_UPDATE_INTERVAL, DEFAULT_CLIENT_UPDATE_INTERVAL)
+
+        # Extract pubkey prefix and name from selection
+        start = selected_client.rfind("(") + 1
+        end = selected_client.rfind(")")
+        pubkey_prefix = selected_client[start:end]
+        client_name = selected_client[:start-1].strip()
+
+        # Check if this client is already tracked
+        existing_prefixes = [c.get("pubkey_prefix") for c in self.tracked_clients]
+        if pubkey_prefix in existing_prefixes:
+            errors["base"] = "Client is already being tracked"
+            return self.async_show_form(
+                step_id="add_client",
+                data_schema=vol.Schema({
+                    vol.Required(CONF_CLIENT_NAME): vol.In(client_dict.keys()),
+                    vol.Optional(CONF_CLIENT_UPDATE_INTERVAL, default=DEFAULT_CLIENT_UPDATE_INTERVAL): vol.All(cv.positive_int, vol.Range(min=600, max=7200)),
+                }),
+                errors=errors,
+            )
+
+        # Add the new client tracking
+        self.tracked_clients.append({
+            "name": client_name,
+            "pubkey_prefix": pubkey_prefix,
+            "update_interval": update_interval,
+        })
+
+        # Update the config entry data
+        new_data = dict(self.config_entry.data)
+        new_data[CONF_TRACKED_CLIENTS] = self.tracked_clients
+        self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
+
+        # Return to the init step
+        return await self.async_step_init() # type: ignore
+        
+    async def async_step_manage_devices(self, user_input=None):
+        """Handle device management."""
+        if user_input is not None:
+            action = user_input.get("device_action")
+            device_id = user_input.get("selected_device")
+            
+            if action == "edit" and device_id:
+                # Store device info for edit form
+                self._edit_device_id = device_id
+                if device_id.startswith("repeater_"):
+                    return await self.async_step_edit_repeater()
+                elif device_id.startswith("client_"):
+                    return await self.async_step_edit_client()
+            
+            elif action == "remove" and device_id:
+                # Remove the selected device
+                if device_id.startswith("repeater_"):
+                    prefix = device_id[9:]  # Remove "repeater_" prefix
+                    self.repeater_subscriptions = [
+                        r for r in self.repeater_subscriptions
+                        if r.get("pubkey_prefix") != prefix
+                    ]
+                elif device_id.startswith("client_"):
+                    prefix = device_id[7:]  # Remove "client_" prefix
+                    self.tracked_clients = [
+                        c for c in self.tracked_clients
+                        if c.get("pubkey_prefix") != prefix
+                    ]
+                
+                # Update config entry
+                new_data = dict(self.config_entry.data)
+                new_data[CONF_REPEATER_SUBSCRIPTIONS] = self.repeater_subscriptions
+                new_data[CONF_TRACKED_CLIENTS] = self.tracked_clients
+                self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
+                
+                return await self.async_step_manage_devices()
+            
+            else:
+                return await self.async_step_init()
+        
+        # Build device list for management
+        device_options = {}
+        device_list = []
+        
+        for r in self.repeater_subscriptions:
+            name = r.get("name", "")
+            prefix = r.get("pubkey_prefix", "")
+            telemetry = r.get("telemetry_enabled", False)
+            telem_status = "📊 Telemetry ON" if telemetry else "📊 Telemetry OFF"
+            display = f"📡 {name} ({telem_status})"
+            device_options[f"repeater_{prefix}"] = display
+            device_list.append(display)
+            
+        for c in self.tracked_clients:
+            name = c.get("name", "")
+            prefix = c.get("pubkey_prefix", "")
+            display = f"📱 {name} (Tracking)"
+            device_options[f"client_{prefix}"] = display
+            device_list.append(display)
+        
+        if not device_options:
+            return self.async_show_form(
+                step_id="manage_devices",
+                data_schema=vol.Schema({
+                    vol.Required("no_devices", default="No devices configured yet."): str,
+                }),
+            )
+        
+        device_status = "\n".join([f"• {item}" for item in device_list])
+        
+        return self.async_show_form(
+            step_id="manage_devices",
+            data_schema=vol.Schema({
+                vol.Required("selected_device"): vol.In(device_options),
+                vol.Required("device_action"): vol.In({
+                    "edit": "Edit Device Settings",
+                    "remove": "Remove Device",
+                }),
+            }),
+            description_placeholders={
+                "device_list": device_status
+            },
+        )
+        
+    async def async_step_global_settings(self, user_input=None):
+        """Handle global settings."""
+        if user_input is not None:
+            # Update global settings in config entry
+            new_data = dict(self.config_entry.data)
+            new_data[CONF_CONTACT_REFRESH_INTERVAL] = user_input[CONF_CONTACT_REFRESH_INTERVAL]
+            self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
+            
+            return await self.async_step_init()
+        
+        # Get current values
+        current_contact_refresh = self.config_entry.data.get(CONF_CONTACT_REFRESH_INTERVAL, DEFAULT_CONTACT_REFRESH_INTERVAL)
+        
+        return self.async_show_form(
+            step_id="global_settings",
+            data_schema=vol.Schema({
+                vol.Optional(CONF_CONTACT_REFRESH_INTERVAL, default=current_contact_refresh): vol.All(cv.positive_int, vol.Range(min=30, max=3600)),
+            }),
+        )
+        
+    def _get_client_contacts(self):
+        """Get client contacts from coordinator's cached data."""
+        if not self.hass or DOMAIN not in self.hass.data:
+            return []
+
+        coordinator = self.hass.data[DOMAIN].get(self.config_entry.entry_id) # type: ignore
+        if not coordinator:
+            return []
+
+        client_contacts = []
+        if not hasattr(coordinator, "_contacts"):
+            return []
+
+        for contact in coordinator._contacts: # type: ignore
+            if not isinstance(contact, dict):
+                continue
+
+            contact_name = contact.get("adv_name", "")
+            if not contact_name:
+                continue
+
+            contact_type = contact.get("type")
+            if contact_type == NodeType.CLIENT:
+                public_key = contact.get("public_key", "")
+                pubkey_prefix = public_key[:12] if public_key else ""
+
+                if pubkey_prefix:
+                    client_contacts.append((pubkey_prefix, contact_name))
+
+        return client_contacts
+        
+    async def async_step_edit_repeater(self, user_input=None):
+        """Handle editing a repeater."""
+        prefix = self._edit_device_id[9:]  # Remove "repeater_" prefix
+        
+        # Find the repeater to edit
+        repeater = None
+        for r in self.repeater_subscriptions:
+            if r.get("pubkey_prefix") == prefix:
+                repeater = r
+                break
+        
+        if not repeater:
+            return await self.async_step_manage_devices()
+        
+        if user_input is not None:
+            # Update repeater settings
+            repeater["password"] = user_input.get(CONF_REPEATER_PASSWORD, repeater.get("password", ""))
+            repeater["telemetry_enabled"] = user_input[CONF_REPEATER_TELEMETRY_ENABLED]
+            repeater["update_interval"] = user_input[CONF_REPEATER_UPDATE_INTERVAL]
+            
+            # Update config entry
+            new_data = dict(self.config_entry.data)
+            new_data[CONF_REPEATER_SUBSCRIPTIONS] = self.repeater_subscriptions
+            self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
+            
+            return await self.async_step_manage_devices()
+        
+        # Show current settings
+        return self.async_show_form(
+            step_id="edit_repeater",
+            data_schema=vol.Schema({
+                vol.Optional(CONF_REPEATER_PASSWORD, default=repeater.get("password", "")): str,
+                vol.Optional(CONF_REPEATER_TELEMETRY_ENABLED, default=repeater.get("telemetry_enabled", False)): bool,
+                vol.Optional(CONF_REPEATER_UPDATE_INTERVAL, default=repeater.get("update_interval", DEFAULT_REPEATER_UPDATE_INTERVAL)): vol.All(cv.positive_int, vol.Range(min=300, max=3600)),
+            }),
+            description_placeholders={
+                "device_name": repeater.get("name", "Unknown")
+            },
+        )
+        
+    async def async_step_edit_client(self, user_input=None):
+        """Handle editing a tracked client."""
+        prefix = self._edit_device_id[7:]  # Remove "client_" prefix
+        
+        # Find the client to edit
+        client = None
+        for c in self.tracked_clients:
+            if c.get("pubkey_prefix") == prefix:
+                client = c
+                break
+        
+        if not client:
+            return await self.async_step_manage_devices()
+        
+        if user_input is not None:
+            # Update client settings
+            client["update_interval"] = user_input[CONF_CLIENT_UPDATE_INTERVAL]
+            
+            # Update config entry
+            new_data = dict(self.config_entry.data)
+            new_data[CONF_TRACKED_CLIENTS] = self.tracked_clients
+            self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
+            
+            return await self.async_step_manage_devices()
+        
+        # Show current settings
+        return self.async_show_form(
+            step_id="edit_client",
+            data_schema=vol.Schema({
+                vol.Optional(CONF_CLIENT_UPDATE_INTERVAL, default=client.get("update_interval", DEFAULT_CLIENT_UPDATE_INTERVAL)): vol.All(cv.positive_int, vol.Range(min=600, max=7200)),
+            }),
+            description_placeholders={
+                "device_name": client.get("name", "Unknown")
+            },
+        )
         

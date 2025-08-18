@@ -573,7 +573,6 @@ class MeshCoreSensor(CoordinatorEntity, SensorEntity):
     def native_value(self) -> Any:
         return self._native_value
 
-
 class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
     """Sensor for repeater statistics with event-based updates."""
     
