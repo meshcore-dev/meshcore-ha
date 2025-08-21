@@ -37,6 +37,7 @@ from .utils import (
     format_entity_id,
     calculate_battery_percentage,
 )
+from .telemetry_sensor import TelemetrySensorManager
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -392,6 +393,10 @@ async def async_setup_entry(
     # Store the async_add_entities function for later use
     coordinator.sensor_add_entities = async_add_entities
     
+    # Initialize telemetry sensor manager for dynamic sensor creation
+    coordinator.telemetry_manager = TelemetrySensorManager(coordinator, async_add_entities)
+    await coordinator.telemetry_manager.setup_telemetry_listener()
+    
     # First, handle cleanup of removed repeater devices
     # Get registries
     device_registry = async_get_device_registry(hass)
@@ -661,7 +666,7 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
         # Create a deep copy of the payload to avoid modifying the original event
         if event.payload:
             if event.payload.get('uptime', 0) == 0:
-                self.logger.error(f"Skipping event with malformed payload: {event.payload}")
+                _LOGGER.error(f"Skipping event with malformed payload: {event.payload}")
                 return 
             # Store previous stats before updating
             self._previous_stats = self._cached_stats.copy()

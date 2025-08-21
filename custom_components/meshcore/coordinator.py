@@ -26,6 +26,9 @@ from .const import (
     MAX_REPEATER_FAILURES_BEFORE_LOGIN,
     REPEATER_BACKOFF_BASE,
     REPEATER_BACKOFF_MAX_MULTIPLIER,
+    CONF_CONTACT_REFRESH_INTERVAL,
+    DEFAULT_CONTACT_REFRESH_INTERVAL,
+    CONF_REPEATER_TELEMETRY_ENABLED,
 )
 from .meshcore_api import MeshCoreAPI
 
@@ -94,10 +97,19 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         # Track last update times for different data types
         self._last_repeater_updates = {}  # Dictionary to track per-repeater updates
         self._contacts = []
+        self._last_contact_refresh = 0  # Track when contacts were last refreshed
+        
+        # Telemetry tracking - separate from repeater/client specific logic
+        self._next_telemetry_update_times = {}  # Track when each node should have telemetry updated
+        self._active_telemetry_tasks = {}  # Track active telemetry tasks by pubkey_prefix
+        self._telemetry_consecutive_failures = {}  # Track consecutive failed telemetry updates by pubkey_prefix
         
         # Initialization tracking flags
         self._appstart_initialized = False
         self._device_info_initialized = False
+        
+        # Telemetry sensor manager - will be initialized when sensors are set up
+        self.telemetry_manager = None
         
         if not hasattr(self, "last_update_success_time"):
             self.last_update_success_time = time.time()
@@ -112,8 +124,8 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         """
         # add a random delay to avoid all repeaters updating at the same time
         # 0-5 seconds random delay
-        random_delay = random.uniform(0, 5)
-        await asyncio.sleep(random_delay)
+        random_delay = random.uniform(0, 5000)
+        await asyncio.sleep(random_delay / 1000)
 
         
         pubkey_prefix = repeater_config.get("pubkey_prefix")
@@ -201,21 +213,79 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             if pubkey_prefix in self._active_repeater_tasks:
                 self._active_repeater_tasks.pop(pubkey_prefix)
 
-    def _apply_repeater_backoff(self, pubkey_prefix: str, failure_count: int) -> None:
-        """Apply exponential backoff delay for failed repeater updates.
+    def _apply_backoff(self, pubkey_prefix: str, failure_count: int, update_type: str = "repeater") -> None:
+        """Apply exponential backoff delay for failed updates.
         
         Uses DEFAULT_UPDATE_TICK as base since that's how often we check for updates.
+        
+        Args:
+            pubkey_prefix: The node's public key prefix
+            failure_count: Number of consecutive failures
+            update_type: Type of update ("repeater" or "telemetry")
         """
         backoff_multiplier = min(REPEATER_BACKOFF_BASE ** failure_count, REPEATER_BACKOFF_MAX_MULTIPLIER)
         backoff_delay = DEFAULT_UPDATE_TICK * backoff_multiplier
         next_update_time = time.time() + backoff_delay
         
-        self._next_repeater_update_times[pubkey_prefix] = next_update_time
+        if update_type == "telemetry":
+            self._next_telemetry_update_times[pubkey_prefix] = next_update_time
+        else:
+            self._next_repeater_update_times[pubkey_prefix] = next_update_time
         
-        self.logger.debug(f"Applied backoff for repeater {pubkey_prefix}: "
+        self.logger.debug(f"Applied backoff for {update_type} {pubkey_prefix}: "
                          f"failure_count={failure_count}, "
                          f"multiplier={backoff_multiplier}, "
                          f"delay={backoff_delay}s")
+
+    def _apply_repeater_backoff(self, pubkey_prefix: str, failure_count: int) -> None:
+        """Apply exponential backoff delay for failed repeater updates."""
+        self._apply_backoff(pubkey_prefix, failure_count, "repeater")
+
+    async def _update_node_telemetry(self, contact, pubkey_prefix: str, node_name: str, update_interval: int):
+        """Update telemetry for a node (repeater or client).
+        
+        This is a separate method that can be used by both repeater and client update logic.
+        """
+        # Get current failure count
+        failure_count = self._telemetry_consecutive_failures.get(pubkey_prefix, 0)
+
+        # add a random delay to avoid all updating at the same time
+        # 0-5 seconds random delay
+        random_delay = random.uniform(0, 5000)
+        await asyncio.sleep(random_delay / 1000)
+        
+        try:
+            self.logger.debug(f"Sending telemetry request to node: {node_name} ({pubkey_prefix})")
+            await self.api.mesh_core.commands.send_telemetry_req(contact)
+            telemetry_result = await self.api.mesh_core.wait_for_event(
+                EventType.TELEMETRY_RESPONSE,
+                attribute_filters={"pubkey_prefix": pubkey_prefix},
+            )
+            
+            if telemetry_result:
+                self.logger.debug(f"Telemetry response received from {node_name}: {telemetry_result}")
+                # Reset failure count on success
+                self._telemetry_consecutive_failures[pubkey_prefix] = 0
+                # Schedule next telemetry update
+                next_telemetry_time = time.time() + update_interval
+                self._next_telemetry_update_times[pubkey_prefix] = next_telemetry_time
+            else:
+                self.logger.debug(f"No telemetry response received from {node_name}")
+                # Increment failure count and apply backoff
+                new_failure_count = failure_count + 1
+                self._telemetry_consecutive_failures[pubkey_prefix] = new_failure_count
+                self._apply_backoff(pubkey_prefix, new_failure_count, "telemetry")
+                
+        except Exception as ex:
+            self.logger.warn(f"Exception requesting telemetry from node {node_name}: {ex}")
+            # Increment failure count and apply backoff
+            new_failure_count = failure_count + 1
+            self._telemetry_consecutive_failures[pubkey_prefix] = new_failure_count
+            self._apply_backoff(pubkey_prefix, new_failure_count, "telemetry")
+        finally:
+            # Remove this task from active telemetry tasks
+            if pubkey_prefix in self._active_telemetry_tasks:
+                self._active_telemetry_tasks.pop(pubkey_prefix)
                 
     async def _async_update_data(self) -> None:
         """Trigger commands that will generate events on schedule.
@@ -284,14 +354,21 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             except Exception as ex:
                 self.logger.error(f"Error fetching device info: {ex}")
         
-        # Get contacts - no need to process, just store in data
-        contacts_result = await self.api.mesh_core.commands.get_contacts()
+        # Get contacts based on refresh interval
+        contact_refresh_interval = self.config_entry.options.get(CONF_CONTACT_REFRESH_INTERVAL, DEFAULT_CONTACT_REFRESH_INTERVAL)
         
-        # Convert contacts to list and store
-        if contacts_result.type == EventType.CONTACTS:
-            self._contacts = list(contacts_result.payload.values())
+        if current_time - self._last_contact_refresh >= contact_refresh_interval:
+            self.logger.debug(f"Refreshing contacts (interval: {contact_refresh_interval}s)")
+            contacts_result = await self.api.mesh_core.commands.get_contacts()
+            
+            # Convert contacts to list and store
+            if contacts_result.type == EventType.CONTACTS:
+                self._contacts = list(contacts_result.payload.values())
+                self._last_contact_refresh = current_time
+            else:
+                self.logger.error(f"Failed to get contacts: {contacts_result.payload}")
         else:
-            self.logger.error(f"Failed to get contacts: {contacts_result.payload}")
+            self.logger.debug(f"Skipping contact refresh (next in {contact_refresh_interval - (current_time - self._last_contact_refresh):.1f}s)")
             
         # Store contacts in result data
         result_data["contacts"] = self._contacts
@@ -346,3 +423,48 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 
                 # Set a name for the task for better debugging
                 update_task.set_name(f"update_repeater_{repeater_name}")
+
+        # Check and update telemetry for nodes that have it enabled
+        _LOGGER.debug("Checking telemetry for tracked repeaters: %s", self._next_telemetry_update_times)
+        for repeater_config in self._tracked_repeaters:
+            if not repeater_config.get('name') or not repeater_config.get('pubkey_prefix'):
+                continue
+                
+            telemetry_enabled = repeater_config.get(CONF_REPEATER_TELEMETRY_ENABLED, False)
+            if not telemetry_enabled:
+                continue
+                
+            pubkey_prefix = repeater_config.get("pubkey_prefix")
+            repeater_name = repeater_config.get("name")
+            
+            # Clean up completed telemetry tasks
+            if pubkey_prefix in self._active_telemetry_tasks:
+                task = self._active_telemetry_tasks[pubkey_prefix]
+                if task.done():
+                    self._active_telemetry_tasks.pop(pubkey_prefix)
+                    if task.exception():
+                        _LOGGER.error(f"Telemetry update task for {repeater_name} failed with exception: {task.exception()}")
+                else:
+                    # Task is still running, skip this node
+                    _LOGGER.debug(f"Telemetry task for {repeater_name} still running, skipping")
+                    continue
+            
+            # Check if it's time to update telemetry for this node
+            next_telemetry_time = self._next_telemetry_update_times.get(pubkey_prefix, 0)
+            if current_time >= next_telemetry_time:
+                # Find the contact for this node
+                contact = self.api.mesh_core.get_contact_by_key_prefix(pubkey_prefix)
+                if contact:
+                    _LOGGER.debug(f"Starting telemetry update task for {repeater_name}")
+                    
+                    # Use same interval as repeater update for telemetry
+                    update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
+                    
+                    # Create and start telemetry task
+                    telemetry_task = asyncio.create_task(
+                        self._update_node_telemetry(contact, pubkey_prefix, repeater_name, update_interval)
+                    )
+                    self._active_telemetry_tasks[pubkey_prefix] = telemetry_task
+                    telemetry_task.set_name(f"telemetry_{repeater_name}")
+                else:
+                    _LOGGER.warning(f"Could not find contact for telemetry request: {pubkey_prefix}")

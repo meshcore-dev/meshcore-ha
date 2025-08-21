@@ -151,3 +151,67 @@ def calculate_battery_percentage(voltage_mv: float) -> float:
     
     # Fallback (should not happen with proper curve data)
     return 0.0
+
+
+def build_device_name(name: str, pubkey_prefix: str, node_type: str = "unknown") -> str:
+    """Build consistent device name based on node info.
+    
+    Args:
+        name: Node name
+        pubkey_prefix: Public key prefix (at least 6 chars)
+        node_type: Type of node ("root", "repeater", "client", "contact", "unknown")
+        
+    Returns:
+        Formatted device name
+    """
+    if not name:
+        name = f"Node {pubkey_prefix[:6]}"
+        
+    pubkey_short = pubkey_prefix[:6] if pubkey_prefix else ""
+    
+    if node_type == "root":
+        return f"MeshCore {name} ({pubkey_short})"
+    elif node_type == "repeater":
+        return f"MeshCore Repeater: {name} ({pubkey_short})"
+    elif node_type == "client":
+        return f"MeshCore Client: {name} ({pubkey_short})"
+    else:
+        return f"MeshCore Node: {name} ({pubkey_short})"
+
+
+def get_device_model(node_type: str) -> str:
+    """Get device model based on node type.
+    
+    Args:
+        node_type: Type of node ("root", "repeater", "client", "contact", "unknown")
+        
+    Returns:
+        Device model string
+    """
+    if node_type == "root":
+        return "Mesh Radio"
+    elif node_type == "repeater":
+        return "Mesh Repeater"
+    elif node_type == "client":
+        return "Mesh Client"
+    else:
+        return "Mesh Node"
+
+
+def build_device_id(entry_id: str, pubkey_prefix: str, node_type: str = "unknown") -> str:
+    """Build consistent device ID based on node info.
+    
+    Args:
+        entry_id: Config entry ID
+        pubkey_prefix: Public key prefix
+        node_type: Type of node ("root", "repeater", "client", "contact", "unknown")
+        
+    Returns:
+        Device ID string
+    """
+    if node_type == "root":
+        return entry_id
+    elif node_type in ["repeater", "client"]:
+        return f"{entry_id}_{node_type}_{pubkey_prefix}"
+    else:
+        return f"{entry_id}_{node_type}_{pubkey_prefix}"

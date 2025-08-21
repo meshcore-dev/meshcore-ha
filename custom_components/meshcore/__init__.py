@@ -154,7 +154,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Forward all MeshCore events to Home Assistant event bus."""
         if not event:
             return
-            
+
         # Convert event type to string if possible
         event_type_str = str(event.type) if hasattr(event, "type") else "UNKNOWN"
         
@@ -163,6 +163,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             from .utils import sanitize_event_data
                 
             # Fire event to HA event bus with sanitized payload
+            _LOGGER.debug(f"Firing event to HA event bus: {event}")
             hass.bus.async_fire(f"{DOMAIN}_raw_event", {
                 "event_type": event_type_str,
                 "payload": sanitize_event_data(event.payload),
