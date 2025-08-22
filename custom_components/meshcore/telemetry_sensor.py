@@ -177,9 +177,16 @@ class TelemetrySensorManager:
         pubkey_prefix = event.payload.get("pubkey_pre", "")
         lpp_data = event.payload.get("lpp", [])
         
+        # If no pubkey_prefix, this might be self telemetry
         if not pubkey_prefix:
-            _LOGGER.warning("Telemetry event missing pubkey_prefix")
-            return
+            # Check if this is a self telemetry response (no pubkey_pre field)
+            # Use the coordinator's own pubkey for self telemetry
+            if "lpp" in event.payload and self.coordinator.pubkey:
+                pubkey_prefix = self.coordinator.pubkey[:12]  # Use first 12 chars as prefix
+                _LOGGER.debug(f"Self telemetry detected, using coordinator pubkey: {pubkey_prefix}")
+            else:
+                _LOGGER.warning("Telemetry event missing pubkey_prefix and not self telemetry")
+                return
             
         # Find the node info for smart naming
         node_info = self._get_node_info(pubkey_prefix)
@@ -375,9 +382,9 @@ class MeshCoreTelemetrySensor(CoordinatorEntity, SensorEntity):
         sensor_type_name = description.name.lower().replace(" ", "_").replace("ch" + str(channel) + " ", "")
         
         if node_type == "root":
-            # For root node, use shorter format like existing sensors
-            device_name = pubkey_prefix[:6]
-            entity_key = f"ch{channel}_{sensor_type_name}"
+            # For root node, use cleaner entity IDs
+            device_name = "meshcore"
+            entity_key = f"{sensor_type_name}_ch{channel}"
             self.entity_id = format_entity_id("sensor", device_name, entity_key)
         else:
             # For other nodes, include more details

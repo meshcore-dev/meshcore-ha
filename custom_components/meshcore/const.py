@@ -68,6 +68,11 @@ DEFAULT_CLIENT_UPDATE_INTERVAL: Final = 1800  # 30 minutes in seconds
 CONF_CONTACT_REFRESH_INTERVAL: Final = "contact_refresh_interval"
 DEFAULT_CONTACT_REFRESH_INTERVAL: Final = 60  # 1 minute in seconds
 
+# Self telemetry settings
+CONF_SELF_TELEMETRY_ENABLED: Final = "self_telemetry_enabled"
+CONF_SELF_TELEMETRY_INTERVAL: Final = "self_telemetry_interval"
+DEFAULT_SELF_TELEMETRY_INTERVAL: Final = 300  # 5 minutes in seconds
+
 # Backoff constants for repeater failures
 REPEATER_BACKOFF_BASE: Final = 2  # Base multiplier for exponential backoff
 REPEATER_BACKOFF_MAX_MULTIPLIER: Final = 120  # Maximum backoff multiplier (10 minutes when * 5 seconds)

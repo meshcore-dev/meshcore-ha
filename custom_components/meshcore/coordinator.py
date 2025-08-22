@@ -29,6 +29,9 @@ from .const import (
     CONF_CONTACT_REFRESH_INTERVAL,
     DEFAULT_CONTACT_REFRESH_INTERVAL,
     CONF_REPEATER_TELEMETRY_ENABLED,
+    CONF_SELF_TELEMETRY_ENABLED,
+    CONF_SELF_TELEMETRY_INTERVAL,
+    DEFAULT_SELF_TELEMETRY_INTERVAL,
 )
 from .meshcore_api import MeshCoreAPI
 
@@ -99,6 +102,11 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self._contacts = []
         self._last_contact_refresh = 0  # Track when contacts were last refreshed
         
+        # Self telemetry tracking
+        self._last_self_telemetry_update = 0
+        self._self_telemetry_enabled = config_entry.data.get(CONF_SELF_TELEMETRY_ENABLED, False)
+        self._self_telemetry_interval = config_entry.data.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL)
+        
         # Telemetry tracking - separate from repeater/client specific logic
         self._next_telemetry_update_times = {}  # Track when each node should have telemetry updated
         self._active_telemetry_tasks = {}  # Track active telemetry tasks by pubkey_prefix
@@ -113,6 +121,13 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         
         if not hasattr(self, "last_update_success_time"):
             self.last_update_success_time = time.time()
+    
+    def update_telemetry_settings(self, config_entry: ConfigEntry) -> None:
+        """Update telemetry settings from config entry."""
+        self._self_telemetry_enabled = config_entry.data.get(CONF_SELF_TELEMETRY_ENABLED, False)
+        self._self_telemetry_interval = config_entry.data.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL)
+        self._tracked_repeaters = config_entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, [])
+        _LOGGER.debug(f"Updated telemetry settings - Enabled: {self._self_telemetry_enabled}, Interval: {self._self_telemetry_interval}")
     
         
     async def _update_repeater(self, repeater_config):
@@ -370,6 +385,22 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             
         # Store contacts in result data
         result_data["contacts"] = self._contacts
+
+        # Check for self telemetry updates if enabled
+        if self._self_telemetry_enabled:
+            if current_time - self._last_self_telemetry_update >= self._self_telemetry_interval:
+                self.logger.debug(f"Getting self telemetry (interval: {self._self_telemetry_interval}s)")
+                try:
+                    telemetry_result = await self.api.mesh_core.commands.get_self_telemetry()
+                    if telemetry_result.type == EventType.TELEMETRY_RESPONSE:
+                        self.logger.debug(f"Self telemetry received: {telemetry_result.payload}")
+                        self._last_self_telemetry_update = current_time
+                    else:
+                        self.logger.error(f"Failed to get self telemetry: {telemetry_result.payload}")
+                except Exception as ex:
+                    self.logger.error(f"Exception getting self telemetry: {ex}")
+            else:
+                self.logger.debug(f"Skipping self telemetry (next in {self._self_telemetry_interval - (current_time - self._last_self_telemetry_update):.1f}s)")
 
         # Check for messages
         _LOGGER.info("Clearing message queue...")

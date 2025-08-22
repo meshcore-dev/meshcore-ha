@@ -40,6 +40,9 @@ from .const import (
     DEFAULT_CLIENT_UPDATE_INTERVAL,
     CONF_CONTACT_REFRESH_INTERVAL,
     DEFAULT_CONTACT_REFRESH_INTERVAL,
+    CONF_SELF_TELEMETRY_ENABLED,
+    CONF_SELF_TELEMETRY_INTERVAL,
+    DEFAULT_SELF_TELEMETRY_INTERVAL,
     NodeType,
 )
 from .meshcore_api import MeshCoreAPI
@@ -61,14 +64,18 @@ USB_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_USB_PATH): str,
         vol.Optional(CONF_BAUDRATE, default=DEFAULT_BAUDRATE): cv.positive_int,
-        vol.Optional(CONF_CONTACT_REFRESH_INTERVAL, default=DEFAULT_CONTACT_REFRESH_INTERVAL): vol.All(cv.positive_int, vol.Range(min=30, max=3600))
+        vol.Optional(CONF_CONTACT_REFRESH_INTERVAL, default=DEFAULT_CONTACT_REFRESH_INTERVAL): vol.All(cv.positive_int, vol.Range(min=30, max=3600)),
+        vol.Optional(CONF_SELF_TELEMETRY_ENABLED, default=False): cv.boolean,
+        vol.Optional(CONF_SELF_TELEMETRY_INTERVAL, default=DEFAULT_SELF_TELEMETRY_INTERVAL): vol.All(cv.positive_int, vol.Range(min=60, max=3600))
     }
 )
 
 BLE_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_BLE_ADDRESS): str,
-        vol.Optional(CONF_CONTACT_REFRESH_INTERVAL, default=DEFAULT_CONTACT_REFRESH_INTERVAL): vol.All(cv.positive_int, vol.Range(min=30, max=3600))
+        vol.Optional(CONF_CONTACT_REFRESH_INTERVAL, default=DEFAULT_CONTACT_REFRESH_INTERVAL): vol.All(cv.positive_int, vol.Range(min=30, max=3600)),
+        vol.Optional(CONF_SELF_TELEMETRY_ENABLED, default=False): cv.boolean,
+        vol.Optional(CONF_SELF_TELEMETRY_INTERVAL, default=DEFAULT_SELF_TELEMETRY_INTERVAL): vol.All(cv.positive_int, vol.Range(min=60, max=3600))
     }
 )
 
@@ -76,7 +83,9 @@ TCP_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_TCP_HOST): str,
         vol.Optional(CONF_TCP_PORT, default=DEFAULT_TCP_PORT): cv.port,
-        vol.Optional(CONF_CONTACT_REFRESH_INTERVAL, default=DEFAULT_CONTACT_REFRESH_INTERVAL): vol.All(cv.positive_int, vol.Range(min=30, max=3600))
+        vol.Optional(CONF_CONTACT_REFRESH_INTERVAL, default=DEFAULT_CONTACT_REFRESH_INTERVAL): vol.All(cv.positive_int, vol.Range(min=30, max=3600)),
+        vol.Optional(CONF_SELF_TELEMETRY_ENABLED, default=False): cv.boolean,
+        vol.Optional(CONF_SELF_TELEMETRY_INTERVAL, default=DEFAULT_SELF_TELEMETRY_INTERVAL): vol.All(cv.positive_int, vol.Range(min=60, max=3600))
     }
 )
 
@@ -195,6 +204,8 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                     CONF_USB_PATH: user_input[CONF_USB_PATH],
                     CONF_BAUDRATE: user_input[CONF_BAUDRATE],
                     CONF_CONTACT_REFRESH_INTERVAL: user_input[CONF_CONTACT_REFRESH_INTERVAL],
+                    CONF_SELF_TELEMETRY_ENABLED: user_input.get(CONF_SELF_TELEMETRY_ENABLED, False),
+                    CONF_SELF_TELEMETRY_INTERVAL: user_input.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL),
                     CONF_NAME: info.get("name"),
                     CONF_PUBKEY: info.get("pubkey"),
                     CONF_REPEATER_SUBSCRIPTIONS: [],
@@ -214,6 +225,8 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                 vol.Required(CONF_USB_PATH): str,
                 vol.Optional(CONF_BAUDRATE, default=DEFAULT_BAUDRATE): cv.positive_int,
                 vol.Optional(CONF_CONTACT_REFRESH_INTERVAL, default=DEFAULT_CONTACT_REFRESH_INTERVAL): vol.All(cv.positive_int, vol.Range(min=30, max=3600)),
+                vol.Optional(CONF_SELF_TELEMETRY_ENABLED, default=False): cv.boolean,
+                vol.Optional(CONF_SELF_TELEMETRY_INTERVAL, default=DEFAULT_SELF_TELEMETRY_INTERVAL): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
             }),
             errors=errors
         )
@@ -229,6 +242,8 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                     CONF_CONNECTION_TYPE: CONNECTION_TYPE_BLE,
                     CONF_BLE_ADDRESS: user_input[CONF_BLE_ADDRESS],
                     CONF_CONTACT_REFRESH_INTERVAL: user_input[CONF_CONTACT_REFRESH_INTERVAL],
+                    CONF_SELF_TELEMETRY_ENABLED: user_input.get(CONF_SELF_TELEMETRY_ENABLED, False),
+                    CONF_SELF_TELEMETRY_INTERVAL: user_input.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL),
                     CONF_NAME: info.get("name"),
                     CONF_PUBKEY: info.get("pubkey"),
                     CONF_REPEATER_SUBSCRIPTIONS: [],
@@ -257,6 +272,8 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                 {
                     vol.Required(CONF_BLE_ADDRESS): vol.In(devices),
                     vol.Optional(CONF_CONTACT_REFRESH_INTERVAL, default=DEFAULT_CONTACT_REFRESH_INTERVAL): vol.All(cv.positive_int, vol.Range(min=30, max=3600)),
+                    vol.Optional(CONF_SELF_TELEMETRY_ENABLED, default=False): cv.boolean,
+                    vol.Optional(CONF_SELF_TELEMETRY_INTERVAL, default=DEFAULT_SELF_TELEMETRY_INTERVAL): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
                 }
             )
         else:
@@ -264,6 +281,8 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
             schema = vol.Schema({
                 vol.Required(CONF_BLE_ADDRESS): str,
                 vol.Optional(CONF_CONTACT_REFRESH_INTERVAL, default=DEFAULT_CONTACT_REFRESH_INTERVAL): vol.All(cv.positive_int, vol.Range(min=30, max=3600)),
+                vol.Optional(CONF_SELF_TELEMETRY_ENABLED, default=False): cv.boolean,
+                vol.Optional(CONF_SELF_TELEMETRY_INTERVAL, default=DEFAULT_SELF_TELEMETRY_INTERVAL): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
             })
 
         return self.async_show_form(
@@ -282,6 +301,8 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                     CONF_TCP_HOST: user_input[CONF_TCP_HOST],
                     CONF_TCP_PORT: user_input[CONF_TCP_PORT],
                     CONF_CONTACT_REFRESH_INTERVAL: user_input[CONF_CONTACT_REFRESH_INTERVAL],
+                    CONF_SELF_TELEMETRY_ENABLED: user_input.get(CONF_SELF_TELEMETRY_ENABLED, False),
+                    CONF_SELF_TELEMETRY_INTERVAL: user_input.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL),
                     CONF_NAME: info.get("name"),
                     CONF_PUBKEY: info.get("pubkey"),
                     CONF_REPEATER_SUBSCRIPTIONS: [],
@@ -299,6 +320,8 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                 vol.Required(CONF_TCP_HOST): str,
                 vol.Optional(CONF_TCP_PORT, default=DEFAULT_TCP_PORT): cv.port,
                 vol.Optional(CONF_CONTACT_REFRESH_INTERVAL, default=DEFAULT_CONTACT_REFRESH_INTERVAL): vol.All(cv.positive_int, vol.Range(min=30, max=3600)),
+                vol.Optional(CONF_SELF_TELEMETRY_ENABLED, default=False): cv.boolean,
+                vol.Optional(CONF_SELF_TELEMETRY_INTERVAL, default=DEFAULT_SELF_TELEMETRY_INTERVAL): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
             }),
             errors=errors
         )
@@ -709,17 +732,23 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             # Update global settings in config entry
             new_data = dict(self.config_entry.data)
             new_data[CONF_CONTACT_REFRESH_INTERVAL] = user_input[CONF_CONTACT_REFRESH_INTERVAL]
+            new_data[CONF_SELF_TELEMETRY_ENABLED] = user_input[CONF_SELF_TELEMETRY_ENABLED]
+            new_data[CONF_SELF_TELEMETRY_INTERVAL] = user_input[CONF_SELF_TELEMETRY_INTERVAL]
             self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
             
             return await self.async_step_init()
         
         # Get current values
         current_contact_refresh = self.config_entry.data.get(CONF_CONTACT_REFRESH_INTERVAL, DEFAULT_CONTACT_REFRESH_INTERVAL)
+        current_telemetry_enabled = self.config_entry.data.get(CONF_SELF_TELEMETRY_ENABLED, False)
+        current_telemetry_interval = self.config_entry.data.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL)
         
         return self.async_show_form(
             step_id="global_settings",
             data_schema=vol.Schema({
                 vol.Optional(CONF_CONTACT_REFRESH_INTERVAL, default=current_contact_refresh): vol.All(cv.positive_int, vol.Range(min=30, max=3600)),
+                vol.Optional(CONF_SELF_TELEMETRY_ENABLED, default=current_telemetry_enabled): cv.boolean,
+                vol.Optional(CONF_SELF_TELEMETRY_INTERVAL, default=current_telemetry_interval): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
             }),
         )
         
