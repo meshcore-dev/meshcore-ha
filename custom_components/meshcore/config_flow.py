@@ -450,8 +450,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             )
 
         # Create a dictionary with name as key and (prefix, name) tuple as value
+        # Sort contacts alphabetically by name
+        sorted_contacts = sorted(repeater_contacts, key=lambda x: x[1].lower())  # Sort by name (case-insensitive)
         repeater_dict = {}
-        for prefix, name in repeater_contacts:
+        for prefix, name in sorted_contacts:
             display_name = f"{name} ({prefix})"
             repeater_dict[display_name] = (prefix, name)
             
@@ -563,8 +565,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             )
 
         # Create a dictionary with name as key and (prefix, name) tuple as value
+        # Sort contacts alphabetically by name
+        sorted_contacts = sorted(client_contacts, key=lambda x: x[1].lower())  # Sort by name (case-insensitive)
         client_dict = {}
-        for prefix, name in client_contacts:
+        for prefix, name in sorted_contacts:
             display_name = f"{name} ({prefix})"
             client_dict[display_name] = (prefix, name)
             

@@ -361,6 +361,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                         "share_contact": ["contact"],
                         "export_contact": ["contact"],
                         "remove_contact": ["contact"],
+                        "import_contact": ["bytes"],
                         "update_contact": ["contact", "str", "str"],
                         "change_contact_path": ["contact", "str"],
                         "change_contact_flags": ["contact", "str"],

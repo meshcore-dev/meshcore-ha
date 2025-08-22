@@ -223,8 +223,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             failure_count: Number of consecutive failures
             update_type: Type of update ("repeater" or "telemetry")
         """
-        backoff_multiplier = min(REPEATER_BACKOFF_BASE ** failure_count, REPEATER_BACKOFF_MAX_MULTIPLIER)
-        backoff_delay = DEFAULT_UPDATE_TICK * backoff_multiplier
+        backoff_delay = min(REPEATER_BACKOFF_BASE ** failure_count, REPEATER_BACKOFF_MAX_MULTIPLIER)
         next_update_time = time.time() + backoff_delay
         
         if update_type == "telemetry":
@@ -234,7 +233,6 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         
         self.logger.debug(f"Applied backoff for {update_type} {pubkey_prefix}: "
                          f"failure_count={failure_count}, "
-                         f"multiplier={backoff_multiplier}, "
                          f"delay={backoff_delay}s")
 
     def _apply_repeater_backoff(self, pubkey_prefix: str, failure_count: int) -> None:
