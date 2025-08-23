@@ -5,7 +5,6 @@ import logging
 import time
 from pathlib import Path
 from datetime import timedelta
-from typing import Any, Dict
 from .const import (
     CONF_REPEATER_TELEMETRY_ENABLED,
     CONF_TRACKED_CLIENTS,

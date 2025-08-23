@@ -2,7 +2,6 @@
 import logging
 import time
 import voluptuous as vol
-import json
 import shlex
 from typing import Any, Dict, Optional
 
@@ -24,7 +23,6 @@ from .const import (
     ATTR_MESSAGE,
     ATTR_COMMAND,
     ATTR_ENTRY_ID,
-    DEFAULT_DEVICE_NAME,
 )
 
 _LOGGER = logging.getLogger(__name__)

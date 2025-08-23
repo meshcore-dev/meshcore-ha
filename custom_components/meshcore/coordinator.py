@@ -22,6 +22,9 @@ from .const import (
     CONF_REPEATER_PASSWORD,
     CONF_REPEATER_UPDATE_INTERVAL,
     DEFAULT_REPEATER_UPDATE_INTERVAL,
+    CONF_TRACKED_CLIENTS,
+    CONF_CLIENT_UPDATE_INTERVAL,
+    DEFAULT_CLIENT_UPDATE_INTERVAL,
     DEFAULT_UPDATE_TICK,
     MAX_REPEATER_FAILURES_BEFORE_LOGIN,
     REPEATER_BACKOFF_BASE,
@@ -92,6 +95,9 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self._active_repeater_tasks = {}  # Track active update tasks by pubkey_prefix
         self._repeater_consecutive_failures = {}  # Track consecutive failed updates by pubkey_prefix
         
+        # Tracked clients tracking (no login needed, uses ACLs)
+        self._tracked_clients = self.config_entry.data.get(CONF_TRACKED_CLIENTS, [])
+        
         
         # Initialize tracking sets for entities
         self.tracked_contacts = set()
@@ -128,7 +134,8 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self._self_telemetry_enabled = config_entry.data.get(CONF_SELF_TELEMETRY_ENABLED, False)
         self._self_telemetry_interval = config_entry.data.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL)
         self._tracked_repeaters = config_entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, [])
-        _LOGGER.debug(f"Updated telemetry settings - Enabled: {self._self_telemetry_enabled}, Interval: {self._self_telemetry_interval}")
+        self._tracked_clients = config_entry.data.get(CONF_TRACKED_CLIENTS, [])
+        _LOGGER.debug(f"Updated telemetry settings - Enabled: {self._self_telemetry_enabled}, Interval: {self._self_telemetry_interval}, Tracked clients: {len(self._tracked_clients)}")
     
         
     async def _update_repeater(self, repeater_config):
@@ -518,3 +525,38 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     telemetry_task.set_name(f"telemetry_{repeater_name}")
                 else:
                     _LOGGER.warning(f"Could not find contact for telemetry request: {pubkey_prefix}")
+        
+        _LOGGER.debug("Checking telemetry for tracked clients")
+        for client_config in self._tracked_clients:
+            if not client_config.get('name') or not client_config.get('pubkey_prefix'):
+                _LOGGER.warning(f"Client config missing name or pubkey_prefix: {client_config}")
+                continue
+                
+            pubkey_prefix = client_config.get("pubkey_prefix")
+            client_name = client_config.get("name")
+            
+            if pubkey_prefix in self._active_telemetry_tasks:
+                task = self._active_telemetry_tasks[pubkey_prefix]
+                if task.done():
+                    self._active_telemetry_tasks.pop(pubkey_prefix)
+                    if task.exception():
+                        _LOGGER.error(f"Client telemetry update task for {client_name} failed with exception: {task.exception()}")
+                else:
+                    _LOGGER.debug(f"Client telemetry task for {client_name} still running, skipping")
+                    continue
+            
+            next_telemetry_time = self._next_telemetry_update_times.get(pubkey_prefix, 0)
+            if current_time >= next_telemetry_time:
+                contact = self.api.mesh_core.get_contact_by_key_prefix(pubkey_prefix)
+                if contact:
+                    _LOGGER.debug(f"Starting telemetry update task for client {client_name}")
+                    
+                    update_interval = client_config.get("update_interval", DEFAULT_CLIENT_UPDATE_INTERVAL)
+                    
+                    telemetry_task = asyncio.create_task(
+                        self._update_node_telemetry(contact, pubkey_prefix, client_name, update_interval)
+                    )
+                    self._active_telemetry_tasks[pubkey_prefix] = telemetry_task
+                    telemetry_task.set_name(f"client_telemetry_{client_name}")
+                else:
+                    _LOGGER.warning(f"Could not find contact for client telemetry request: {pubkey_prefix}")

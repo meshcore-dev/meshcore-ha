@@ -1,12 +1,9 @@
 """Utility functions for the MeshCore integration."""
 from __future__ import annotations
 import logging
-from typing import Any, Dict, List, Optional, Union
-
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from typing import Any
 
 from .const import (
-    DEFAULT_DEVICE_NAME,
     DOMAIN,
     MESSAGES_SUFFIX,
     CHANNEL_PREFIX,

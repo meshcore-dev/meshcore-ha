@@ -14,13 +14,11 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import DeviceInfo, EntityCategory
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, CONF_REPEATER_SUBSCRIPTIONS, CONF_TRACKED_CLIENTS
+from .const import DOMAIN, CONF_REPEATER_SUBSCRIPTIONS, CONF_TRACKED_CLIENTS, BATTERY_CURVE
 from .utils import (
     sanitize_name, 
     format_entity_id, 
@@ -206,20 +204,25 @@ class TelemetrySensorManager:
                 pubkey_prefix, channel, lpp_type, value, node_info
             )
             
+            _LOGGER.debug(f"Created {len(sensors)} sensors for channel {channel}")
+            
             for sensor in sensors:
                 sensor_key = sensor.get_unique_key()
+                _LOGGER.debug(f"Sensor: name={sensor.name}, key={sensor_key}, entity_id={sensor.entity_id}")
                 if sensor_key not in self.discovered_sensors:
                     self.discovered_sensors[sensor_key] = sensor
                     new_sensors.append(sensor)
                     _LOGGER.info(f"Discovered new telemetry sensor: {sensor.name} ({sensor_key})")
+                else:
+                    _LOGGER.debug(f"Sensor already discovered: {sensor_key}")
         
         # Add any new sensors to Home Assistant
         if new_sensors:
             self.async_add_entities(new_sensors)
             
-        # Update all existing sensors for this node
+        # Update all existing sensors for this node (but skip newly discovered ones)
         for sensor_key, sensor in self.discovered_sensors.items():
-            if sensor_key.startswith(pubkey_prefix):
+            if sensor_key.startswith(pubkey_prefix) and sensor not in new_sensors:
                 sensor.update_from_telemetry(lpp_data)
                 
     def _get_node_info(self, pubkey_prefix: str) -> Dict[str, Any]:
@@ -274,6 +277,42 @@ class TelemetrySensorManager:
         self, pubkey_prefix: str, channel: int, lpp_type: int, value: Any, node_info: Dict[str, Any]
     ) -> list[MeshCoreTelemetrySensor]:
         """Create sensors for a channel, handling multi-value sensors."""
+        # Special handling for client battery on channel 1
+        if node_info.get("type") == "client" and channel == 1 and lpp_type == "voltage":
+            sensors = []
+            
+            # Create voltage sensor
+            voltage_description = SensorEntityDescription(
+                key=f"telemetry_{pubkey_prefix}_{channel}_voltage",
+                name=f"Ch{channel} Battery Voltage",
+                icon="mdi:sine-wave",
+                device_class=SensorDeviceClass.VOLTAGE,
+                native_unit_of_measurement="V",
+                state_class=SensorStateClass.MEASUREMENT,
+                suggested_display_precision=2
+            )
+            voltage_sensor = MeshCoreTelemetrySensor(
+                self.coordinator, voltage_description, pubkey_prefix, channel, lpp_type, node_info
+            )
+            sensors.append(voltage_sensor)
+            
+            # Create battery percentage sensor
+            battery_description = SensorEntityDescription(
+                key=f"telemetry_{pubkey_prefix}_{channel}_battery",
+                name=f"Ch{channel} Battery",
+                icon="mdi:battery",
+                device_class=SensorDeviceClass.BATTERY,
+                native_unit_of_measurement="%",
+                state_class=SensorStateClass.MEASUREMENT,
+                suggested_display_precision=0
+            )
+            battery_sensor = MeshCoreBatteryPercentageSensor(
+                self.coordinator, battery_description, pubkey_prefix, channel, lpp_type, node_info
+            )
+            sensors.append(battery_sensor)
+            
+            return sensors
+        
         if lpp_type not in LPP_TYPE_MAPPINGS:
             if isinstance(lpp_type, str):
                 # Handle string types by creating a generic sensor with the string name
@@ -379,7 +418,13 @@ class MeshCoreTelemetrySensor(CoordinatorEntity, SensorEntity):
         self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{pubkey_prefix}_{channel}_{lpp_type}{field_suffix}_telemetry"
         
         # Smart entity naming - consistent with existing sensors
-        sensor_type_name = description.name.lower().replace(" ", "_").replace("ch" + str(channel) + " ", "")
+        # Remove channel prefix from the name (case-insensitive)
+        sensor_name_lower = description.name.lower().replace(" ", "_")
+        channel_prefix = f"ch{channel}_"
+        if sensor_name_lower.startswith(channel_prefix):
+            sensor_type_name = sensor_name_lower[len(channel_prefix):]
+        else:
+            sensor_type_name = sensor_name_lower
         
         if node_type == "root":
             # For root node, use cleaner entity IDs
@@ -472,4 +517,58 @@ class MeshCoreTelemetrySensor(CoordinatorEntity, SensorEntity):
         if self._raw_value is not None:
             attributes["raw_value"] = self._raw_value
             
+        return attributes
+
+
+class MeshCoreBatteryPercentageSensor(MeshCoreTelemetrySensor):
+    """Battery percentage sensor that converts voltage to percentage."""
+    
+    def __init__(self, *args, **kwargs):
+        """Initialize the battery percentage sensor."""
+        super().__init__(*args, **kwargs)
+        # Override the unique_id to use "battery" instead of "voltage"
+        self._attr_unique_id = f"{self.coordinator.config_entry.entry_id}_{self.pubkey_prefix}_{self.channel}_battery_telemetry"
+    
+    def get_unique_key(self) -> str:
+        """Get unique key for battery percentage sensor."""
+        # Use a different suffix to distinguish from voltage sensor
+        return f"{self.pubkey_prefix}_{self.channel}_battery"
+    
+    def update_from_telemetry(self, lpp_data: list) -> None:
+        """Update sensor value from telemetry data, converting voltage to percentage."""
+        for channel_data in lpp_data:
+            if (channel_data.get("channel") == self.channel and 
+                channel_data.get("type") == self.lpp_type):
+                
+                voltage = channel_data.get("value")
+                if voltage is not None:
+                    self._raw_value = voltage
+                    self._last_updated = time.time()
+                    
+                    # Convert voltage to battery percentage
+                    self._native_value = self._voltage_to_percentage(voltage)
+                    
+                    # Update Home Assistant state
+                    self.async_write_ha_state()
+                break
+    
+    def _voltage_to_percentage(self, voltage: float) -> int:
+        """Convert battery voltage to percentage using the battery curve."""
+        if voltage is None:
+            return None
+            
+        # Find the appropriate percentage from the curve
+        for v, p in BATTERY_CURVE:
+            if voltage >= v:
+                return p
+        
+        # If voltage is below the lowest curve value
+        return 0
+    
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return additional state attributes including the raw voltage."""
+        attributes = super().extra_state_attributes
+        if self._raw_value is not None:
+            attributes["voltage"] = round(self._raw_value, 2)
         return attributes
