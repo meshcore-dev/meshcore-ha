@@ -32,6 +32,7 @@ from .const import (
     CONF_SELF_TELEMETRY_ENABLED,
     CONF_SELF_TELEMETRY_INTERVAL,
     DEFAULT_SELF_TELEMETRY_INTERVAL,
+    REPEATER_LOGIN_REFRESH_INTERVAL,
 )
 from .meshcore_api import MeshCoreAPI
 
@@ -175,6 +176,8 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                         self.logger.error(f"Login to repeater {repeater_name} failed: {login_result.payload}")
                     else:
                         self.logger.info(f"Successfully logged in to repeater {repeater_name}")
+                        # Track login time for telemetry refresh
+                        self._repeater_login_times[pubkey_prefix] = time.time()
                 
                 except Exception as ex:
                     self.logger.error(f"Exception during login to repeater {repeater_name}: {ex}")
@@ -254,10 +257,11 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         """Apply exponential backoff delay for failed repeater updates."""
         self._apply_backoff(pubkey_prefix, failure_count, "repeater")
 
-    async def _update_node_telemetry(self, contact, pubkey_prefix: str, node_name: str, update_interval: int):
+    async def _update_node_telemetry(self, contact, pubkey_prefix: str, node_name: str, update_interval: int, password: str | None = None):
         """Update telemetry for a node (repeater or client).
         
         This is a separate method that can be used by both repeater and client update logic.
+        For repeaters with telemetry enabled, performs periodic login to keep session fresh.
         """
         # Get current failure count
         failure_count = self._telemetry_consecutive_failures.get(pubkey_prefix, 0)
@@ -266,6 +270,22 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         # 0-5 seconds random delay
         random_delay = random.uniform(0, 5000)
         await asyncio.sleep(random_delay / 1000)
+        
+        # Check if we need to refresh login for telemetry-enabled repeaters
+        current_time = time.time()
+        last_login_time = self._repeater_login_times.get(pubkey_prefix, 0)
+        
+        if password is not None and (current_time - last_login_time) >= REPEATER_LOGIN_REFRESH_INTERVAL:
+            self.logger.info(f"Refreshing login for telemetry-enabled repeater {node_name} (last login: {int(current_time - last_login_time)}s ago)")
+            try:
+                login_result = await self.api.mesh_core.commands.send_login(contact, password)
+                if login_result.type == EventType.ERROR:
+                    self.logger.error(f"Login refresh to repeater {node_name} failed: {login_result.payload}")
+                else:
+                    self.logger.info(f"Successfully refreshed login to repeater {node_name}")
+                    self._repeater_login_times[pubkey_prefix] = current_time
+            except Exception as ex:
+                self.logger.error(f"Exception during login refresh to repeater {node_name}: {ex}")
         
         try:
             self.logger.debug(f"Sending telemetry request to node: {node_name} ({pubkey_prefix})")
@@ -489,9 +509,10 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     # Use same interval as repeater update for telemetry
                     update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
                     
-                    # Create and start telemetry task
+                    # Create and start telemetry task with password for login refresh
+                    password = repeater_config.get(CONF_REPEATER_PASSWORD, "")
                     telemetry_task = asyncio.create_task(
-                        self._update_node_telemetry(contact, pubkey_prefix, repeater_name, update_interval)
+                        self._update_node_telemetry(contact, pubkey_prefix, repeater_name, update_interval, password)
                     )
                     self._active_telemetry_tasks[pubkey_prefix] = telemetry_task
                     telemetry_task.set_name(f"telemetry_{repeater_name}")

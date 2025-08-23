@@ -77,6 +77,9 @@ DEFAULT_SELF_TELEMETRY_INTERVAL: Final = 300  # 5 minutes in seconds
 REPEATER_BACKOFF_BASE: Final = 2  # Base multiplier for exponential backoff
 REPEATER_BACKOFF_MAX_MULTIPLIER: Final = 120  # Maximum backoff multiplier (10 minutes when * 5 seconds)
 
+# Login refresh interval for telemetry-enabled repeaters
+REPEATER_LOGIN_REFRESH_INTERVAL: Final = 10800  # 3 hours in seconds
+
 # Generic battery voltage to percentage lookup table
 BATTERY_CURVE: Final = [
     (4.20, 100), (4.15, 95), (4.10, 90), (4.05, 85), (4.00, 80),
