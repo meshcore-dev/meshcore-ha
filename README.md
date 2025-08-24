@@ -3,13 +3,13 @@
 # MeshCore for Home Assistant
 
 [![Add Integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=meshcore)
-[![Add Repository](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=awolden&repository=meshcore-ha&category=integration)
+[![Add Repository](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=meshcore-dev&repository=meshcore-ha&category=integration)
 
 This is a custom Home Assistant integration for MeshCore mesh radio nodes. It allows you to monitor and control MeshCore nodes via USB, BLE, or TCP connections.
 
 > :warning: **Work in Progress**: This integration is under active development. BLE connection method hasn't been thoroughly tested yet.
 
-Core integration is powered by [meshcore-py](https://github.com/fdlamotte/meshcore_py).
+Core integration is powered by [meshcore-py](https://github.com/meshcore-dev/meshcore_py).
 
 ## Features
 
@@ -21,6 +21,7 @@ Core integration is powered by [meshcore-py](https://github.com/fdlamotte/meshco
 - Automatically discover nodes in the mesh network and create sensors for them
 - Track and monitor repeater nodes with detailed statistics 
 - Support for Room Server nodes allowing group chat functionality
+- **Automatic telemetry sensor discovery** - Environmental sensors (temperature, humidity, GPS, etc.) using Cayenne LPP format
 - Direct access to all meshcore-py commands and events
 - Configurable update intervals for different data types (messages, device info, repeaters)
 
@@ -90,6 +91,99 @@ For repeater nodes:
 - **Sent/Received Direct Messages**: Count of direct messages
 - **Full Events**: Count of queue full events
 - **Direct/Flood Duplicates**: Count of duplicate messages
+
+## Telemetry Sensors
+
+Starting with version 2.1.0, the MeshCore integration automatically discovers and creates sensors for telemetry data transmitted over the mesh network. These sensors support environmental and IoT data using the Cayenne LPP (Low Power Payload) format.
+
+### Supported Telemetry Types
+
+The integration automatically creates sensors for the following telemetry data types:
+
+**Environmental Sensors:**
+- **Temperature** - Temperature readings in °C
+- **Humidity** - Relative humidity as a percentage
+- **Illuminance** - Light levels in lux
+- **Pressure** - Atmospheric pressure sensors
+- **Presence** - Motion/presence detection
+
+**Electrical Sensors:**
+- **Voltage** - Voltage measurements in volts
+- **Current** - Current measurements in amperes
+- **Analog Input/Output** - Generic analog sensor readings
+
+**Position & Motion:**
+- **GPS** - Automatically creates separate sensors for latitude, longitude, and altitude
+- **Accelerometer** - Creates separate X, Y, Z axis sensors
+
+**Other Sensors:**
+- **Digital Input/Output** - Binary state sensors
+- **Color** - RGB color sensors (creates separate R, G, B sensors)
+- **Generic Sensors** - Fallback for custom or unknown sensor types
+
+### Automatic Discovery
+
+Telemetry sensors are automatically discovered when:
+1. A mesh node transmits telemetry data using Cayenne LPP format
+2. The data is received by your connected MeshCore device
+3. The integration processes the telemetry and creates appropriate Home Assistant sensors
+
+### Sensor Naming
+
+Telemetry sensors are automatically named based on:
+- **Channel number** - Each telemetry channel gets its own sensor
+- **Node name** - Uses the known name of the transmitting node
+- **Sensor type** - Temperature, GPS, etc.
+
+Example sensor names:
+- `sensor.meshcore_ch1_temperature` (root node temperature on channel 1)
+- `sensor.weather_station_ch2_humidity` (humidity from "Weather Station" node)
+- `sensor.tracker_ch0_gps_latitude` (GPS latitude from "Tracker" node)
+
+### Battery Monitoring
+
+For battery-powered nodes, the integration provides enhanced battery monitoring:
+- **Voltage sensors** show the raw battery voltage
+- **Battery percentage sensors** automatically convert voltage to percentage using battery discharge curves
+- Both sensors are created when voltage telemetry is received from client devices
+
+### Configuration
+
+Telemetry sensors are automatically enabled and require no manual configuration. The integration:
+- Listens for `TELEMETRY_RESPONSE` events from the mesh network
+- Dynamically creates sensors as new telemetry sources are discovered
+- Updates sensor values in real-time as telemetry data is received
+- Marks sensors as unavailable if no data is received for over an hour
+
+### Example Usage
+
+Telemetry sensors can be used in automations like any other Home Assistant sensor:
+
+```yaml
+# Temperature alert automation
+alias: High Temperature Alert
+trigger:
+  - platform: numeric_state
+    entity_id: sensor.weather_station_ch1_temperature
+    above: 30
+action:
+  - service: notify.notify
+    data:
+      message: "Weather station temperature is {{ states('sensor.weather_station_ch1_temperature') }}°C"
+```
+
+```yaml
+# Battery monitoring automation
+alias: Low Battery Alert
+trigger:
+  - platform: numeric_state
+    entity_id: sensor.remote_sensor_ch1_battery
+    below: 20
+action:
+  - service: notify.notify
+    data:
+      message: "Remote sensor battery is low: {{ states('sensor.remote_sensor_ch1_battery') }}%"
+```
 
 ## Services
 
@@ -264,6 +358,8 @@ In addition to raw events, the integration fires specific events for common oper
 ## Automation Examples
 
 Below are examples of automations that utilize the MeshCore services.
+
+> 💡 **Advanced Example**: For a comprehensive example of managing MeshCore contacts through Home Assistant automations, see [Meshcore Contact Management in Home Assistant](https://github.com/WJ4IoT/Meshcore-Contact-Management-in-Home-Assistant).
 
 ### Forward New Messages to Push Notifications
 ```yaml

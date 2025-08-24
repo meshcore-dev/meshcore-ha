@@ -2,7 +2,6 @@
 import logging
 import time
 import voluptuous as vol
-import json
 import shlex
 from typing import Any, Dict, Optional
 
@@ -24,7 +23,6 @@ from .const import (
     ATTR_MESSAGE,
     ATTR_COMMAND,
     ATTR_ENTRY_ID,
-    DEFAULT_DEVICE_NAME,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -342,30 +340,47 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     # Define known command parameter types
                     # Format: {command_name: [param1_type, param2_type, ...]}
                     command_param_types = {
-                        # Commands with no parameters
+                        # Device commands with no parameters
                         "send_appstart": [],
                         "send_device_query": [],
                         "reboot": [],
                         "get_bat": [],
                         "get_time": [],
-                        "get_contacts": [],
-                        "get_channel": [int],
-                        "set_channel": [int, str, bytes],
+                        "get_self_telemetry": [],
+                        "get_custom_vars": [],
                         
-                        # Commands taking DestinationType (contact)
-                        "send_login": ["contact", "str"],
-                        "send_logout": ["contact"],
-                        "send_statusreq": ["contact"],
-                        "send_telemetry_req": ["contact"],
+                        # Contact commands
+                        "get_contacts": ["int"],  # lastmod parameter (optional, defaults to 0)
                         "reset_path": ["contact"],
                         "share_contact": ["contact"],
                         "export_contact": ["contact"],
                         "remove_contact": ["contact"],
-                        "update_contact": ["contact", "str", "str"],
+                        "import_contact": ["bytes"],
+                        "update_contact": ["contact", "str", "str"],  # contact, path, flags
+                        "add_contact": ["contact"],
                         "change_contact_path": ["contact", "str"],
                         "change_contact_flags": ["contact", "str"],
                         
-                        # Commands taking other parameter types
+                        # Messaging commands
+                        "get_msg": ["float"],  # timeout (optional)
+                        "send_login": ["contact", "str"],
+                        "send_logout": ["contact"],
+                        "send_statusreq": ["contact"],
+                        "send_telemetry_req": ["contact"],
+                        "send_msg": ["contact", "str", "int"],  # contact, message, timestamp (optional)
+                        "send_chan_msg": ["int", "str", "int"],  # channel, message, timestamp
+                        "send_cmd": ["contact", "str", "int"],  # contact, command, timestamp (optional)
+                        "send_binary_req": ["contact", "bytes"],
+                        "send_path_discovery": ["contact"],
+                        "send_trace": ["int", "int", "int", "bytes"],  # hop_count, timestamp, flags, data
+                        
+                        # Binary commands
+                        "req_binary": ["contact", "str", "int"],  # contact, request, timeout
+                        "req_telemetry": ["contact", "int"],  # contact, timeout
+                        "req_mma": ["contact", "int", "int", "int"],  # contact, start, end, timeout
+                        "req_acl": ["contact", "int"],  # contact, timeout
+                        
+                        # Device configuration commands
                         "send_advert": ["bool"],
                         "set_name": ["str"],
                         "set_time": ["int"],
@@ -376,14 +391,13 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                         "set_tuning": ["int", "int"],
                         "set_telemetry_mode_base": ["int"],
                         "set_telemetry_mode_loc": ["int"],
+                        "set_telemetry_mode_env": ["int"],
                         "set_manual_add_contacts": ["bool"],
-                        "set_other_params": ["bool", "int", "int"],
-                        
-                        # Commands with multiple parameters
-                        "send_msg": ["contact", "str"],
-                        "send_chan_msg": ["int", "str"],
-                        "send_cmd": ["contact", "str"],
-                        "change_contact_path": ["contact", "str"]
+                        "set_advert_loc_policy": ["int"],
+                        "set_other_params": ["bool", "int", "int", "int", "int"],  # 5 parameters
+                        "set_custom_var": ["str", "str"],  # key, value
+                        "get_channel": ["int"],
+                        "set_channel": ["int", "str", "bytes"]
                     }
                     
                     # Get parameter types for this command

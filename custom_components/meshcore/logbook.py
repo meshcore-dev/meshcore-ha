@@ -1,7 +1,7 @@
 """Logbook integration for MeshCore."""
 from calendar import c
 import logging
-from typing import Any, Callable, Dict
+from typing import  Callable
 from datetime import datetime
 
 from homeassistant.core import HomeAssistant, callback, Event

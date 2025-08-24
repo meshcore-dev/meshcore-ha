@@ -7,9 +7,13 @@
       "cannot_connect": "Failed to connect",
       "unknown": "Unexpected error",
       "already_configured": "Repeater is already configured",
+      "client_already_tracked": "Client is already being tracked",
       "login_failed": "Failed to log in to repeater. Check password and try again.",
       "login_timeout": "Timed out waiting for login response",
-      "contact_not_found": "Contact not found"
+      "contact_not_found": "Contact not found",
+      "no_repeaters_found": "No repeaters found. Refresh contacts first.",
+      "no_clients_found": "No clients found. Refresh contacts first.",
+      "device_not_found": "Device not found in configuration"
     },
     "title": "MeshCore",
     "step": {
@@ -23,46 +27,84 @@
       "usb": {
         "data": {
           "usb_path": "USB Device Path",
-          "baudrate": "Baud Rate",
-          "scan_interval": "Status Update Interval (seconds)"
+          "baudrate": "Connection Speed",
+          "contact_refresh_interval": "Contact List Refresh (seconds)"
         },
-        "description": "Select the USB port where your MeshCore device is connected",
-        "title": "MeshCore USB Setup"
+        "description": "Connect to your MeshCore node via USB",
+        "title": "Configure USB Connection"
       },
       "ble": {
         "data": {
-          "ble_address": "BLE Device Address",
-          "scan_interval": "Status Update Interval (seconds)"
+          "ble_address": "Bluetooth Device",
+          "contact_refresh_interval": "Contact List Refresh (seconds)"
         },
-        "description": "Select your MeshCore BLE device",
-        "title": "MeshCore BLE Setup"
+        "description": "Connect to your MeshCore node via Bluetooth",
+        "title": "Configure Bluetooth Connection"
       },
       "tcp": {
         "data": {
-          "tcp_host": "TCP Hostname or IP Address",
-          "tcp_port": "TCP Port",
-          "scan_interval": "Status Update Interval (seconds)"
+          "tcp_host": "Host Address",
+          "tcp_port": "Port",
+          "contact_refresh_interval": "Contact List Refresh (seconds)"
         },
-        "description": "Enter the network details for your MeshCore TCP server",
-        "title": "MeshCore TCP Setup"
+        "description": "Connect to your MeshCore node over the network",
+        "title": "Configure Network Connection"
       },
       "init": {
         "data": {
-          "scan_interval": "Node & Message Polling Interval (seconds)",
-          "action": "Action",
-          "repeater_to_remove": "Select Repeater to Remove"
+          "action": "Choose an action"
         },
-        "description": "Configure MeshCore Integration. Current repeaters: {repeaters}",
-        "title": "MeshCore Options"
+        "description": "Configure your MeshCore integration.\n\n{device_status}",
+        "title": "MeshCore Configuration"
       },
       "add_repeater": {
         "data": {
-          "repeater_name": "Repeater Name",
-          "repeater_password": "Password (leave empty for guest login)",
-          "repeater_update_interval": "Repeater Stats Update Interval (seconds)"
+          "repeater_name": "Available Repeaters",
+          "repeater_password": "Repeater Password",
+          "telemetry_enabled": "Enable Telemetry Polling (automatically polls and discovers telemetry data)",
+          "repeater_update_interval": "Telemetry Refresh Rate (seconds)"
         },
-        "description": "Select a repeater from your contacts list to monitor.",
-        "title": "Add Repeater Subscription"
+        "description": "Monitor a repeater for telemetry and status",
+        "title": "Add Repeater Station"
+      },
+      "add_client": {
+        "data": {
+          "client_name": "Available Clients",
+          "client_update_interval": "Update Frequency (GPS and telemetry will be auto-polled/discovered)"
+        },
+        "description": "Track presence and battery for a client device",
+        "title": "Add Tracked Client"
+      },
+      "manage_devices": {
+        "data": {
+          "selected_device": "Select Device",
+          "device_action": "Action"
+        },
+        "description": "Manage your configured devices:\n\n{device_list}",
+        "title": "Manage Monitored Devices"
+      },
+      "edit_repeater": {
+        "data": {
+          "repeater_password": "Update Password (leave blank to keep current)",
+          "telemetry_enabled": "Enable Telemetry Polling (automatically polls and discovers telemetry data)",
+          "repeater_update_interval": "Telemetry Refresh Rate (seconds)"
+        },
+        "description": "Edit settings for {device_name}",
+        "title": "Edit Repeater"
+      },
+      "edit_client": {
+        "data": {
+          "client_update_interval": "Update Frequency (GPS and telemetry will be auto-polled/discovered)"
+        },
+        "description": "Edit settings for {device_name}",
+        "title": "Edit Tracked Client"
+      },
+      "global_settings": {
+        "data": {
+          "contact_refresh_interval": "Contact Discovery (seconds)"
+        },
+        "description": "Configure default values for all devices",
+        "title": "Global Settings"
       }
     }
   },

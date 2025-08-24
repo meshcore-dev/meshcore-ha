@@ -15,10 +15,9 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import DeviceInfo, EntityCategory
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
 from homeassistant.helpers.device_registry import async_get as async_get_device_registry
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
@@ -37,8 +36,13 @@ from .utils import (
     format_entity_id,
     calculate_battery_percentage,
 )
+from .telemetry_sensor import TelemetrySensorManager
 
 _LOGGER = logging.getLogger(__name__)
+
+# Sensor key suffixes
+UTILIZATION_SUFFIX = "_utilization"
+RATE_SUFFIX = "_rate"
 
 
 # Define sensors for the main device
@@ -287,6 +291,87 @@ REPEATER_SENSORS = [
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:percent",
     ),
+    SensorEntityDescription(
+        key="rx_airtime",
+        name="RX Airtime",
+        native_unit_of_measurement="min",
+        suggested_display_precision="1",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:radio",
+    ),
+    SensorEntityDescription(
+        key="rx_airtime_utilization",
+        name="RX Airtime Utilization",
+        device_class=SensorDeviceClass.POWER_FACTOR,
+        native_unit_of_measurement="%",
+        suggested_display_precision="1",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:percent",
+    ),
+    SensorEntityDescription(
+        key="direct_dups_rate",
+        name="Direct Duplicates Rate",
+        native_unit_of_measurement="msg/min",
+        suggested_display_precision="1",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:content-duplicate",
+    ),
+    SensorEntityDescription(
+        key="flood_dups_rate",
+        name="Flood Duplicates Rate",
+        native_unit_of_measurement="msg/min",
+        suggested_display_precision="1",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:content-duplicate",
+    ),
+    SensorEntityDescription(
+        key="nb_recv_rate",
+        name="Messages Received Rate",
+        native_unit_of_measurement="msg/min",
+        suggested_display_precision="1",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:message-arrow-left",
+    ),
+    SensorEntityDescription(
+        key="nb_sent_rate",
+        name="Messages Sent Rate",
+        native_unit_of_measurement="msg/min",
+        suggested_display_precision="1",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:message-arrow-right",
+    ),
+    SensorEntityDescription(
+        key="recv_direct_rate",
+        name="Received Direct Messages Rate",
+        native_unit_of_measurement="msg/min",
+        suggested_display_precision="1",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:message-arrow-left",
+    ),
+    SensorEntityDescription(
+        key="recv_flood_rate",
+        name="Received Flood Messages Rate",
+        native_unit_of_measurement="msg/min",
+        suggested_display_precision="1",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:message-arrow-left-outline",
+    ),
+    SensorEntityDescription(
+        key="sent_direct_rate",
+        name="Sent Direct Messages Rate",
+        native_unit_of_measurement="msg/min",
+        suggested_display_precision="1",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:message-arrow-right",
+    ),
+    SensorEntityDescription(
+        key="sent_flood_rate",
+        name="Sent Flood Messages Rate",
+        native_unit_of_measurement="msg/min",
+        suggested_display_precision="1",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:message-arrow-right-outline",
+    ),
 ]
 
 
@@ -306,6 +391,10 @@ async def async_setup_entry(
     
     # Store the async_add_entities function for later use
     coordinator.sensor_add_entities = async_add_entities
+    
+    # Initialize telemetry sensor manager for dynamic sensor creation
+    coordinator.telemetry_manager = TelemetrySensorManager(coordinator, async_add_entities)
+    await coordinator.telemetry_manager.setup_telemetry_listener()
     
     # First, handle cleanup of removed repeater devices
     # Get registries
@@ -488,7 +577,6 @@ class MeshCoreSensor(CoordinatorEntity, SensorEntity):
     def native_value(self) -> Any:
         return self._native_value
 
-
 class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
     """Sensor for repeater statistics with event-based updates."""
     
@@ -577,7 +665,7 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
         # Create a deep copy of the payload to avoid modifying the original event
         if event.payload:
             if event.payload.get('uptime', 0) == 0:
-                self.logger.error(f"Skipping event with malformed payload: {event.payload}")
+                _LOGGER.error(f"Skipping event with malformed payload: {event.payload}")
                 return 
             # Store previous stats before updating
             self._previous_stats = self._cached_stats.copy()
@@ -612,24 +700,55 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
         elif key == "airtime" and isinstance(value, (int, float)) and value > 0:
             return round(value / 60, 1)  # Convert seconds to minutes
             
-        elif key == "airtime_utilization":
-            current_uptime = self._cached_stats.get("uptime")
-            current_airtime = self._cached_stats.get("airtime")
+        elif key == "rx_airtime" and isinstance(value, (int, float)) and value > 0:
+            return round(value / 60, 1)  # Convert seconds to minutes
             
-            if not isinstance(current_uptime, (int, float)) or not isinstance(current_airtime, (int, float)):
+        # Handle utilization calculations for all _utilization sensors  
+        elif key.endswith(UTILIZATION_SUFFIX):
+            # Extract the base metric name (remove '_utilization' suffix)
+            base_key = key.removesuffix(UTILIZATION_SUFFIX)
+            current_uptime = self._cached_stats.get("uptime")
+            current_metric = self._cached_stats.get(base_key)
+            
+            if not isinstance(current_uptime, (int, float)) or not isinstance(current_metric, (int, float)):
                 return None
                 
             if self._previous_stats:
                 prev_uptime = self._previous_stats.get("uptime", 0)
-                prev_airtime = self._previous_stats.get("airtime", 0)
+                prev_metric = self._previous_stats.get(base_key, 0)
                 
-                if isinstance(prev_uptime, (int, float)) and isinstance(prev_airtime, (int, float)):
+                if isinstance(prev_uptime, (int, float)) and isinstance(prev_metric, (int, float)):
                     uptime_delta = current_uptime - prev_uptime
-                    airtime_delta = current_airtime - prev_airtime
+                    metric_delta = current_metric - prev_metric
                     
-                    if uptime_delta > 0 and airtime_delta >= 0:
-                        utilization_rate = (airtime_delta / uptime_delta) * 100
+                    if uptime_delta > 0 and metric_delta >= 0:
+                        utilization_rate = (metric_delta / uptime_delta) * 100
                         return round(utilization_rate, 1)
+            return 0  # No previous data or no change
+            
+        # Handle rate calculations for message counters
+        elif key.endswith(RATE_SUFFIX):
+            # Extract the base metric name (remove '_rate' suffix)
+            base_key = key.removesuffix(RATE_SUFFIX)
+            current_uptime = self._cached_stats.get("uptime")
+            current_count = self._cached_stats.get(base_key)
+            
+            if not isinstance(current_uptime, (int, float)) or not isinstance(current_count, (int, float)):
+                return None
+                
+            if self._previous_stats:
+                prev_uptime = self._previous_stats.get("uptime", 0)
+                prev_count = self._previous_stats.get(base_key, 0)
+                
+                if isinstance(prev_uptime, (int, float)) and isinstance(prev_count, (int, float)):
+                    uptime_delta = current_uptime - prev_uptime
+                    count_delta = current_count - prev_count
+                    
+                    if uptime_delta > 0 and count_delta >= 0:
+                        # Calculate messages per second, then convert to messages per minute
+                        rate_per_second = count_delta / uptime_delta
+                        rate_per_minute = rate_per_second * 60
+                        return round(rate_per_minute, 1)
             return 0  # No previous data or no change
             
         # Return the value directly for other sensors
@@ -668,7 +787,7 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
             # Add raw values for certain sensors
             if key == "bat" and "bat" in self._cached_stats:
                 attributes["raw_millivolts"] = self._cached_stats["bat"]
-            elif key in ["uptime", "airtime"] and key in self._cached_stats:
+            elif key in ["uptime", "airtime", "rx_airtime"] and key in self._cached_stats:
                 seconds = self._cached_stats[key]
                 if isinstance(seconds, (int, float)) and seconds > 0:
                     # Add human-readable format for uptime
@@ -678,20 +797,42 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
                         minutes = (seconds % 3600) // 60
                         secs = seconds % 60
                         attributes["human_readable"] = f"{days}d {hours}h {minutes}m {secs}s"
-            elif key == "airtime_utilization":
+            elif key.endswith(UTILIZATION_SUFFIX):
+                # Extract the base metric name (remove '_utilization' suffix)
+                base_key = key.removesuffix(UTILIZATION_SUFFIX)
                 uptime = self._cached_stats.get("uptime")
-                airtime = self._cached_stats.get("airtime")
+                metric_value = self._cached_stats.get(base_key)
                 
-                if isinstance(uptime, (int, float)) and isinstance(airtime, (int, float)):
+                if isinstance(uptime, (int, float)) and isinstance(metric_value, (int, float)):
                     attributes["uptime_seconds"] = str(uptime)
-                    attributes["airtime_seconds"] = str(airtime)
+                    attributes[f"{base_key}_seconds"] = str(metric_value)
                     
-                    # Calculate airtime since last update if we have previous values
+                    # Calculate metric delta since last update if we have previous values
                     if self._previous_stats:
-                        prev_airtime = self._previous_stats.get("airtime", 0)
-                        if isinstance(prev_airtime, (int, float)) and prev_airtime < airtime:
-                            airtime_delta = airtime - prev_airtime
-                            attributes["airtime_since_last_update"] = str(round(airtime_delta / 60, 1))  # in minutes
+                        prev_metric = self._previous_stats.get(base_key, 0)
+                        if isinstance(prev_metric, (int, float)) and prev_metric < metric_value:
+                            metric_delta = metric_value - prev_metric
+                            attributes[f"{base_key}_since_last_update"] = str(round(metric_delta / 60, 1))  # in minutes
+            elif key.endswith(RATE_SUFFIX):
+                # Extract the base metric name (remove '_rate' suffix)
+                base_key = key.removesuffix(RATE_SUFFIX)
+                uptime = self._cached_stats.get("uptime")
+                count = self._cached_stats.get(base_key)
+                
+                if isinstance(uptime, (int, float)) and isinstance(count, (int, float)):
+                    attributes["uptime_seconds"] = str(uptime)
+                    attributes[f"{base_key}_total"] = str(count)
+                    
+                    # Calculate count delta since last update if we have previous values
+                    if self._previous_stats:
+                        prev_count = self._previous_stats.get(base_key, 0)
+                        prev_uptime = self._previous_stats.get("uptime", 0)
+                        if isinstance(prev_count, (int, float)) and isinstance(prev_uptime, (int, float)):
+                            count_delta = count - prev_count
+                            uptime_delta = uptime - prev_uptime
+                            if count_delta >= 0 and uptime_delta > 0:
+                                attributes[f"{base_key}_since_last_update"] = str(count_delta)
+                                attributes["uptime_delta_seconds"] = str(uptime_delta)
             
             return attributes
             
@@ -712,7 +853,7 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
             bat_value = repeater_stats.get("bat")
             if isinstance(bat_value, (int, float)) and bat_value > 0:
                 attributes["raw_millivolts"] = bat_value
-        elif key in ["uptime", "airtime"]:
+        elif key in ["uptime", "airtime", "rx_airtime"]:
             seconds = repeater_stats.get(key)
             if isinstance(seconds, (int, float)) and seconds > 0:
                 attributes["raw_seconds"] = seconds

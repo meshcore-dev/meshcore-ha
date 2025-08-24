@@ -54,12 +54,31 @@ CONF_REPEATER_SUBSCRIPTIONS: Final = "repeater_subscriptions"
 CONF_REPEATER_NAME: Final = "repeater_name"
 CONF_REPEATER_PASSWORD: Final = "repeater_password"
 CONF_REPEATER_UPDATE_INTERVAL: Final = "repeater_update_interval"
+CONF_REPEATER_TELEMETRY_ENABLED: Final = "telemetry_enabled"
 DEFAULT_REPEATER_UPDATE_INTERVAL: Final = 900  # 15 minutes in seconds
 MAX_REPEATER_FAILURES_BEFORE_LOGIN: Final = 3  # After this many failures, try login
+
+# Client tracking constants
+CONF_TRACKED_CLIENTS: Final = "tracked_clients"
+CONF_CLIENT_NAME: Final = "client_name"
+CONF_CLIENT_UPDATE_INTERVAL: Final = "client_update_interval"
+DEFAULT_CLIENT_UPDATE_INTERVAL: Final = 1800  # 30 minutes in seconds
+
+# Contact refresh interval
+CONF_CONTACT_REFRESH_INTERVAL: Final = "contact_refresh_interval"
+DEFAULT_CONTACT_REFRESH_INTERVAL: Final = 60  # 1 minute in seconds
+
+# Self telemetry settings
+CONF_SELF_TELEMETRY_ENABLED: Final = "self_telemetry_enabled"
+CONF_SELF_TELEMETRY_INTERVAL: Final = "self_telemetry_interval"
+DEFAULT_SELF_TELEMETRY_INTERVAL: Final = 300  # 5 minutes in seconds
 
 # Backoff constants for repeater failures
 REPEATER_BACKOFF_BASE: Final = 2  # Base multiplier for exponential backoff
 REPEATER_BACKOFF_MAX_MULTIPLIER: Final = 120  # Maximum backoff multiplier (10 minutes when * 5 seconds)
+
+# Login refresh interval for telemetry-enabled repeaters
+REPEATER_LOGIN_REFRESH_INTERVAL: Final = 10800  # 3 hours in seconds
 
 # Generic battery voltage to percentage lookup table
 BATTERY_CURVE: Final = [

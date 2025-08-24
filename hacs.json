@@ -2,8 +2,8 @@
   "name": "MeshCore",
   "render_readme": true,
   "domain": "meshcore",
-  "documentation": "https://github.com/awolden/meshcore-ha",
-  "issue_tracker": "https://github.com/awolden/meshcore-ha/issues",
+  "documentation": "https://github.com/meshcore-dev/meshcore-ha",
+  "issue_tracker": "https://github.com/meshcore-dev/meshcore-ha/issues",
   "hacs": "1.6.0",
   "iot_class": "local_polling"
 }

@@ -2,8 +2,7 @@
 import logging
 import asyncio
 import time
-from sched import Event
-from typing import Any, Dict, List, Optional
+from typing import Optional
 from asyncio import Lock
 
 from meshcore import MeshCore
@@ -17,10 +16,8 @@ from .const import (
     CONNECTION_TYPE_TCP,
     DEFAULT_BAUDRATE,
     DEFAULT_TCP_PORT,
-    NodeType,
     DOMAIN,
 )
-from .utils import get_node_type_str
 
 _LOGGER = logging.getLogger(__name__)
 
