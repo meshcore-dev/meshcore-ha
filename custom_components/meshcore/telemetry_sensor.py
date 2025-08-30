@@ -165,9 +165,7 @@ class TelemetrySensorManager:
         _LOGGER.debug("Telemetry sensor manager initialized")
         
     async def _handle_telemetry_event(self, event: Event):
-        """Handle incoming telemetry events and discover new sensors."""
-        _LOGGER.debug(f"Received telemetry event: {event}")
-        
+        """Handle incoming telemetry events and discover new sensors."""        
         if not event.payload or "lpp" not in event.payload:
             _LOGGER.debug("No LPP data in telemetry event")
             return
@@ -203,10 +201,11 @@ class TelemetrySensorManager:
             sensors = self._create_sensors_for_channel(
                 pubkey_prefix, channel, lpp_type, value, node_info
             )
-            
-            _LOGGER.debug(f"Created {len(sensors)} sensors for channel {channel}")
-            
+                        
             for sensor in sensors:
+                # Initialize new sensor with current LPP data (without triggering state update)
+                sensor.update_from_telemetry(lpp_data, update_state=False)
+                
                 sensor_key = sensor.get_unique_key()
                 _LOGGER.debug(f"Sensor: name={sensor.name}, key={sensor_key}, entity_id={sensor.entity_id}")
                 if sensor_key not in self.discovered_sensors:
@@ -322,7 +321,6 @@ class TelemetrySensorManager:
                     "create_multi": False,
                     "state_class": SensorStateClass.MEASUREMENT
                 }
-                _LOGGER.debug(f"Creating generic sensor for string LPP type: {lpp_type}")
             else:
                 _LOGGER.debug(f"Unknown LPP type {lpp_type}, creating generic sensor")
                 type_config = {"name": f"Sensor Type {lpp_type}", "icon": "mdi:gauge", "create_multi": False}
@@ -397,7 +395,7 @@ class MeshCoreTelemetrySensor(CoordinatorEntity, SensorEntity):
         channel: int,
         lpp_type: int,
         node_info: Dict[str, Any],
-        field: str = None,
+        field: str = None, # type: ignore
     ) -> None:
         """Initialize the telemetry sensor."""
         super().__init__(coordinator)
@@ -454,7 +452,7 @@ class MeshCoreTelemetrySensor(CoordinatorEntity, SensorEntity):
             via_device=(DOMAIN, coordinator.config_entry.entry_id) if node_type != "root" else None,
         )
         
-        # Store sensor value
+        # Store sensor value - will be populated by update_from_telemetry
         self._native_value = None
         self._last_updated = None
         self._raw_value = None
@@ -464,7 +462,7 @@ class MeshCoreTelemetrySensor(CoordinatorEntity, SensorEntity):
         field_suffix = f"_{self.field}" if self.field else ""
         return f"{self.pubkey_prefix}_{self.channel}_{self.lpp_type}{field_suffix}"
             
-    def update_from_telemetry(self, lpp_data: list):
+    def update_from_telemetry(self, lpp_data: list, update_state: bool = True):
         """Update sensor value from telemetry data."""
         for channel_data in lpp_data:
             if (channel_data.get("channel") == self.channel and 
@@ -480,8 +478,9 @@ class MeshCoreTelemetrySensor(CoordinatorEntity, SensorEntity):
                 else:
                     self._native_value = value
                 
-                # Update Home Assistant state
-                self.async_write_ha_state()
+                # Update Home Assistant state only if requested
+                if update_state:
+                    self.async_write_ha_state()
                 break
         
     @property
@@ -534,7 +533,7 @@ class MeshCoreBatteryPercentageSensor(MeshCoreTelemetrySensor):
         # Use a different suffix to distinguish from voltage sensor
         return f"{self.pubkey_prefix}_{self.channel}_battery"
     
-    def update_from_telemetry(self, lpp_data: list) -> None:
+    def update_from_telemetry(self, lpp_data: list, update_state: bool = True) -> None:
         """Update sensor value from telemetry data, converting voltage to percentage."""
         for channel_data in lpp_data:
             if (channel_data.get("channel") == self.channel and 
@@ -548,8 +547,9 @@ class MeshCoreBatteryPercentageSensor(MeshCoreTelemetrySensor):
                     # Convert voltage to battery percentage
                     self._native_value = self._voltage_to_percentage(voltage)
                     
-                    # Update Home Assistant state
-                    self.async_write_ha_state()
+                    # Update Home Assistant state only if requested
+                    if update_state:
+                        self.async_write_ha_state()
                 break
     
     def _voltage_to_percentage(self, voltage: float) -> int:

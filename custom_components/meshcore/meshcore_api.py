@@ -222,14 +222,14 @@ class MeshCoreAPI:
                 if not self._connected:
                     _LOGGER.info("Attempting periodic reconnect...")
                     try:
-                        await self._mesh_core.connect()
+                        await self._mesh_core.connect() # type: ignore
                         self._connected = True
                         
                         # Sync time after reconnection
                         try:
                             _LOGGER.info("Syncing time after reconnection...")
                             current_timestamp = int(time.time())
-                            await self._mesh_core.commands.set_time(current_timestamp)
+                            await self._mesh_core.commands.set_time(current_timestamp) # type: ignore
                             _LOGGER.info(f"Time sync after reconnection completed: {current_timestamp}")
                         except Exception as time_ex:
                             _LOGGER.error(f"Failed to sync time after reconnection: {time_ex}")

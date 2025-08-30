@@ -127,7 +127,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self.telemetry_manager = None
         
         if not hasattr(self, "last_update_success_time"):
-            self.last_update_success_time = time.time()
+            self.last_update_success_time = self._current_time()
     
     def update_telemetry_settings(self, config_entry: ConfigEntry) -> None:
         """Update telemetry settings from config entry."""
@@ -136,6 +136,10 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self._tracked_repeaters = config_entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, [])
         self._tracked_clients = config_entry.data.get(CONF_TRACKED_CLIENTS, [])
         _LOGGER.debug(f"Updated telemetry settings - Enabled: {self._self_telemetry_enabled}, Interval: {self._self_telemetry_interval}, Tracked clients: {len(self._tracked_clients)}")
+
+    def _current_time(self) -> int:
+        """Return current time as integer seconds since epoch."""
+        return int(time.time())
     
         
     async def _update_repeater(self, repeater_config):
@@ -184,7 +188,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     else:
                         self.logger.info(f"Successfully logged in to repeater {repeater_name}")
                         # Track login time for telemetry refresh
-                        self._repeater_login_times[pubkey_prefix] = time.time()
+                        self._repeater_login_times[pubkey_prefix] = self._current_time()
                 
                 except Exception as ex:
                     self.logger.error(f"Exception during login to repeater {repeater_name}: {ex}")
@@ -224,7 +228,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 
                 # Schedule next update based on configured interval
                 update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
-                next_update_time = time.time() + update_interval
+                next_update_time = self._current_time() + update_interval
                 self._next_repeater_update_times[pubkey_prefix] = next_update_time
             
         except Exception as ex:
@@ -249,7 +253,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             update_type: Type of update ("repeater" or "telemetry")
         """
         backoff_delay = min(REPEATER_BACKOFF_BASE ** failure_count, REPEATER_BACKOFF_MAX_MULTIPLIER)
-        next_update_time = time.time() + backoff_delay
+        next_update_time = self._current_time() + backoff_delay
         
         if update_type == "telemetry":
             self._next_telemetry_update_times[pubkey_prefix] = next_update_time
@@ -278,21 +282,34 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         random_delay = random.uniform(0, 5000)
         await asyncio.sleep(random_delay / 1000)
         
-        # Check if we need to refresh login for telemetry-enabled repeaters
-        current_time = time.time()
+        # Login before telemetry request if password is available and we haven't logged in recently
+        # bummer we have to do this, but for some reason the telemetry admin session expires quickly
+        current_time = self._current_time()
         last_login_time = self._repeater_login_times.get(pubkey_prefix, 0)
         
-        if password is not None and (current_time - last_login_time) >= REPEATER_LOGIN_REFRESH_INTERVAL:
-            self.logger.info(f"Refreshing login for telemetry-enabled repeater {node_name} (last login: {int(current_time - last_login_time)}s ago)")
+        if password is not None and (current_time - last_login_time) >= update_interval:
+            self.logger.debug(f"Logging in to repeater {node_name} before telemetry request (last login: {current_time - last_login_time}s ago)")
             try:
                 login_result = await self.api.mesh_core.commands.send_login(contact, password)
                 if login_result.type == EventType.ERROR:
-                    self.logger.error(f"Login refresh to repeater {node_name} failed: {login_result.payload}")
+                    self.logger.error(f"Login to repeater {node_name} failed: {login_result.payload}")
+                    # Don't proceed with telemetry if login fails
+                    new_failure_count = failure_count + 1
+                    self._telemetry_consecutive_failures[pubkey_prefix] = new_failure_count
+                    self._apply_backoff(pubkey_prefix, new_failure_count, "telemetry")
+                    return
                 else:
-                    self.logger.info(f"Successfully refreshed login to repeater {node_name}")
+                    self.logger.debug(f"Successfully logged in to repeater {node_name}")
                     self._repeater_login_times[pubkey_prefix] = current_time
             except Exception as ex:
-                self.logger.error(f"Exception during login refresh to repeater {node_name}: {ex}")
+                self.logger.error(f"Exception during login to repeater {node_name}: {ex}")
+                # Don't proceed with telemetry if login fails
+                new_failure_count = failure_count + 1
+                self._telemetry_consecutive_failures[pubkey_prefix] = new_failure_count
+                self._apply_backoff(pubkey_prefix, new_failure_count, "telemetry")
+                return
+        elif password is not None:
+            self.logger.debug(f"Skipping login to repeater {node_name} (last login: {current_time - last_login_time}s ago)")
         
         try:
             self.logger.debug(f"Sending telemetry request to node: {node_name} ({pubkey_prefix})")
@@ -307,7 +324,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 # Reset failure count on success
                 self._telemetry_consecutive_failures[pubkey_prefix] = 0
                 # Schedule next telemetry update
-                next_telemetry_time = time.time() + update_interval
+                next_telemetry_time = self._current_time() + update_interval
                 self._next_telemetry_update_times[pubkey_prefix] = next_telemetry_time
             else:
                 self.logger.debug(f"No telemetry response received from {node_name}")
@@ -343,7 +360,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             "contacts": []
         }
         # Check and update repeaters that need updating
-        current_time = time.time()
+        current_time = self._current_time()
         _LOGGER.debug("Starting data update...")
         
         _LOGGER.debug(f"Timings:"
