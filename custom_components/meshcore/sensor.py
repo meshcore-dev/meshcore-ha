@@ -495,7 +495,6 @@ class MeshCoreSensor(CoordinatorEntity, SensorEntity):
         
         elif key == "battery_voltage":
             def update_battery(event: Event):
-                print(f"Received status event: {event}")
                 self._native_value = event.payload.get("level") / 1000.0  # Convert from mV to V
             meshcore.dispatcher.subscribe(
                 EventType.BATTERY,
