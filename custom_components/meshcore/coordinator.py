@@ -173,9 +173,21 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             # Get the current failure count
             failure_count = self._repeater_consecutive_failures.get(pubkey_prefix, 0)
             
-            # If we've failed multiple times, try a login first
-            if failure_count >= MAX_REPEATER_FAILURES_BEFORE_LOGIN:
-                self.logger.info(f"Attempting login to repeater {repeater_name} after {failure_count} failures")
+            # Check if we need to login (initial login, periodic refresh, or after failures)
+            last_login_time = self._repeater_login_times.get(pubkey_prefix)
+            current_time = self._current_time()
+            needs_initial_login = last_login_time is None
+            needs_periodic_refresh = (last_login_time is not None and 
+                                    current_time - last_login_time >= REPEATER_LOGIN_REFRESH_INTERVAL)
+            needs_failure_recovery = failure_count >= MAX_REPEATER_FAILURES_BEFORE_LOGIN
+            
+            if needs_initial_login or needs_periodic_refresh or needs_failure_recovery:
+                if needs_initial_login:
+                    self.logger.info(f"Attempting initial login to repeater {repeater_name}")
+                elif needs_periodic_refresh:
+                    self.logger.info(f"Attempting periodic login refresh to repeater {repeater_name} (last login: {last_login_time})")
+                else:
+                    self.logger.info(f"Attempting login to repeater {repeater_name} after {failure_count} failures")
                 
                 try:
                     login_result = await self.api.mesh_core.commands.send_login(
@@ -268,11 +280,11 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         """Apply exponential backoff delay for failed repeater updates."""
         self._apply_backoff(pubkey_prefix, failure_count, "repeater")
 
-    async def _update_node_telemetry(self, contact, pubkey_prefix: str, node_name: str, update_interval: int, password: str | None = None):
+    async def _update_node_telemetry(self, contact, pubkey_prefix: str, node_name: str, update_interval: int):
         """Update telemetry for a node (repeater or client).
         
         This is a separate method that can be used by both repeater and client update logic.
-        For repeaters with telemetry enabled, performs periodic login to keep session fresh.
+        Assumes repeater login has already been handled by status update logic.
         """
         # Get current failure count
         failure_count = self._telemetry_consecutive_failures.get(pubkey_prefix, 0)
@@ -281,35 +293,6 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         # 0-5 seconds random delay
         random_delay = random.uniform(0, 5000)
         await asyncio.sleep(random_delay / 1000)
-        
-        # Login before telemetry request if password is available and we haven't logged in recently
-        # bummer we have to do this, but for some reason the telemetry admin session expires quickly
-        current_time = self._current_time()
-        last_login_time = self._repeater_login_times.get(pubkey_prefix, 0)
-        
-        if password is not None and (current_time - last_login_time) >= update_interval:
-            self.logger.debug(f"Logging in to repeater {node_name} before telemetry request (last login: {current_time - last_login_time}s ago)")
-            try:
-                login_result = await self.api.mesh_core.commands.send_login(contact, password)
-                if login_result.type == EventType.ERROR:
-                    self.logger.error(f"Login to repeater {node_name} failed: {login_result.payload}")
-                    # Don't proceed with telemetry if login fails
-                    new_failure_count = failure_count + 1
-                    self._telemetry_consecutive_failures[pubkey_prefix] = new_failure_count
-                    self._apply_backoff(pubkey_prefix, new_failure_count, "telemetry")
-                    return
-                else:
-                    self.logger.debug(f"Successfully logged in to repeater {node_name}")
-                    self._repeater_login_times[pubkey_prefix] = current_time
-            except Exception as ex:
-                self.logger.error(f"Exception during login to repeater {node_name}: {ex}")
-                # Don't proceed with telemetry if login fails
-                new_failure_count = failure_count + 1
-                self._telemetry_consecutive_failures[pubkey_prefix] = new_failure_count
-                self._apply_backoff(pubkey_prefix, new_failure_count, "telemetry")
-                return
-        elif password is not None:
-            self.logger.debug(f"Skipping login to repeater {node_name} (last login: {current_time - last_login_time}s ago)")
         
         try:
             self.logger.debug(f"Sending telemetry request to node: {node_name} ({pubkey_prefix})")
@@ -533,10 +516,9 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     # Use same interval as repeater update for telemetry
                     update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
                     
-                    # Create and start telemetry task with password for login refresh
-                    password = repeater_config.get(CONF_REPEATER_PASSWORD, "")
+                    # Create and start telemetry task
                     telemetry_task = asyncio.create_task(
-                        self._update_node_telemetry(contact, pubkey_prefix, repeater_name, update_interval, password)
+                        self._update_node_telemetry(contact, pubkey_prefix, repeater_name, update_interval)
                     )
                     self._active_telemetry_tasks[pubkey_prefix] = telemetry_task
                     telemetry_task.set_name(f"telemetry_{repeater_name}")
