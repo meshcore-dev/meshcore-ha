@@ -52,7 +52,7 @@ CHANNEL_PREFIX: Final = "ch_"
 # Repeater subscription constants
 CONF_REPEATER_SUBSCRIPTIONS: Final = "repeater_subscriptions"
 CONF_REPEATER_NAME: Final = "repeater_name"
-CONF_REPEATER_PASSWORD: Final = "repeater_password"
+CONF_REPEATER_PASSWORD: Final = "password"
 CONF_REPEATER_UPDATE_INTERVAL: Final = "repeater_update_interval"
 CONF_REPEATER_TELEMETRY_ENABLED: Final = "telemetry_enabled"
 DEFAULT_REPEATER_UPDATE_INTERVAL: Final = 900  # 15 minutes in seconds
