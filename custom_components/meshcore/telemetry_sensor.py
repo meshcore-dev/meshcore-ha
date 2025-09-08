@@ -129,17 +129,6 @@ LPP_TYPE_MAPPINGS = {
         "create_multi": True,  # Create separate sensors for R, G, B
         "multi_fields": ["r", "g", "b"]
     },
-    136: {
-        "name": "GPS", 
-        "icon": "mdi:crosshairs-gps", 
-        "state_class": SensorStateClass.MEASUREMENT,
-        "create_multi": True,  # Create separate sensors for lat, lon, alt
-        "multi_fields": [
-            {"field": "latitude", "name": "Latitude", "icon": "mdi:latitude", "unit": "°", "precision": 4},
-            {"field": "longitude", "name": "Longitude", "icon": "mdi:longitude", "unit": "°", "precision": 4},
-            {"field": "altitude", "name": "Altitude", "icon": "mdi:elevation-rise", "unit": "m", "precision": 1}
-        ]
-    },
 }
 
 
@@ -195,6 +184,10 @@ class TelemetrySensorManager:
             value = channel_data.get("value")
             
             if channel is None or lpp_type is None:
+                continue
+                
+            # Skip GPS data - handled by device_tracker platform
+            if lpp_type == 'gps':
                 continue
                 
             # Create sensors based on the LPP type
@@ -335,7 +328,7 @@ class TelemetrySensorManager:
             
             for field_info in multi_fields:
                 if isinstance(field_info, dict):
-                    # Complex field definition (like GPS)
+                    # Complex field definition
                     field = field_info["field"]
                     field_name = field_info["name"]
                     field_icon = field_info.get("icon", type_config["icon"])
@@ -404,7 +397,7 @@ class MeshCoreTelemetrySensor(CoordinatorEntity, SensorEntity):
         self.channel = channel
         self.lpp_type = lpp_type
         self.node_info = node_info
-        self.field = field  # For multi-value sensors like GPS lat/lon or accelerometer x/y/z
+        self.field = field  # For multi-value sensors
         
         # Set up naming based on node type
         node_name = node_info.get("name", f"Node {pubkey_prefix[:6]}")
