@@ -37,7 +37,7 @@ from .services import async_setup_services, async_unload_services
 _LOGGER = logging.getLogger(__name__)
 
 # List of platforms to set up
-PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SELECT, Platform.TEXT]
+PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SELECT, Platform.TEXT, Platform.DEVICE_TRACKER]
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Migrate old entry."""
@@ -149,7 +149,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.async_on_unload(entry.add_update_listener(async_update_options))
     
     # Subscribe to all MeshCore events and forward them to the HA event bus
-    def forward_all_events(event):
+    async def forward_all_events(event):
         """Forward all MeshCore events to Home Assistant event bus."""
         if not event:
             return
