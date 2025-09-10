@@ -1,0 +1,65 @@
+/**
+ * Any CSS included here will be global. The classic template
+ * bundles Infima by default. Infima is a CSS framework designed to
+ * work well for content-centric websites.
+ */
+
+/* You can override the default Infima variables here. */
+:root {
+  --ifm-color-primary: #0d1a2b;
+  --ifm-color-primary-dark: #0b1626;
+  --ifm-color-primary-darker: #0a1423;
+  --ifm-color-primary-darkest: #08101c;
+  --ifm-color-primary-light: #0f1e30;
+  --ifm-color-primary-lighter: #102033;
+  --ifm-color-primary-lightest: #13263a;
+  --ifm-code-font-size: 95%;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
+}
+
+/* For readability concerns, you should choose a lighter palette in dark mode. */
+[data-theme='dark'] {
+  --ifm-color-primary: #4a7ba7;
+  --ifm-color-primary-dark: #426e96;
+  --ifm-color-primary-darker: #3e688d;
+  --ifm-color-primary-darkest: #345674;
+  --ifm-color-primary-light: #5288b8;
+  --ifm-color-primary-lighter: #5b8fbd;
+  --ifm-color-primary-lightest: #739fc9;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
+}
+
+/* Custom hero banner styling */
+.hero--primary {
+  background-color: #0d1a2b;
+  color: white;
+}
+
+.hero--primary .hero__title {
+  color: white;
+}
+
+.hero--primary .hero__subtitle {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+/* Override button colors */
+.button--secondary {
+  --ifm-button-background-color: #4a7ba7;
+  --ifm-button-border-color: #4a7ba7;
+  color: white;
+}
+
+.button--secondary:hover {
+  --ifm-button-background-color: #5288b8;
+  --ifm-button-border-color: #5288b8;
+}
+
+/* Make navbar logo smaller and properly aligned */
+.navbar__logo img {
+  height: 1.125rem;
+  width: auto;
+  margin-right: 0.75rem;
+  vertical-align: middle;
+  position: relative;
+}

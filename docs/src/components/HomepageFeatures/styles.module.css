@@ -1,0 +1,51 @@
+.features {
+  display: flex;
+  align-items: center;
+  padding: 2rem 0;
+  width: 100%;
+}
+
+.featureIcon {
+  font-size: 4rem;
+  margin-bottom: 1rem;
+}
+
+.resources {
+  padding: 3rem 0;
+  background-color: var(--ifm-color-emphasis-100);
+}
+
+.resourceButton {
+  width: 100%;
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.resourceIcon {
+  font-size: 1.5rem;
+}
+
+.resourceLogo {
+  width: 32px;
+  height: 32px;
+  margin-right: 12px;
+  filter: brightness(0) saturate(100%);
+}
+
+[data-theme='dark'] .resourceLogo {
+  filter: brightness(0) saturate(100%) invert(1);
+}
+
+.resourceLogoPng {
+  width: 32px;
+  height: 32px;
+  margin-right: 12px;
+  filter: none;
+}
+
+[data-theme='dark'] .resourceLogoPng {
+  filter: none;
+}
