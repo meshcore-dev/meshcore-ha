@@ -30,7 +30,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: ./docs
-        run: npm ci
+        run: npm install --legacy-peer-deps
 
       - name: Build website
         working-directory: ./docs
