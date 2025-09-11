@@ -28,7 +28,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: ./docs
-        run: npm install --legacy-peer-deps
+        run: npm install --verbose
 
       - name: Build website
         working-directory: ./docs
