@@ -227,7 +227,7 @@ cards:
 
 ## Related Documentation
 
-- [Services](./services.md) - Available services for UI actions
-- [Sensors](./sensors.md) - Sensor entities for display
-- [Events](./events.md) - Events for dynamic updates
-- [Automation](./automation.md) - Automation examples
+- [Services](../services.md) - Available services for UI actions
+- [Sensors](../sensors.md) - Sensor entities for display
+- [Events](../events.md) - Events for dynamic updates
+- [Automation](../automation.md) - Automation examples
