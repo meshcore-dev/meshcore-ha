@@ -57,6 +57,11 @@ const config: Config = {
   themeConfig: {
     // Replace with your project's social card
     image: 'img/meshcore-social-card.jpg',
+    colorMode: {
+      defaultMode: 'dark',
+      disableSwitch: true,
+      respectPrefersColorScheme: false,
+    },
     navbar: {
       logo: {
         alt: 'Meshcore Logo',
