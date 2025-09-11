@@ -20,7 +20,7 @@ function HomepageHeader() {
         <div className={styles.buttons}>
           <Link
             className="button button--secondary button--lg"
-            to="/intro">
+            to="/docs/ha/installation">
             Get Started with Meshcore HA
           </Link>
         </div>

@@ -5,7 +5,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 // This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
 
 const config: Config = {
-  title: 'Meshcore Home Assistant',
+  title: 'Home Assistant',
   tagline: 'Home Assistant Integration for Meshcore',
   favicon: 'img/favicon.ico',
 
@@ -42,7 +42,7 @@ const config: Config = {
       {
         docs: {
           sidebarPath: './sidebars.ts',
-          routeBasePath: '/',
+          routeBasePath: 'docs/ha',
           editUrl:
             'https://github.com/meshcore-dev/meshcore-ha/tree/main/docs/',
         },
@@ -58,7 +58,6 @@ const config: Config = {
     // Replace with your project's social card
     image: 'img/meshcore-social-card.jpg',
     navbar: {
-      title: 'Meshcore Home Assistant',
       logo: {
         alt: 'Meshcore Logo',
         src: 'img/meshcore.svg',
@@ -68,7 +67,7 @@ const config: Config = {
           type: 'docSidebar',
           sidebarId: 'tutorialSidebar',
           position: 'left',
-          label: 'Documentation',
+          label: 'Home Assistant',
         },
         {
           href: 'https://github.com/meshcore-dev/meshcore-ha',
@@ -81,11 +80,11 @@ const config: Config = {
       style: 'dark',
       links: [
         {
-          title: 'Documentation',
+          title: 'Home Assistant',
           items: [
             {
               label: 'Getting Started',
-              to: '/',
+              to: '/docs/ha/installation',
             },
           ],
         },
@@ -113,14 +112,9 @@ const config: Config = {
               label: 'Issues',
               href: 'https://github.com/meshcore-dev/meshcore-ha/issues',
             },
-            {
-              label: 'Discussions',
-              href: 'https://github.com/meshcore-dev/meshcore-ha/discussions',
-            },
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} Meshcore Dev. Built with Docusaurus.`,
     },
     prism: {
       theme: prismThemes.github,

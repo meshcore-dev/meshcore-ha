@@ -51,7 +51,7 @@ const ResourceLinks = [
   },
   {
     title: 'GitHub',
-    url: 'https://github.com/meshcore-dev/Meshcore',
+    url: 'https://github.com/meshcore-dev/meshcore-ha',
     logo: '/meshcore-ha/img/github-logo.svg',
   },
   {
