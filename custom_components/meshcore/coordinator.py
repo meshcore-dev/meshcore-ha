@@ -224,12 +224,14 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 # Increment failure count and apply backoff
                 new_failure_count = failure_count + 1
                 self._repeater_consecutive_failures[pubkey_prefix] = new_failure_count
-                self._apply_repeater_backoff(pubkey_prefix, new_failure_count)
+                update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
+                self._apply_repeater_backoff(pubkey_prefix, new_failure_count, update_interval)
             elif result.payload.get('uptime', 0) == 0:
                 self.logger.warn(f"Malformed status response from repeater {repeater_name}: {result.payload}")
                 new_failure_count = failure_count + 1
                 self._repeater_consecutive_failures[pubkey_prefix] = new_failure_count
-                self._apply_repeater_backoff(pubkey_prefix, new_failure_count)
+                update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
+                self._apply_repeater_backoff(pubkey_prefix, new_failure_count, update_interval)
             else:
                 self.logger.debug(f"Successfully updated repeater {repeater_name}")
                 # Reset failure count on success
@@ -248,23 +250,23 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             # Increment failure count and apply backoff
             new_failure_count = self._repeater_consecutive_failures.get(pubkey_prefix, 0) + 1
             self._repeater_consecutive_failures[pubkey_prefix] = new_failure_count
-            self._apply_repeater_backoff(pubkey_prefix, new_failure_count)
+            update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
+            self._apply_repeater_backoff(pubkey_prefix, new_failure_count, update_interval)
         finally:
             # Remove this task from active tasks
             if pubkey_prefix in self._active_repeater_tasks:
                 self._active_repeater_tasks.pop(pubkey_prefix)
 
-    def _apply_backoff(self, pubkey_prefix: str, failure_count: int, update_type: str = "repeater") -> None:
+    def _apply_backoff(self, pubkey_prefix: str, failure_count: int, update_interval: int, update_type: str = "repeater") -> None:
         """Apply exponential backoff delay for failed updates.
-        
-        Uses DEFAULT_UPDATE_TICK as base since that's how often we check for updates.
         
         Args:
             pubkey_prefix: The node's public key prefix
             failure_count: Number of consecutive failures
+            update_interval: The configured update interval to cap the backoff at
             update_type: Type of update ("repeater" or "telemetry")
         """
-        backoff_delay = min(REPEATER_BACKOFF_BASE ** failure_count, REPEATER_BACKOFF_MAX_MULTIPLIER)
+        backoff_delay = min(REPEATER_BACKOFF_BASE ** failure_count, update_interval)
         next_update_time = self._current_time() + backoff_delay
         
         if update_type == "telemetry":
@@ -274,11 +276,19 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         
         self.logger.debug(f"Applied backoff for {update_type} {pubkey_prefix}: "
                          f"failure_count={failure_count}, "
-                         f"delay={backoff_delay}s")
+                         f"delay={backoff_delay}s, "
+                         f"interval_cap={update_interval}s")
 
-    def _apply_repeater_backoff(self, pubkey_prefix: str, failure_count: int) -> None:
+    def _apply_repeater_backoff(self, pubkey_prefix: str, failure_count: int, update_interval: int) -> None:
         """Apply exponential backoff delay for failed repeater updates."""
-        self._apply_backoff(pubkey_prefix, failure_count, "repeater")
+        # Reset the path to this repeater to clear any stale routing
+        try:
+            self.api.mesh_core.reset_path(pubkey_prefix)
+            self.logger.debug(f"Reset path for repeater {pubkey_prefix} due to failure")
+        except Exception as ex:
+            self.logger.warning(f"Failed to reset path for repeater {pubkey_prefix}: {ex}")
+        
+        self._apply_backoff(pubkey_prefix, failure_count, update_interval, "repeater")
 
     async def _update_node_telemetry(self, contact, pubkey_prefix: str, node_name: str, update_interval: int):
         """Update telemetry for a node (repeater or client).
@@ -314,14 +324,14 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 # Increment failure count and apply backoff
                 new_failure_count = failure_count + 1
                 self._telemetry_consecutive_failures[pubkey_prefix] = new_failure_count
-                self._apply_backoff(pubkey_prefix, new_failure_count, "telemetry")
+                self._apply_backoff(pubkey_prefix, new_failure_count, update_interval, "telemetry")
                 
         except Exception as ex:
             self.logger.warn(f"Exception requesting telemetry from node {node_name}: {ex}")
             # Increment failure count and apply backoff
             new_failure_count = failure_count + 1
             self._telemetry_consecutive_failures[pubkey_prefix] = new_failure_count
-            self._apply_backoff(pubkey_prefix, new_failure_count, "telemetry")
+            self._apply_backoff(pubkey_prefix, new_failure_count, update_interval, "telemetry")
         finally:
             # Remove this task from active telemetry tasks
             if pubkey_prefix in self._active_telemetry_tasks:
