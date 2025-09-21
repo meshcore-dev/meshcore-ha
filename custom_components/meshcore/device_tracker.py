@@ -54,8 +54,8 @@ class DeviceTrackerManager:
         if not event.payload or "lpp" not in event.payload:
             _LOGGER.debug("No LPP data in telemetry event")
             return
-            
-        pubkey_prefix = event.payload.get("pubkey_pre", "")
+
+        pubkey_prefix = event.payload.get("pubkey_prefix", "")
         lpp_data = event.payload.get("lpp", [])
         
         # If no pubkey_prefix, this might be self telemetry

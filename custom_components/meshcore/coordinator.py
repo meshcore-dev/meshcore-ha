@@ -206,7 +206,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             
             # Request status from the repeater
             self.logger.debug(f"Sending status request to repeater: {repeater_name} ({pubkey_prefix})")
-            await self.api.mesh_core.commands.send_statusreq(contact)
+            await self.api.mesh_core.commands.send_binary_req(contact, BinaryReqType.STATUS)
             result = await self.api.mesh_core.wait_for_event(
                 EventType.STATUS_RESPONSE,
                 attribute_filters={"pubkey_prefix": pubkey_prefix},
