@@ -98,7 +98,6 @@ The integration will:
 ### Interval Considerations
 
 - Shorter intervals provide more real-time data but increase network traffic
-- Battery-powered nodes benefit from longer intervals
 - Network congestion may require longer intervals
 - Failed updates trigger exponential backoff
 
@@ -117,7 +116,6 @@ Repeaters typically require a password for login:
 Clients may have Access Control Lists (ACLs) that restrict:
 - Who can request telemetry
 - What data is shared
-- Update frequency limits
 
 If a client doesn't respond to telemetry requests:
 - Check if your node is authorized in the client's ACL
@@ -130,18 +128,13 @@ If a client doesn't respond to telemetry requests:
 
 When updates fail, the integration implements exponential backoff:
 
-1. **First Failure**: Retry at next scheduled interval
-2. **Consecutive Failures**: Double the delay each time
-3. **Maximum Backoff**: Caps at ~17 minutes
-4. **Recovery**: Resets to normal interval on success
+1. **Consecutive Failures**: Double the delay each time, capped at the configured update interval
+2. **Path Reset**: After 5 failures, automatically resets the routing path to the node
+3. **Recovery**: Resets to normal interval on success
 
 ### Automatic Re-login
 
-For repeaters, if status updates fail:
-1. Integration attempts to re-login automatically
-2. Uses stored password from configuration
-3. Resumes normal updates on successful login
-4. Applies backoff if login fails repeatedly
+For repeaters, the integration automatically re-logs in after 5 consecutive failures.
 
 ## Data Collection
 

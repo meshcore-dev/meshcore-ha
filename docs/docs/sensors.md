@@ -77,6 +77,17 @@ These sensors monitor remote nodes discovered in the mesh network.
 - **Last SNR** - Last signal-to-noise ratio
   - Unit: dB (1 decimal precision)
 
+#### Routing & Network Topology  
+- **Routing Path** (`out_path`) - Current routing path to reach this client
+  - Shows the sequence of node public key prefixes used to route messages
+  - Example: "abc123,def456" (message routes through abc123 then def456)  
+  - Empty if client is directly reachable
+  
+- **Path Length** (`out_path_len`) - Number of hops to reach this client
+  - Unit: hops
+  - Value: Number of intermediate nodes (0 = direct, -1 = unreachable)
+  - State Class: Measurement
+
 ### Repeater Sensors
 Repeaters provide detailed operational statistics when subscribed.
 
@@ -127,6 +138,17 @@ All counters use State Class: Total Increasing
   
 - **Full Events** (`full_evts`) - Queue saturation events
   - State Class: Total Increasing
+
+#### Routing & Network Topology
+- **Routing Path** (`out_path`) - Current routing path to reach this node
+  - Shows the sequence of node public key prefixes used to route messages
+  - Example: "abc123,def456" (message routes through abc123 then def456)
+  - Empty if node is directly reachable
+  
+- **Path Length** (`out_path_len`) - Number of hops to reach this node
+  - Unit: hops
+  - Value: Number of intermediate nodes (0 = direct, -1 = unreachable)
+  - State Class: Measurement
 
 #### Duplicate Detection
 - **Direct Duplicates** (`direct_dups`) - Filtered direct message duplicates

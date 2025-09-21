@@ -28,6 +28,7 @@ from .const import (
     DOMAIN,
     ENTITY_DOMAIN_SENSOR,
     CONF_REPEATER_SUBSCRIPTIONS,
+    CONF_TRACKED_CLIENTS,
     NodeType,
 )
 from .utils import get_node_type_str
@@ -43,6 +44,23 @@ _LOGGER = logging.getLogger(__name__)
 # Sensor key suffixes
 UTILIZATION_SUFFIX = "_utilization"
 RATE_SUFFIX = "_rate"
+
+# Path tracking sensors for repeaters and clients
+PATH_SENSORS = [
+    SensorEntityDescription(
+        key="out_path",
+        name="Routing Path",
+        icon="mdi:map-marker-path",
+        native_unit_of_measurement=None,
+    ),
+    SensorEntityDescription(
+        key="out_path_len",
+        name="Path Length",
+        icon="mdi:counter",
+        native_unit_of_measurement="hops",
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+]
 
 
 # Define sensors for the main device
@@ -437,6 +455,38 @@ async def async_setup_entry(
                     entities.append(sensor)
                 except Exception as ex:
                     _LOGGER.error(f"Error creating repeater sensor {description.key}: {ex}")
+            
+            # Add path tracking sensors for this repeater
+            for path_description in PATH_SENSORS:
+                try:
+                    sensor = MeshCorePathSensor(
+                        coordinator,
+                        path_description,
+                        repeater,
+                        "repeater"
+                    )
+                    entities.append(sensor)
+                except Exception as ex:
+                    _LOGGER.error(f"Error creating path sensor {path_description.key} for repeater: {ex}")
+
+    # Add path sensors for tracked clients
+    client_subscriptions = entry.data.get(CONF_TRACKED_CLIENTS, [])
+    if client_subscriptions:
+        for client in client_subscriptions:
+            _LOGGER.info(f"Creating path sensors for client: {client.get('name')} ({client.get('pubkey_prefix')})")
+            
+            # Add path tracking sensors for this client
+            for path_description in PATH_SENSORS:
+                try:
+                    sensor = MeshCorePathSensor(
+                        coordinator,
+                        path_description,
+                        client,
+                        "client"
+                    )
+                    entities.append(sensor)
+                except Exception as ex:
+                    _LOGGER.error(f"Error creating path sensor {path_description.key} for client: {ex}")
     
     async_add_entities(entities)
 
@@ -572,6 +622,101 @@ class MeshCoreSensor(CoordinatorEntity, SensorEntity):
     def device_info(self):
         return DeviceInfo(**self.coordinator.device_info)
     
+    @property
+    def native_value(self) -> Any:
+        return self._native_value
+
+class MeshCorePathSensor(CoordinatorEntity, SensorEntity):
+    """Sensor for tracking node routing path with CONTACTS event updates."""
+    
+    def __init__(
+        self,
+        coordinator: DataUpdateCoordinator,
+        description: SensorEntityDescription,
+        node_config: dict,
+        node_type: str,
+    ) -> None:
+        """Initialize the path tracking sensor."""
+        super().__init__(coordinator)
+        self.entity_description = description
+        self.node_name = node_config.get("name", "Unknown")
+        self.node_type = node_type
+
+        # Use the provided pubkey_prefix
+        self.pubkey_prefix = node_config.get("pubkey_prefix", "")
+        self.public_key_short = self.pubkey_prefix[:6] if self.pubkey_prefix else ""
+
+        # Generate a unique device_id for this node using pubkey_prefix
+        self.device_id = f"{coordinator.config_entry.entry_id}_{node_type}_{self.pubkey_prefix}"
+
+        # Set friendly name
+        self._attr_name = description.name
+
+        # Build device name with pubkey
+        device_name = f"MeshCore {node_type.title()}: {self.node_name} ({self.public_key_short})"
+        
+        # Set unique ID
+        self._attr_unique_id = f"{self.device_id}_{description.key}_{self.public_key_short}_{self.node_name}"
+        
+        # Set entity ID
+        self.entity_id = format_entity_id(
+            ENTITY_DOMAIN_SENSOR,
+            self.pubkey_prefix[:10],
+            description.key,
+            self.node_name
+        )
+
+        # Set device info to create a separate device for this node
+        device_info = {
+            "identifiers": {(DOMAIN, self.device_id)},
+            "name": device_name,
+            "manufacturer": "MeshCore",
+            "model": f"Mesh {node_type.title()}",
+            "via_device": (DOMAIN, coordinator.config_entry.entry_id),  # Link to the main device
+        }
+            
+        self._attr_device_info = DeviceInfo(**device_info)
+        self._native_value = None
+        
+    async def async_added_to_hass(self):
+        """Register event handlers when entity is added to hass."""
+        await super().async_added_to_hass()
+        
+        # Only set up listener if MeshCore instance is available
+        if not self.coordinator.api.mesh_core:
+            _LOGGER.warning(f"No MeshCore instance available for path tracking: {self.node_name}")
+            return
+            
+        # Only set up if we have a pubkey_prefix
+        if not self.pubkey_prefix:
+            _LOGGER.warning(f"No pubkey_prefix available for node {self.node_name}, can't track path")
+            return
+
+        meshcore = self.coordinator.api.mesh_core
+        
+        def handle_contacts_event(event: Event):
+            """Handle CONTACTS event to update path information."""
+            if event.type != EventType.CONTACTS:
+                return
+                
+            # Find our contact using the helper method
+            contact = meshcore.get_contact_by_key_prefix(self.pubkey_prefix)
+            if contact:
+                # Update the sensor based on the description key
+                if self.entity_description.key == "out_path":
+                    self._native_value = contact.get("out_path", "")
+                elif self.entity_description.key == "out_path_len":
+                    path_len = contact.get("out_path_len", -1)
+                    self._native_value = path_len if path_len != -1 else None
+        
+        # Subscribe to CONTACTS events
+        meshcore.dispatcher.subscribe(
+            EventType.CONTACTS,
+            handle_contacts_event
+        )
+        
+        _LOGGER.debug(f"Set up path tracking for {self.node_type} {self.node_name} ({self.pubkey_prefix})")
+
     @property
     def native_value(self) -> Any:
         return self._native_value
