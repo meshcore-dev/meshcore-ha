@@ -455,11 +455,11 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                                 return
                         
                         elif param_type == "bytes":
-                            # Convert string to bytes
+                            # Convert hex string to bytes
                             try:
-                                prepared_args.append(arg.encode('utf-8'))
-                            except UnicodeEncodeError:
-                                _LOGGER.error(f"Could not convert '{arg}' to bytes")
+                                prepared_args.append(bytes.fromhex(arg))
+                            except ValueError:
+                                _LOGGER.error(f"Could not convert '{arg}' to bytes - invalid hex string")
                                 return
                         
                         else:
