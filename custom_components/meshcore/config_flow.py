@@ -34,6 +34,7 @@ from .const import (
     CONF_REPEATER_UPDATE_INTERVAL,
     CONF_REPEATER_TELEMETRY_ENABLED,
     DEFAULT_REPEATER_UPDATE_INTERVAL,
+    MIN_UPDATE_INTERVAL,
     CONF_TRACKED_CLIENTS,
     CONF_CLIENT_NAME,
     CONF_CLIENT_UPDATE_INTERVAL,
@@ -449,7 +450,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Required(CONF_REPEATER_NAME): vol.In(repeater_dict.keys()),
                 vol.Optional(CONF_REPEATER_PASSWORD, default=default_password): str,
                 vol.Optional(CONF_REPEATER_TELEMETRY_ENABLED, default=default_telemetry): bool,
-                vol.Optional(CONF_REPEATER_UPDATE_INTERVAL, default=default_interval): vol.All(cv.positive_int, vol.Range(min=300, max=3600)),
+                vol.Optional(CONF_REPEATER_UPDATE_INTERVAL, default=default_interval): vol.All(cv.positive_int, vol.Range(min=MIN_UPDATE_INTERVAL)),
             }),
             errors=errors,
         )
@@ -600,7 +601,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 step_id="add_client",
                 data_schema=vol.Schema({
                     vol.Required(CONF_CLIENT_NAME): vol.In(client_dict.keys()),
-                    vol.Optional(CONF_CLIENT_UPDATE_INTERVAL, default=DEFAULT_CLIENT_UPDATE_INTERVAL): vol.All(cv.positive_int, vol.Range(min=600, max=7200)),
+                    vol.Optional(CONF_CLIENT_UPDATE_INTERVAL, default=DEFAULT_CLIENT_UPDATE_INTERVAL): vol.All(cv.positive_int, vol.Range(min=MIN_UPDATE_INTERVAL)),
                 }),
                 errors=errors,
             )
@@ -622,7 +623,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 step_id="add_client",
                 data_schema=vol.Schema({
                     vol.Required(CONF_CLIENT_NAME): vol.In(client_dict.keys()),
-                    vol.Optional(CONF_CLIENT_UPDATE_INTERVAL, default=DEFAULT_CLIENT_UPDATE_INTERVAL): vol.All(cv.positive_int, vol.Range(min=600, max=7200)),
+                    vol.Optional(CONF_CLIENT_UPDATE_INTERVAL, default=DEFAULT_CLIENT_UPDATE_INTERVAL): vol.All(cv.positive_int, vol.Range(min=MIN_UPDATE_INTERVAL)),
                 }),
                 errors=errors,
             )
@@ -816,7 +817,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             data_schema=vol.Schema({
                 vol.Optional(CONF_REPEATER_PASSWORD, default=repeater.get("password", "")): str,
                 vol.Optional(CONF_REPEATER_TELEMETRY_ENABLED, default=repeater.get("telemetry_enabled", False)): bool,
-                vol.Optional(CONF_REPEATER_UPDATE_INTERVAL, default=repeater.get("update_interval", DEFAULT_REPEATER_UPDATE_INTERVAL)): vol.All(cv.positive_int, vol.Range(min=300, max=3600)),
+                vol.Optional(CONF_REPEATER_UPDATE_INTERVAL, default=repeater.get("update_interval", DEFAULT_REPEATER_UPDATE_INTERVAL)): vol.All(cv.positive_int, vol.Range(min=MIN_UPDATE_INTERVAL)),
             }),
             description_placeholders={
                 "device_name": repeater.get("name", "Unknown")
@@ -852,7 +853,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         return self.async_show_form(
             step_id="edit_client",
             data_schema=vol.Schema({
-                vol.Optional(CONF_CLIENT_UPDATE_INTERVAL, default=client.get("update_interval", DEFAULT_CLIENT_UPDATE_INTERVAL)): vol.All(cv.positive_int, vol.Range(min=600, max=7200)),
+                vol.Optional(CONF_CLIENT_UPDATE_INTERVAL, default=client.get("update_interval", DEFAULT_CLIENT_UPDATE_INTERVAL)): vol.All(cv.positive_int, vol.Range(min=MIN_UPDATE_INTERVAL)),
             }),
             description_placeholders={
                 "device_name": client.get("name", "Unknown")

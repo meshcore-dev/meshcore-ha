@@ -62,6 +62,24 @@ PATH_SENSORS = [
     ),
 ]
 
+# Reliability tracking sensors for repeaters and clients  
+RELIABILITY_SENSORS = [
+    SensorEntityDescription(
+        key="request_successes",
+        name="Request Successes",
+        icon="mdi:check-circle",
+        native_unit_of_measurement="requests",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+    ),
+    SensorEntityDescription(
+        key="request_failures", 
+        name="Request Failures",
+        icon="mdi:alert-circle",
+        native_unit_of_measurement="requests", 
+        state_class=SensorStateClass.TOTAL_INCREASING,
+    ),
+]
+
 
 # Define sensors for the main device
 SENSORS = [
@@ -468,6 +486,19 @@ async def async_setup_entry(
                     entities.append(sensor)
                 except Exception as ex:
                     _LOGGER.error(f"Error creating path sensor {path_description.key} for repeater: {ex}")
+            
+            # Add reliability tracking sensors for this repeater
+            for reliability_description in RELIABILITY_SENSORS:
+                try:
+                    sensor = MeshCoreReliabilitySensor(
+                        coordinator,
+                        reliability_description,
+                        repeater,
+                        "repeater"
+                    )
+                    entities.append(sensor)
+                except Exception as ex:
+                    _LOGGER.error(f"Error creating reliability sensor {reliability_description.key} for repeater: {ex}")
 
     # Add path sensors for tracked clients
     client_subscriptions = entry.data.get(CONF_TRACKED_CLIENTS, [])
@@ -487,6 +518,19 @@ async def async_setup_entry(
                     entities.append(sensor)
                 except Exception as ex:
                     _LOGGER.error(f"Error creating path sensor {path_description.key} for client: {ex}")
+            
+            # Add reliability tracking sensors for this client
+            for reliability_description in RELIABILITY_SENSORS:
+                try:
+                    sensor = MeshCoreReliabilitySensor(
+                        coordinator,
+                        reliability_description,
+                        client,
+                        "client"
+                    )
+                    entities.append(sensor)
+                except Exception as ex:
+                    _LOGGER.error(f"Error creating reliability sensor {reliability_description.key} for client: {ex}")
     
     async_add_entities(entities)
 
@@ -625,6 +669,57 @@ class MeshCoreSensor(CoordinatorEntity, SensorEntity):
     @property
     def native_value(self) -> Any:
         return self._native_value
+
+class MeshCoreReliabilitySensor(CoordinatorEntity, SensorEntity):
+    """Sensor for tracking request successes/failures for nodes."""
+    
+    def __init__(
+        self,
+        coordinator: DataUpdateCoordinator,
+        description: SensorEntityDescription,
+        node_config: dict,
+        node_type: str,
+    ) -> None:
+        super().__init__(coordinator)
+        self.entity_description = description
+        self.node_name = node_config.get("name", "Unknown")
+        self.node_type = node_type
+        self.pubkey_prefix = node_config.get("pubkey_prefix", "")
+        self.public_key_short = self.pubkey_prefix[:6] if self.pubkey_prefix else ""
+
+        self.device_id = f"{coordinator.config_entry.entry_id}_{node_type}_{self.pubkey_prefix}"
+        self._attr_name = description.name
+        device_name = f"MeshCore {node_type.title()}: {self.node_name} ({self.public_key_short})"
+        self._attr_unique_id = f"{self.device_id}_{description.key}_{self.public_key_short}_{self.node_name}"
+        
+        self.entity_id = format_entity_id(
+            ENTITY_DOMAIN_SENSOR,
+            self.pubkey_prefix[:10],
+            description.key,
+            self.node_name
+        )
+
+        device_info = {
+            "identifiers": {(DOMAIN, self.device_id)},
+            "name": device_name,
+            "manufacturer": "MeshCore",
+            "model": f"Mesh {node_type.title()}",
+            "via_device": (DOMAIN, coordinator.config_entry.entry_id),
+        }
+        self._attr_device_info = DeviceInfo(**device_info)
+        
+        if not hasattr(coordinator, '_reliability_stats'):
+            coordinator._reliability_stats = {}
+        stats_key = f"{self.pubkey_prefix}_{description.key}"
+        if stats_key not in coordinator._reliability_stats:
+            coordinator._reliability_stats[stats_key] = 0
+
+    @property
+    def native_value(self) -> Any:
+        if hasattr(self.coordinator, '_reliability_stats'):
+            stats_key = f"{self.pubkey_prefix}_{self.entity_description.key}"
+            return self.coordinator._reliability_stats.get(stats_key, 0)
+        return 0
 
 class MeshCorePathSensor(CoordinatorEntity, SensorEntity):
     """Sensor for tracking node routing path with CONTACTS event updates."""

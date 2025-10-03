@@ -56,7 +56,7 @@ End devices that primarily send telemetry data.
 6. Configure:
    - **Password**: Required if the repeater has authentication
    - **Enable Telemetry**: Collect sensor data from the repeater
-   - **Update Interval**: 300-3600 seconds (default: 900)
+   - **Update Interval**: minimum 300 seconds (default: 900)
 7. Click **Submit**
 
 The integration will:
@@ -73,7 +73,7 @@ The integration will:
 4. Select **Add Tracked Client**
 5. Choose the client from your contacts list
 6. Configure:
-   - **Update Interval**: 600-7200 seconds (default: 1800)
+   - **Update Interval**: minimum 300 seconds (default: 1800)
 7. Click **Submit**
 
 The integration will:
@@ -88,12 +88,12 @@ The integration will:
 **Repeaters:**
 - High activity networks: 300-600 seconds
 - Normal networks: 900-1800 seconds
-- Low activity/battery conscious: 1800-3600 seconds
+- Low activity/battery conscious: 1800+ seconds
 
 **Clients:**
-- Critical sensors: 600-1200 seconds
+- Critical sensors: 300-1200 seconds
 - Standard monitoring: 1800-3600 seconds
-- Battery-powered devices: 3600-7200 seconds
+- Battery-powered repeaters: 3600+ seconds
 
 ### Interval Considerations
 
@@ -126,10 +126,10 @@ If a client doesn't respond to telemetry requests:
 
 ### Exponential Backoff
 
-When updates fail, the integration implements exponential backoff:
+When updates fail, the integration implements smart exponential backoff:
 
-1. **Consecutive Failures**: Double the delay each time, capped at the configured update interval
-2. **Path Reset**: After 5 failures, automatically resets the routing path to the node
+1. **Dynamic Base Interval**: Calculates backoff timing to fit 5 retries within the configured interval
+2. **Path Reset**: After 3 failures, automatically resets the routing path to the node (if established)
 3. **Recovery**: Resets to normal interval on success
 
 ### Automatic Re-login
@@ -162,6 +162,17 @@ Collected when available:
 - Custom Cayenne LPP data
 
 See [Sensors documentation](./sensors.md#telemetry-sensors-cayenne-lpp) for supported types.
+
+### Reliability Tracking
+
+Each tracked node provides reliability metrics:
+
+- **Request Successes**: Total count of successful requests (login, status, telemetry)
+- **Request Failures**: Total count of failed requests (timeouts, errors, exceptions)
+- **Routing Path**: Current path through the mesh network
+- **Path Length**: Number of hops to reach the node
+
+These sensors help monitor network health and identify problematic nodes or routing issues.
 
 ## Managing Tracked Nodes
 
