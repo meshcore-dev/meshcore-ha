@@ -56,6 +56,7 @@ CONF_REPEATER_PASSWORD: Final = "password"
 CONF_REPEATER_UPDATE_INTERVAL: Final = "update_interval"
 CONF_REPEATER_TELEMETRY_ENABLED: Final = "telemetry_enabled"
 DEFAULT_REPEATER_UPDATE_INTERVAL: Final = 900  # 15 minutes in seconds
+MIN_UPDATE_INTERVAL: Final = 300  # 5 minutes minimum
 MAX_REPEATER_FAILURES_BEFORE_LOGIN: Final = 5  # After this many failures, try login
 
 # Client tracking constants
@@ -76,6 +77,8 @@ DEFAULT_SELF_TELEMETRY_INTERVAL: Final = 300  # 5 minutes in seconds
 # Backoff constants for repeater failures
 REPEATER_BACKOFF_BASE: Final = 2  # Base multiplier for exponential backoff
 REPEATER_BACKOFF_MAX_MULTIPLIER: Final = 120  # Maximum backoff multiplier (10 minutes when * 5 seconds)
+MAX_FAILURES_BEFORE_PATH_RESET: Final = 3  # Reset path after this many failures
+MAX_RETRY_ATTEMPTS: Final = 5  # Maximum retry attempts within refresh window
 
 
 # Generic battery voltage to percentage lookup table

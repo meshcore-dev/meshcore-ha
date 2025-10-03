@@ -85,11 +85,11 @@ After initial setup, you can configure additional monitoring through the integra
 - Select repeater from your contacts
 - Enter password (if required)
 - Enable/disable telemetry collection
-- Set update interval (300-3600 seconds)
+- Set update interval (minimum 300 seconds)
 
 ### Client Tracking
 - Select client device from your contacts
-- Set update interval (600-7200 seconds)
+- Set update interval (minimum 300 seconds)
 
 ## Verification
 

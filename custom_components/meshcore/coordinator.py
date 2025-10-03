@@ -30,6 +30,8 @@ from .const import (
     MAX_REPEATER_FAILURES_BEFORE_LOGIN,
     REPEATER_BACKOFF_BASE,
     REPEATER_BACKOFF_MAX_MULTIPLIER,
+    MAX_FAILURES_BEFORE_PATH_RESET,
+    MAX_RETRY_ATTEMPTS,
     CONF_CONTACT_REFRESH_INTERVAL,
     DEFAULT_CONTACT_REFRESH_INTERVAL,
     CONF_REPEATER_TELEMETRY_ENABLED,
@@ -128,6 +130,34 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         
         if not hasattr(self, "last_update_success_time"):
             self.last_update_success_time = self._current_time()
+            
+        # Initialize reliability stats tracking
+        self._reliability_stats = {}
+    
+    def _increment_success(self, pubkey_prefix: str) -> None:
+        """Increment success counter for a node."""
+        stats_key = f"{pubkey_prefix}_request_successes"
+        self._reliability_stats[stats_key] = self._reliability_stats.get(stats_key, 0) + 1
+        
+    def _increment_failure(self, pubkey_prefix: str) -> None:
+        """Increment failure counter for a node."""
+        stats_key = f"{pubkey_prefix}_request_failures"
+        self._reliability_stats[stats_key] = self._reliability_stats.get(stats_key, 0) + 1
+    
+    async def _reset_node_path(self, contact, node_name: str) -> bool:
+        """Reset routing path for a node and return success status."""
+        try:
+            result = await self.api.mesh_core.commands.reset_path(contact)
+            if result and result.type != EventType.ERROR:
+                self.logger.info(f"Successfully reset path for {node_name}")
+                return True
+            else:
+                error_msg = result.payload if result and result.type == EventType.ERROR else "no response or unexpected result"
+                self.logger.warning(f"Failed to reset path for {node_name}: {error_msg}")
+                return False
+        except Exception as ex:
+            self.logger.warning(f"Exception resetting path for {node_name}: {ex}")
+            return False
     
     def update_telemetry_settings(self, config_entry: ConfigEntry) -> None:
         """Update telemetry settings from config entry."""
@@ -190,15 +220,19 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                         repeater_config.get(CONF_REPEATER_PASSWORD, "")
                     )
                     
-                    if login_result.type == EventType.ERROR:
-                        self.logger.error(f"Login to repeater {repeater_name} failed: {login_result.payload}")
-                    else:
+                    if login_result and login_result.type != None and login_result.type != EventType.ERROR:
                         self.logger.info(f"Successfully logged in to repeater {repeater_name}")
+                        self._increment_success(pubkey_prefix)
                         # Track login time for telemetry refresh
                         self._repeater_login_times[pubkey_prefix] = self._current_time()
+                    else:
+                        error_msg = login_result.payload if login_result and login_result.type == EventType.ERROR else "timeout or no response"
+                        self.logger.error(f"Login to repeater {repeater_name} failed: {error_msg}")
+                        self._increment_failure(pubkey_prefix)
                 
                 except Exception as ex:
                     self.logger.error(f"Exception during login to repeater {repeater_name}: {ex}")
+                    self._increment_failure(pubkey_prefix)
                 
                 # Reset failures after login attempt regardless of outcome
                 # This prevents repeated login attempts if they keep failing
@@ -219,14 +253,11 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 # Increment failure count and apply backoff
                 new_failure_count = failure_count + 1
                 self._repeater_consecutive_failures[pubkey_prefix] = new_failure_count
+                self._increment_failure(pubkey_prefix)
                 
-                # Reset path after 5 failures if there's an established path
-                if new_failure_count == 5 and contact and contact.get("out_path_len", 0) != -1:
-                    try:
-                        await self.api.mesh_core.commands.reset_path(pubkey_prefix)
-                        self.logger.info(f"Reset path for repeater {repeater_name} after 5 failures")
-                    except Exception as ex:
-                        self.logger.warning(f"Failed to reset path for repeater {repeater_name}: {ex}")
+                # Reset path after configured failures if there's an established path
+                if new_failure_count == MAX_FAILURES_BEFORE_PATH_RESET and contact and contact.get("out_path_len", -1) >= 0:
+                    await self._reset_node_path(contact, repeater_name)
                 
                 update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
                 self._apply_repeater_backoff(pubkey_prefix, new_failure_count, update_interval)
@@ -234,12 +265,14 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 self.logger.warn(f"Malformed status response from repeater {repeater_name}: {result.payload}")
                 new_failure_count = failure_count + 1
                 self._repeater_consecutive_failures[pubkey_prefix] = new_failure_count
+                self._increment_failure(pubkey_prefix)
                 update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
                 self._apply_repeater_backoff(pubkey_prefix, new_failure_count, update_interval)
             else:
                 self.logger.debug(f"Successfully updated repeater {repeater_name}")
                 # Reset failure count on success
                 self._repeater_consecutive_failures[pubkey_prefix] = 0
+                self._increment_success(pubkey_prefix)
                 
                 # Trigger state updates for any entities listening for this repeater
                 self.async_set_updated_data(self.data)
@@ -254,6 +287,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             # Increment failure count and apply backoff
             new_failure_count = self._repeater_consecutive_failures.get(pubkey_prefix, 0) + 1
             self._repeater_consecutive_failures[pubkey_prefix] = new_failure_count
+            self._increment_failure(pubkey_prefix)
             update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
             self._apply_repeater_backoff(pubkey_prefix, new_failure_count, update_interval)
         finally:
@@ -264,13 +298,21 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
     def _apply_backoff(self, pubkey_prefix: str, failure_count: int, update_interval: int, update_type: str = "repeater") -> None:
         """Apply exponential backoff delay for failed updates.
         
+        Uses dynamic base interval to ensure max 5 retries within the refresh window.
+        Resets failure count after MAX_RETRY_ATTEMPTS to start fresh.
+        
         Args:
             pubkey_prefix: The node's public key prefix
             failure_count: Number of consecutive failures
             update_interval: The configured update interval to cap the backoff at
             update_type: Type of update ("repeater" or "telemetry")
         """
-        backoff_delay = min(REPEATER_BACKOFF_BASE ** failure_count, update_interval)
+        # Calculate base interval to fit 5 retries within refresh window
+        # Sum of geometric series: base * (2^5 - 1) / (2 - 1) = base * 31
+        # We want this to be roughly half the refresh interval for safety
+        base_interval = max(1, update_interval // (31 * 2))
+        
+        backoff_delay = min(base_interval * (REPEATER_BACKOFF_BASE ** failure_count), update_interval)
         next_update_time = self._current_time() + backoff_delay
         
         if update_type == "telemetry":
@@ -280,6 +322,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         
         self.logger.debug(f"Applied backoff for {update_type} {pubkey_prefix}: "
                          f"failure_count={failure_count}, "
+                         f"base_interval={base_interval}s, "
                          f"delay={backoff_delay}s, "
                          f"interval_cap={update_interval}s")
 
@@ -313,6 +356,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 self.logger.debug(f"Telemetry response received from {node_name}: {telemetry_result}")
                 # Reset failure count on success
                 self._telemetry_consecutive_failures[pubkey_prefix] = 0
+                self._increment_success(pubkey_prefix)
                 # Schedule next telemetry update
                 next_telemetry_time = self._current_time() + update_interval
                 self._next_telemetry_update_times[pubkey_prefix] = next_telemetry_time
@@ -321,14 +365,11 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 # Increment failure count and apply backoff
                 new_failure_count = failure_count + 1
                 self._telemetry_consecutive_failures[pubkey_prefix] = new_failure_count
+                self._increment_failure(pubkey_prefix)
                 
-                # Reset path after 5 failures if there's an established path
-                if new_failure_count == 5 and contact and contact.get("out_path_len", 0) != -1:
-                    try:
-                        await self.api.mesh_core.commands.reset_path(pubkey_prefix)
-                        self.logger.info(f"Reset path for node {node_name} after 5 telemetry failures")
-                    except Exception as ex:
-                        self.logger.warning(f"Failed to reset path for node {node_name}: {ex}")
+                # Reset path after configured failures if there's an established path
+                if new_failure_count == MAX_FAILURES_BEFORE_PATH_RESET and contact and contact.get("out_path_len", -1) >= 0:
+                    await self._reset_node_path(contact, node_name)
                 
                 self._apply_backoff(pubkey_prefix, new_failure_count, update_interval, "telemetry")
                 
@@ -337,12 +378,13 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             # Increment failure count and apply backoff
             new_failure_count = failure_count + 1
             self._telemetry_consecutive_failures[pubkey_prefix] = new_failure_count
+            self._increment_failure(pubkey_prefix)
             
-            # Reset path after 5 failures if there's an established path
-            if new_failure_count == 5 and contact and contact.get("out_path_len", 0) != -1:
+            # Reset path after configured failures if there's an established path
+            if new_failure_count == MAX_FAILURES_BEFORE_PATH_RESET and contact and contact.get("out_path_len", -1) != -1:
                 try:
                     await self.api.mesh_core.commands.reset_path(pubkey_prefix)
-                    self.logger.info(f"Reset path for node {node_name} after 5 telemetry failures")
+                    self.logger.info(f"Reset path for node {node_name} after {MAX_FAILURES_BEFORE_PATH_RESET} telemetry failures")
                 except Exception as reset_ex:
                     self.logger.warning(f"Failed to reset path for node {node_name}: {reset_ex}")
             
@@ -479,7 +521,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             pubkey_prefix = repeater_config.get("pubkey_prefix")
             repeater_name = repeater_config.get("name")
             
-            # Clean up completed or failed tasks
+            # Clean c completed or failed tasks
             if pubkey_prefix in self._active_repeater_tasks:
                 task = self._active_repeater_tasks[pubkey_prefix]
                 if task.done():
