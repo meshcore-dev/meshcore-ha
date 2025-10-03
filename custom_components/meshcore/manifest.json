@@ -7,6 +7,6 @@
   "loggers": ["custom_components.meshcore"],
   "requirements": ["meshcore>=2.1.7", "meshcore-cli>=0.0.0"],
   "iot_class": "local_polling",
-  "version": "2.1.6",
+  "version": "2.1.7",
   "config_flow": true
 }
