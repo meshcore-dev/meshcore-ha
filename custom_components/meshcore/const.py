@@ -79,6 +79,7 @@ REPEATER_BACKOFF_BASE: Final = 2  # Base multiplier for exponential backoff
 REPEATER_BACKOFF_MAX_MULTIPLIER: Final = 120  # Maximum backoff multiplier (10 minutes when * 5 seconds)
 MAX_FAILURES_BEFORE_PATH_RESET: Final = 3  # Reset path after this many failures
 MAX_RETRY_ATTEMPTS: Final = 5  # Maximum retry attempts within refresh window
+MAX_RANDOM_DELAY: Final = 30  # Maximum random delay in seconds
 
 
 # Generic battery voltage to percentage lookup table

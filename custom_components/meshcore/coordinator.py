@@ -32,6 +32,7 @@ from .const import (
     REPEATER_BACKOFF_MAX_MULTIPLIER,
     MAX_FAILURES_BEFORE_PATH_RESET,
     MAX_RETRY_ATTEMPTS,
+    MAX_RANDOM_DELAY,
     CONF_CONTACT_REFRESH_INTERVAL,
     DEFAULT_CONTACT_REFRESH_INTERVAL,
     CONF_REPEATER_TELEMETRY_ENABLED,
@@ -180,9 +181,9 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         If we fail to get stats multiple times, we'll try to login.
         """
         # add a random delay to avoid all repeaters updating at the same time
-        # 0-5 seconds random delay
-        random_delay = random.uniform(0, 5000)
-        await asyncio.sleep(random_delay / 1000)
+        # 0-30 seconds random delay
+        random_delay = random.uniform(0, MAX_RANDOM_DELAY)
+        await asyncio.sleep(random_delay)
 
         
         pubkey_prefix = repeater_config.get("pubkey_prefix")
@@ -233,6 +234,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 except Exception as ex:
                     self.logger.error(f"Exception during login to repeater {repeater_name}: {ex}")
                     self._increment_failure(pubkey_prefix)
+                await asyncio.sleep(1)  # Small delay to avoid tight loops
                 
                 # Reset failures after login attempt regardless of outcome
                 # This prevents repeated login attempts if they keep failing
@@ -294,6 +296,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             # Remove this task from active tasks
             if pubkey_prefix in self._active_repeater_tasks:
                 self._active_repeater_tasks.pop(pubkey_prefix)
+            await asyncio.sleep(1)  # Small delay to avoid tight loops
 
     def _apply_backoff(self, pubkey_prefix: str, failure_count: int, update_interval: int, update_type: str = "repeater") -> None:
         """Apply exponential backoff delay for failed updates.
@@ -340,9 +343,9 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         failure_count = self._telemetry_consecutive_failures.get(pubkey_prefix, 0)
 
         # add a random delay to avoid all updating at the same time
-        # 0-5 seconds random delay
-        random_delay = random.uniform(0, 5000)
-        await asyncio.sleep(random_delay / 1000)
+        # 0-30 seconds random delay
+        random_delay = random.uniform(0, MAX_RANDOM_DELAY)
+        await asyncio.sleep(random_delay)
         
         try:
             self.logger.debug(f"Sending telemetry request to node: {node_name} ({pubkey_prefix})")
@@ -393,6 +396,8 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             # Remove this task from active telemetry tasks
             if pubkey_prefix in self._active_telemetry_tasks:
                 self._active_telemetry_tasks.pop(pubkey_prefix)
+            await asyncio.sleep(1)  # Small delay to avoid tight loops
+
                 
     async def _async_update_data(self) -> None:
         """Trigger commands that will generate events on schedule.
@@ -495,7 +500,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     self.logger.error(f"Exception getting self telemetry: {ex}")
             else:
                 self.logger.debug(f"Skipping self telemetry (next in {self._self_telemetry_interval - (current_time - self._last_self_telemetry_update):.1f}s)")
-
+            
         # Check for messages
         _LOGGER.info("Clearing message queue...")
         try:

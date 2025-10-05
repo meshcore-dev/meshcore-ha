@@ -159,6 +159,162 @@
       },
       "messages_received": {
         "name": "Messages Received"
+      },
+      "out_path": {
+        "name": "Routing Path"
+      },
+      "out_path_len": {
+        "name": "Path Length"
+      },
+      "request_successes": {
+        "name": "Request Successes"
+      },
+      "request_failures": {
+        "name": "Request Failures"
+      },
+      "battery_voltage": {
+        "name": "Battery Voltage"
+      },
+      "battery_percentage": {
+        "name": "Battery Percentage"
+      },
+      "tx_power": {
+        "name": "TX Power"
+      },
+      "latitude": {
+        "name": "Latitude"
+      },
+      "longitude": {
+        "name": "Longitude"
+      },
+      "frequency": {
+        "name": "Frequency"
+      },
+      "bandwidth": {
+        "name": "Bandwidth"
+      },
+      "spreading_factor": {
+        "name": "Spreading Factor"
+      },
+      "status": {
+        "name": "Status"
+      },
+      "tx_queue_length": {
+        "name": "TX Queue Length"
+      },
+      "noise_floor": {
+        "name": "Noise Floor"
+      },
+      "sent_flood_messages": {
+        "name": "Sent Flood Messages"
+      },
+      "sent_direct_messages": {
+        "name": "Sent Direct Messages"
+      },
+      "received_flood_messages": {
+        "name": "Received Flood Messages"
+      },
+      "received_direct_messages": {
+        "name": "Received Direct Messages"
+      },
+      "full_events": {
+        "name": "Full Events"
+      },
+      "direct_duplicates": {
+        "name": "Direct Duplicates"
+      },
+      "flood_duplicates": {
+        "name": "Flood Duplicates"
+      },
+      "airtime_utilization": {
+        "name": "Airtime Utilization"
+      },
+      "rx_airtime": {
+        "name": "RX Airtime"
+      },
+      "rx_airtime_utilization": {
+        "name": "RX Airtime Utilization"
+      },
+      "direct_duplicates_rate": {
+        "name": "Direct Duplicates Rate"
+      },
+      "flood_duplicates_rate": {
+        "name": "Flood Duplicates Rate"
+      },
+      "messages_received_rate": {
+        "name": "Messages Received Rate"
+      },
+      "messages_sent_rate": {
+        "name": "Messages Sent Rate"
+      },
+      "received_direct_messages_rate": {
+        "name": "Received Direct Messages Rate"
+      },
+      "received_flood_messages_rate": {
+        "name": "Received Flood Messages Rate"
+      },
+      "sent_direct_messages_rate": {
+        "name": "Sent Direct Messages Rate"
+      },
+      "sent_flood_messages_rate": {
+        "name": "Sent Flood Messages Rate"
+      },
+      "bat": {
+        "name": "Battery Voltage"
+      },
+      "nb_sent": {
+        "name": "Messages Sent"
+      },
+      "nb_recv": {
+        "name": "Messages Received"
+      },
+      "tx_queue_len": {
+        "name": "TX Queue Length"
+      },
+      "sent_flood": {
+        "name": "Sent Flood Messages"
+      },
+      "sent_direct": {
+        "name": "Sent Direct Messages"
+      },
+      "recv_flood": {
+        "name": "Received Flood Messages"
+      },
+      "recv_direct": {
+        "name": "Received Direct Messages"
+      },
+      "full_evts": {
+        "name": "Full Events"
+      },
+      "direct_dups": {
+        "name": "Direct Duplicates"
+      },
+      "flood_dups": {
+        "name": "Flood Duplicates"
+      },
+      "direct_dups_rate": {
+        "name": "Direct Duplicates Rate"
+      },
+      "flood_dups_rate": {
+        "name": "Flood Duplicates Rate"
+      },
+      "nb_recv_rate": {
+        "name": "Messages Received Rate"
+      },
+      "nb_sent_rate": {
+        "name": "Messages Sent Rate"
+      },
+      "recv_direct_rate": {
+        "name": "Received Direct Messages Rate"
+      },
+      "recv_flood_rate": {
+        "name": "Received Flood Messages Rate"
+      },
+      "sent_direct_rate": {
+        "name": "Sent Direct Messages Rate"
+      },
+      "sent_flood_rate": {
+        "name": "Sent Flood Messages Rate"
       }
     }
   }
