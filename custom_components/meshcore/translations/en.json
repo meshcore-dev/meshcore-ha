@@ -1,152 +1,62 @@
 {
-  "config": {
-    "abort": {
-      "already_configured": "Device is already configured"
-    },
-    "error": {
-      "cannot_connect": "Failed to connect",
-      "unknown": "Unexpected error",
-      "already_configured": "Repeater is already configured",
-      "client_already_tracked": "Client is already being tracked",
-      "login_failed": "Failed to log in to repeater. Check password and try again.",
-      "login_timeout": "Timed out waiting for login response",
-      "contact_not_found": "Contact not found",
-      "no_repeaters_found": "No repeaters found. Refresh contacts first.",
-      "no_clients_found": "No clients found. Refresh contacts first.",
-      "device_not_found": "Device not found in configuration"
-    },
-    "title": "MeshCore",
-    "step": {
-      "user": {
-        "data": {
-          "connection_type": "Connection Type"
-        },
-        "description": "Select how to connect to your MeshCore node",
-        "title": "MeshCore Setup"
-      },
-      "usb": {
-        "data": {
-          "usb_path": "USB Device Path",
-          "baudrate": "Connection Speed",
-          "contact_refresh_interval": "Contact List Refresh (seconds)"
-        },
-        "description": "Connect to your MeshCore node via USB",
-        "title": "Configure USB Connection"
-      },
-      "ble": {
-        "data": {
-          "ble_address": "Bluetooth Device",
-          "contact_refresh_interval": "Contact List Refresh (seconds)"
-        },
-        "description": "Connect to your MeshCore node via Bluetooth",
-        "title": "Configure Bluetooth Connection"
-      },
-      "tcp": {
-        "data": {
-          "tcp_host": "Host Address",
-          "tcp_port": "Port",
-          "contact_refresh_interval": "Contact List Refresh (seconds)"
-        },
-        "description": "Connect to your MeshCore node over the network",
-        "title": "Configure Network Connection"
-      },
-      "init": {
-        "data": {
-          "action": "Choose an action"
-        },
-        "description": "Configure your MeshCore integration.\n\n{device_status}",
-        "title": "MeshCore Configuration"
-      },
-      "add_repeater": {
-        "data": {
-          "repeater_name": "Available Repeaters",
-          "repeater_password": "Repeater Password",
-          "telemetry_enabled": "Enable Telemetry Polling (automatically polls and discovers telemetry data)",
-          "repeater_update_interval": "Telemetry Refresh Rate (seconds)"
-        },
-        "description": "Monitor a repeater for telemetry and status",
-        "title": "Add Repeater Station"
-      },
-      "add_client": {
-        "data": {
-          "client_name": "Available Clients",
-          "client_update_interval": "Update Frequency (GPS and telemetry will be auto-polled/discovered)"
-        },
-        "description": "Track presence and battery for a client device",
-        "title": "Add Tracked Client"
-      },
-      "manage_devices": {
-        "data": {
-          "selected_device": "Select Device",
-          "device_action": "Action"
-        },
-        "description": "Manage your configured devices:\n\n{device_list}",
-        "title": "Manage Monitored Devices"
-      },
-      "edit_repeater": {
-        "data": {
-          "repeater_password": "Update Password (leave blank to keep current)",
-          "telemetry_enabled": "Enable Telemetry Polling (automatically polls and discovers telemetry data)",
-          "repeater_update_interval": "Telemetry Refresh Rate (seconds)"
-        },
-        "description": "Edit settings for {device_name}",
-        "title": "Edit Repeater"
-      },
-      "edit_client": {
-        "data": {
-          "client_update_interval": "Update Frequency (GPS and telemetry will be auto-polled/discovered)"
-        },
-        "description": "Edit settings for {device_name}",
-        "title": "Edit Tracked Client"
-      },
-      "global_settings": {
-        "data": {
-          "contact_refresh_interval": "Contact Discovery (seconds)"
-        },
-        "description": "Configure default values for all devices",
-        "title": "Global Settings"
-      }
-    }
-  },
-  "services": {
-    "send_message": {
-      "name": "Send Message",
-      "description": "Send a message to a MeshCore node",
-      "fields": {
-        "node_id": {
-          "name": "Node ID",
-          "description": "The ID of the node to send the message to"
-        },
-        "message": {
-          "name": "Message",
-          "description": "The message text to send"
-        }
-      }
-    }
-  },
   "entity": {
     "sensor": {
+      "out_path": {
+        "name": "Routing Path"
+      },
+      "out_path_len": {
+        "name": "Path Length"
+      },
+      "request_successes": {
+        "name": "Request Successes"
+      },
+      "request_failures": {
+        "name": "Request Failures"
+      },
       "node_status": {
-        "name": "Node Status",
-        "state": {
-          "online": "Online",
-          "offline": "Offline"
-        }
+        "name": "Node Status"
+      },
+      "battery_voltage": {
+        "name": "Battery Voltage"
+      },
+      "battery_percentage": {
+        "name": "Battery Percentage"
       },
       "node_count": {
         "name": "Node Count"
       },
-      "last_rssi": {
-        "name": "Signal Strength"
+      "tx_power": {
+        "name": "TX Power"
       },
-      "last_snr": {
-        "name": "Signal-to-Noise Ratio"
+      "latitude": {
+        "name": "Latitude"
+      },
+      "longitude": {
+        "name": "Longitude"
+      },
+      "frequency": {
+        "name": "Frequency"
+      },
+      "bandwidth": {
+        "name": "Bandwidth"
+      },
+      "spreading_factor": {
+        "name": "Spreading Factor"
+      },
+      "status": {
+        "name": "Status"
       },
       "battery": {
         "name": "Battery"
       },
-      "last_message": {
-        "name": "Last Message"
+      "last_rssi": {
+        "name": "Last RSSI"
+      },
+      "last_snr": {
+        "name": "Last SNR"
+      },
+      "bat": {
+        "name": "Battery Voltage"
       },
       "uptime": {
         "name": "Uptime"
@@ -154,11 +64,71 @@
       "airtime": {
         "name": "Airtime"
       },
-      "messages_sent": {
+      "nb_sent": {
         "name": "Messages Sent"
       },
-      "messages_received": {
+      "nb_recv": {
         "name": "Messages Received"
+      },
+      "tx_queue_len": {
+        "name": "TX Queue Length"
+      },
+      "noise_floor": {
+        "name": "Noise Floor"
+      },
+      "sent_flood": {
+        "name": "Sent Flood Messages"
+      },
+      "sent_direct": {
+        "name": "Sent Direct Messages"
+      },
+      "recv_flood": {
+        "name": "Received Flood Messages"
+      },
+      "recv_direct": {
+        "name": "Received Direct Messages"
+      },
+      "full_evts": {
+        "name": "Full Events"
+      },
+      "direct_dups": {
+        "name": "Direct Duplicates"
+      },
+      "flood_dups": {
+        "name": "Flood Duplicates"
+      },
+      "airtime_utilization": {
+        "name": "Airtime Utilization"
+      },
+      "rx_airtime": {
+        "name": "RX Airtime"
+      },
+      "rx_airtime_utilization": {
+        "name": "RX Airtime Utilization"
+      },
+      "direct_dups_rate": {
+        "name": "Direct Duplicates Rate"
+      },
+      "flood_dups_rate": {
+        "name": "Flood Duplicates Rate"
+      },
+      "nb_recv_rate": {
+        "name": "Messages Received Rate"
+      },
+      "nb_sent_rate": {
+        "name": "Messages Sent Rate"
+      },
+      "recv_direct_rate": {
+        "name": "Received Direct Messages Rate"
+      },
+      "recv_flood_rate": {
+        "name": "Received Flood Messages Rate"
+      },
+      "sent_direct_rate": {
+        "name": "Sent Direct Messages Rate"
+      },
+      "sent_flood_rate": {
+        "name": "Sent Flood Messages Rate"
       }
     }
   }

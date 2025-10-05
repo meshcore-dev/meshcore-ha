@@ -22,9 +22,11 @@ from .const import (
     CONF_REPEATER_SUBSCRIPTIONS,
     CONF_REPEATER_PASSWORD,
     CONF_REPEATER_UPDATE_INTERVAL,
+    CONF_REPEATER_DISABLE_PATH_RESET,
     DEFAULT_REPEATER_UPDATE_INTERVAL,
     CONF_TRACKED_CLIENTS,
     CONF_CLIENT_UPDATE_INTERVAL,
+    CONF_CLIENT_DISABLE_PATH_RESET,
     DEFAULT_CLIENT_UPDATE_INTERVAL,
     DEFAULT_UPDATE_TICK,
     MAX_REPEATER_FAILURES_BEFORE_LOGIN,
@@ -32,6 +34,7 @@ from .const import (
     REPEATER_BACKOFF_MAX_MULTIPLIER,
     MAX_FAILURES_BEFORE_PATH_RESET,
     MAX_RETRY_ATTEMPTS,
+    MAX_RANDOM_DELAY,
     CONF_CONTACT_REFRESH_INTERVAL,
     DEFAULT_CONTACT_REFRESH_INTERVAL,
     CONF_REPEATER_TELEMETRY_ENABLED,
@@ -144,8 +147,16 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         stats_key = f"{pubkey_prefix}_request_failures"
         self._reliability_stats[stats_key] = self._reliability_stats.get(stats_key, 0) + 1
     
-    async def _reset_node_path(self, contact, node_name: str) -> bool:
+    async def _reset_node_path(self, contact, node_config: dict) -> bool:
         """Reset routing path for a node and return success status."""
+        node_name = node_config.get("name", "unknown")
+        
+        # Check disable_path_reset flag
+        disable_path_reset = node_config.get(CONF_REPEATER_DISABLE_PATH_RESET, node_config.get(CONF_CLIENT_DISABLE_PATH_RESET, False))
+        if disable_path_reset:
+            self.logger.debug(f"Path reset disabled for {node_name}, skipping")
+            return False
+            
         try:
             result = await self.api.mesh_core.commands.reset_path(contact)
             if result and result.type != EventType.ERROR:
@@ -180,9 +191,9 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         If we fail to get stats multiple times, we'll try to login.
         """
         # add a random delay to avoid all repeaters updating at the same time
-        # 0-5 seconds random delay
-        random_delay = random.uniform(0, 5000)
-        await asyncio.sleep(random_delay / 1000)
+        # 0-30 seconds random delay
+        random_delay = random.uniform(0, MAX_RANDOM_DELAY)
+        await asyncio.sleep(random_delay)
 
         
         pubkey_prefix = repeater_config.get("pubkey_prefix")
@@ -233,6 +244,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 except Exception as ex:
                     self.logger.error(f"Exception during login to repeater {repeater_name}: {ex}")
                     self._increment_failure(pubkey_prefix)
+                await asyncio.sleep(1)  # Small delay to avoid tight loops
                 
                 # Reset failures after login attempt regardless of outcome
                 # This prevents repeated login attempts if they keep failing
@@ -257,7 +269,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 
                 # Reset path after configured failures if there's an established path
                 if new_failure_count == MAX_FAILURES_BEFORE_PATH_RESET and contact and contact.get("out_path_len", -1) >= 0:
-                    await self._reset_node_path(contact, repeater_name)
+                    await self._reset_node_path(contact, repeater_config)
                 
                 update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
                 self._apply_repeater_backoff(pubkey_prefix, new_failure_count, update_interval)
@@ -294,6 +306,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             # Remove this task from active tasks
             if pubkey_prefix in self._active_repeater_tasks:
                 self._active_repeater_tasks.pop(pubkey_prefix)
+            await asyncio.sleep(1)  # Small delay to avoid tight loops
 
     def _apply_backoff(self, pubkey_prefix: str, failure_count: int, update_interval: int, update_type: str = "repeater") -> None:
         """Apply exponential backoff delay for failed updates.
@@ -330,19 +343,32 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         """Apply exponential backoff delay for failed repeater updates."""
         self._apply_backoff(pubkey_prefix, failure_count, update_interval, "repeater")
 
-    async def _update_node_telemetry(self, contact, pubkey_prefix: str, node_name: str, update_interval: int):
+    async def _update_node_telemetry(self, contact, node_config: dict):
         """Update telemetry for a node (repeater or client).
         
         This is a separate method that can be used by both repeater and client update logic.
         Assumes repeater login has already been handled by status update logic.
         """
+        # Extract values from node_config
+        pubkey_prefix = node_config.get("pubkey_prefix")
+        node_name = node_config.get("name")
+        
+        # Validate required fields
+        if not pubkey_prefix or not node_name:
+            self.logger.warning(f"Node config missing required fields - pubkey_prefix: {pubkey_prefix}, name: {node_name}")
+            return
+            
+        # Handle different field names for update_interval between repeaters and clients
+        update_interval = (node_config.get(CONF_REPEATER_UPDATE_INTERVAL) or 
+                          node_config.get(CONF_CLIENT_UPDATE_INTERVAL, DEFAULT_CLIENT_UPDATE_INTERVAL))
+        
         # Get current failure count
         failure_count = self._telemetry_consecutive_failures.get(pubkey_prefix, 0)
 
         # add a random delay to avoid all updating at the same time
-        # 0-5 seconds random delay
-        random_delay = random.uniform(0, 5000)
-        await asyncio.sleep(random_delay / 1000)
+        # 0-30 seconds random delay
+        random_delay = random.uniform(0, MAX_RANDOM_DELAY)
+        await asyncio.sleep(random_delay)
         
         try:
             self.logger.debug(f"Sending telemetry request to node: {node_name} ({pubkey_prefix})")
@@ -369,7 +395,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 
                 # Reset path after configured failures if there's an established path
                 if new_failure_count == MAX_FAILURES_BEFORE_PATH_RESET and contact and contact.get("out_path_len", -1) >= 0:
-                    await self._reset_node_path(contact, node_name)
+                    await self._reset_node_path(contact, node_config)
                 
                 self._apply_backoff(pubkey_prefix, new_failure_count, update_interval, "telemetry")
                 
@@ -382,17 +408,15 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             
             # Reset path after configured failures if there's an established path
             if new_failure_count == MAX_FAILURES_BEFORE_PATH_RESET and contact and contact.get("out_path_len", -1) != -1:
-                try:
-                    await self.api.mesh_core.commands.reset_path(pubkey_prefix)
-                    self.logger.info(f"Reset path for node {node_name} after {MAX_FAILURES_BEFORE_PATH_RESET} telemetry failures")
-                except Exception as reset_ex:
-                    self.logger.warning(f"Failed to reset path for node {node_name}: {reset_ex}")
+                await self._reset_node_path(contact, node_config)
             
             self._apply_backoff(pubkey_prefix, new_failure_count, update_interval, "telemetry")
         finally:
             # Remove this task from active telemetry tasks
             if pubkey_prefix in self._active_telemetry_tasks:
                 self._active_telemetry_tasks.pop(pubkey_prefix)
+            await asyncio.sleep(1)  # Small delay to avoid tight loops
+
                 
     async def _async_update_data(self) -> None:
         """Trigger commands that will generate events on schedule.
@@ -495,7 +519,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     self.logger.error(f"Exception getting self telemetry: {ex}")
             else:
                 self.logger.debug(f"Skipping self telemetry (next in {self._self_telemetry_interval - (current_time - self._last_self_telemetry_update):.1f}s)")
-
+            
         # Check for messages
         _LOGGER.info("Clearing message queue...")
         try:
@@ -585,7 +609,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     
                     # Create and start telemetry task
                     telemetry_task = asyncio.create_task(
-                        self._update_node_telemetry(contact, pubkey_prefix, repeater_name, update_interval)
+                        self._update_node_telemetry(contact, repeater_config)
                     )
                     self._active_telemetry_tasks[pubkey_prefix] = telemetry_task
                     telemetry_task.set_name(f"telemetry_{repeater_name}")
@@ -620,7 +644,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     update_interval = client_config.get("update_interval", DEFAULT_CLIENT_UPDATE_INTERVAL)
                     
                     telemetry_task = asyncio.create_task(
-                        self._update_node_telemetry(contact, pubkey_prefix, client_name, update_interval)
+                        self._update_node_telemetry(contact, client_config)
                     )
                     self._active_telemetry_tasks[pubkey_prefix] = telemetry_task
                     telemetry_task.set_name(f"client_telemetry_{client_name}")
