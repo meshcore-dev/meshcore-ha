@@ -55,6 +55,7 @@ CONF_REPEATER_NAME: Final = "repeater_name"
 CONF_REPEATER_PASSWORD: Final = "password"
 CONF_REPEATER_UPDATE_INTERVAL: Final = "update_interval"
 CONF_REPEATER_TELEMETRY_ENABLED: Final = "telemetry_enabled"
+CONF_REPEATER_DISABLE_PATH_RESET: Final = "disable_path_reset"
 DEFAULT_REPEATER_UPDATE_INTERVAL: Final = 900  # 15 minutes in seconds
 MIN_UPDATE_INTERVAL: Final = 300  # 5 minutes minimum
 MAX_REPEATER_FAILURES_BEFORE_LOGIN: Final = 5  # After this many failures, try login
@@ -63,6 +64,7 @@ MAX_REPEATER_FAILURES_BEFORE_LOGIN: Final = 5  # After this many failures, try l
 CONF_TRACKED_CLIENTS: Final = "tracked_clients"
 CONF_CLIENT_NAME: Final = "client_name"
 CONF_CLIENT_UPDATE_INTERVAL: Final = "update_interval"
+CONF_CLIENT_DISABLE_PATH_RESET: Final = "disable_path_reset"
 DEFAULT_CLIENT_UPDATE_INTERVAL: Final = 1800  # 30 minutes in seconds
 
 # Contact refresh interval
