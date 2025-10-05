@@ -1,0 +1,124 @@
+{
+  "entity": {
+    "out_path": "Smerovacia cesta",
+    "out_path_len": "Dĺžka cesty", 
+    "request_successes": "Úspešné požiadavky",
+    "request_failures": "Neúspešné požiadavky",
+    "node_status": "Stav uzla",
+      "battery_voltage": {
+        "name": "Napätie batérie"
+      },
+      "battery_percentage": {
+        "name": "Percentá batérie"
+      },
+      "node_count": {
+        "name": "Počet uzlov"
+      },
+      "tx_power": {
+        "name": "Výkon vysielania"
+      },
+      "latitude": {
+        "name": "Zemepisná šírka"
+      },
+      "longitude": {
+        "name": "Zemepisná dĺžka"
+      },
+      "frequency": {
+        "name": "Frekvencia"
+      },
+      "bandwidth": {
+        "name": "Šírka pásma"
+      },
+      "spreading_factor": {
+        "name": "Faktor rozprestierania"
+      },
+      "status": {
+        "name": "Stav"
+      },
+      "battery": {
+        "name": "Batéria"
+      },
+      "last_rssi": {
+        "name": "Posledné RSSI"
+      },
+      "last_snr": {
+        "name": "Posledné SNR"
+      },
+      "bat": {
+        "name": "Napätie batérie"
+      },
+      "uptime": {
+        "name": "Doba prevádzky"
+      },
+      "airtime": {
+        "name": "Čas vysielania"
+      },
+      "nb_sent": {
+        "name": "Odoslané správy"
+      },
+      "nb_recv": {
+        "name": "Prijaté správy"
+      },
+      "tx_queue_len": {
+        "name": "Dĺžka frontu TX"
+      },
+      "noise_floor": {
+        "name": "Úrovň šumu"
+      },
+      "sent_flood": {
+        "name": "Odoslané flood správy"
+      },
+      "sent_direct": {
+        "name": "Odoslané priame správy"
+      },
+      "recv_flood": {
+        "name": "Prijaté flood správy"
+      },
+      "recv_direct": {
+        "name": "Prijaté priame správy"
+      },
+      "full_evts": {
+        "name": "Úplné udalosti"
+      },
+      "direct_dups": {
+        "name": "Priame duplikáty"
+      },
+      "flood_dups": {
+        "name": "Flood duplikáty"
+      },
+      "airtime_utilization": {
+        "name": "Využitie času vysielania"
+      },
+      "rx_airtime": {
+        "name": "RX čas vysielania"
+      },
+      "rx_airtime_utilization": {
+        "name": "Využitie RX času vysielania"
+      },
+      "direct_dups_rate": {
+        "name": "Rýchlosť priamych duplikátov"
+      },
+      "flood_dups_rate": {
+        "name": "Rýchlosť flood duplikátov"
+      },
+      "nb_recv_rate": {
+        "name": "Rýchlosť prijatých správ"
+      },
+      "nb_sent_rate": {
+        "name": "Rýchlosť odoslaných správ"
+      },
+      "recv_direct_rate": {
+        "name": "Rýchlosť prijatých priamych správ"
+      },
+      "recv_flood_rate": {
+        "name": "Rýchlosť prijatých flood správ"
+      },
+      "sent_direct_rate": {
+        "name": "Rýchlosť odoslaných priamych správ"
+      },
+      "sent_flood_rate": {
+        "name": "Rýchlosť odoslaných flood správ"
+      }
+    }
+  }
+}
