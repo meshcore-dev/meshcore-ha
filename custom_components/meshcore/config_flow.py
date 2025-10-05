@@ -33,11 +33,13 @@ from .const import (
     CONF_REPEATER_PASSWORD,
     CONF_REPEATER_UPDATE_INTERVAL,
     CONF_REPEATER_TELEMETRY_ENABLED,
+    CONF_REPEATER_DISABLE_PATH_RESET,
     DEFAULT_REPEATER_UPDATE_INTERVAL,
     MIN_UPDATE_INTERVAL,
     CONF_TRACKED_CLIENTS,
     CONF_CLIENT_NAME,
     CONF_CLIENT_UPDATE_INTERVAL,
+    CONF_CLIENT_DISABLE_PATH_RESET,
     DEFAULT_CLIENT_UPDATE_INTERVAL,
     CONF_CONTACT_REFRESH_INTERVAL,
     DEFAULT_CONTACT_REFRESH_INTERVAL,
@@ -438,11 +440,13 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         default_password = ""
         default_interval = DEFAULT_REPEATER_UPDATE_INTERVAL
         default_telemetry = False
+        default_disable_path_reset = False
         
         if user_input:
             default_password = user_input.get(CONF_REPEATER_PASSWORD, "")
             default_interval = user_input.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
             default_telemetry = user_input.get(CONF_REPEATER_TELEMETRY_ENABLED, False)
+            default_disable_path_reset = user_input.get(CONF_REPEATER_DISABLE_PATH_RESET, False)
             
         return self.async_show_form(
             step_id="add_repeater",
@@ -451,6 +455,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_REPEATER_PASSWORD, default=default_password): str,
                 vol.Optional(CONF_REPEATER_TELEMETRY_ENABLED, default=default_telemetry): bool,
                 vol.Optional(CONF_REPEATER_UPDATE_INTERVAL, default=default_interval): vol.All(cv.positive_int, vol.Range(min=MIN_UPDATE_INTERVAL)),
+                vol.Optional(CONF_REPEATER_DISABLE_PATH_RESET, default=default_disable_path_reset): bool,
             }),
             errors=errors,
         )
@@ -489,6 +494,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         password = user_input.get(CONF_REPEATER_PASSWORD)
         update_interval = user_input.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
         telemetry_enabled = user_input.get(CONF_REPEATER_TELEMETRY_ENABLED, True)
+        disable_path_reset = user_input.get(CONF_REPEATER_DISABLE_PATH_RESET, False)
 
         # The selected_repeater has format: "Name (prefix)"
         selected_str = selected_repeater
@@ -562,6 +568,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             "password": password,
             "telemetry_enabled": telemetry_enabled,
             "update_interval": update_interval,
+            "disable_path_reset": disable_path_reset,
         })
 
         # Update the config entry data
@@ -602,12 +609,14 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 data_schema=vol.Schema({
                     vol.Required(CONF_CLIENT_NAME): vol.In(client_dict.keys()),
                     vol.Optional(CONF_CLIENT_UPDATE_INTERVAL, default=DEFAULT_CLIENT_UPDATE_INTERVAL): vol.All(cv.positive_int, vol.Range(min=MIN_UPDATE_INTERVAL)),
+                    vol.Optional(CONF_CLIENT_DISABLE_PATH_RESET, default=False): bool,
                 }),
                 errors=errors,
             )
             
         selected_client = user_input.get(CONF_CLIENT_NAME)
         update_interval = user_input.get(CONF_CLIENT_UPDATE_INTERVAL, DEFAULT_CLIENT_UPDATE_INTERVAL)
+        disable_path_reset = user_input.get(CONF_CLIENT_DISABLE_PATH_RESET, False)
 
         # Extract pubkey prefix and name from selection
         start = selected_client.rfind("(") + 1
@@ -624,6 +633,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 data_schema=vol.Schema({
                     vol.Required(CONF_CLIENT_NAME): vol.In(client_dict.keys()),
                     vol.Optional(CONF_CLIENT_UPDATE_INTERVAL, default=DEFAULT_CLIENT_UPDATE_INTERVAL): vol.All(cv.positive_int, vol.Range(min=MIN_UPDATE_INTERVAL)),
+                    vol.Optional(CONF_CLIENT_DISABLE_PATH_RESET, default=False): bool,
                 }),
                 errors=errors,
             )
@@ -633,6 +643,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             "name": client_name,
             "pubkey_prefix": pubkey_prefix,
             "update_interval": update_interval,
+            "disable_path_reset": disable_path_reset,
         })
 
         # Update the config entry data
@@ -803,6 +814,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             repeater["password"] = user_input.get(CONF_REPEATER_PASSWORD, repeater.get("password", ""))
             repeater["telemetry_enabled"] = user_input[CONF_REPEATER_TELEMETRY_ENABLED]
             repeater["update_interval"] = user_input[CONF_REPEATER_UPDATE_INTERVAL]
+            repeater["disable_path_reset"] = user_input[CONF_REPEATER_DISABLE_PATH_RESET]
             
             # Update config entry
             new_data = dict(self.config_entry.data)
@@ -818,6 +830,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_REPEATER_PASSWORD, default=repeater.get("password", "")): str,
                 vol.Optional(CONF_REPEATER_TELEMETRY_ENABLED, default=repeater.get("telemetry_enabled", False)): bool,
                 vol.Optional(CONF_REPEATER_UPDATE_INTERVAL, default=repeater.get("update_interval", DEFAULT_REPEATER_UPDATE_INTERVAL)): vol.All(cv.positive_int, vol.Range(min=MIN_UPDATE_INTERVAL)),
+                vol.Optional(CONF_REPEATER_DISABLE_PATH_RESET, default=repeater.get("disable_path_reset", False)): bool,
             }),
             description_placeholders={
                 "device_name": repeater.get("name", "Unknown")
@@ -841,6 +854,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         if user_input is not None:
             # Update client settings
             client["update_interval"] = user_input[CONF_CLIENT_UPDATE_INTERVAL]
+            client["disable_path_reset"] = user_input[CONF_CLIENT_DISABLE_PATH_RESET]
             
             # Update config entry
             new_data = dict(self.config_entry.data)
@@ -854,6 +868,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             step_id="edit_client",
             data_schema=vol.Schema({
                 vol.Optional(CONF_CLIENT_UPDATE_INTERVAL, default=client.get("update_interval", DEFAULT_CLIENT_UPDATE_INTERVAL)): vol.All(cv.positive_int, vol.Range(min=MIN_UPDATE_INTERVAL)),
+                vol.Optional(CONF_CLIENT_DISABLE_PATH_RESET, default=client.get("disable_path_reset", False)): bool,
             }),
             description_placeholders={
                 "device_name": client.get("name", "Unknown")

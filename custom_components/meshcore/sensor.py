@@ -49,13 +49,11 @@ RATE_SUFFIX = "_rate"
 PATH_SENSORS = [
     SensorEntityDescription(
         key="out_path",
-        name="Routing Path",
         icon="mdi:map-marker-path",
         native_unit_of_measurement=None,
     ),
     SensorEntityDescription(
         key="out_path_len",
-        name="Path Length",
         icon="mdi:counter",
         native_unit_of_measurement="hops",
         state_class=SensorStateClass.MEASUREMENT,
@@ -66,14 +64,12 @@ PATH_SENSORS = [
 RELIABILITY_SENSORS = [
     SensorEntityDescription(
         key="request_successes",
-        name="Request Successes",
         icon="mdi:check-circle",
         native_unit_of_measurement="requests",
         state_class=SensorStateClass.TOTAL_INCREASING,
     ),
     SensorEntityDescription(
         key="request_failures", 
-        name="Request Failures",
         icon="mdi:alert-circle",
         native_unit_of_measurement="requests", 
         state_class=SensorStateClass.TOTAL_INCREASING,
@@ -85,12 +81,10 @@ RELIABILITY_SENSORS = [
 SENSORS = [
     SensorEntityDescription(
         key="node_status",
-        name="Node Status",
         icon="mdi:radio-tower"
     ),
     SensorEntityDescription(
         key="battery_voltage",
-        name="Battery Voltage",
         device_class=SensorDeviceClass.VOLTAGE,
         native_unit_of_measurement="V",
         suggested_display_precision="2",
@@ -99,7 +93,6 @@ SENSORS = [
     ),
     SensorEntityDescription(
         key="battery_percentage",
-        name="Battery Percentage",
         device_class=SensorDeviceClass.BATTERY,
         native_unit_of_measurement="%",
         suggested_display_precision="0",
@@ -108,13 +101,11 @@ SENSORS = [
     ),
     SensorEntityDescription(
         key="node_count",
-        name="Node Count",
         icon="mdi:account-group",
         state_class=SensorStateClass.MEASUREMENT
     ),
     SensorEntityDescription(
         key="tx_power",
-        name="TX Power",
         device_class=SensorDeviceClass.SIGNAL_STRENGTH,
         native_unit_of_measurement="dBm",
         suggested_display_precision="0",
@@ -123,17 +114,14 @@ SENSORS = [
     ),
     SensorEntityDescription(
         key="latitude",
-        name="Latitude",
         icon="mdi:map-marker"
     ),
     SensorEntityDescription(
         key="longitude",
-        name="Longitude",
         icon="mdi:map-marker"
     ),
     SensorEntityDescription(
         key="frequency",
-        name="Frequency",
         native_unit_of_measurement="MHz",
         suggested_display_precision="3",
         state_class=SensorStateClass.MEASUREMENT,
@@ -141,7 +129,6 @@ SENSORS = [
     ),
     SensorEntityDescription(
         key="bandwidth",
-        name="Bandwidth",
         native_unit_of_measurement="kHz",
         suggested_display_precision="1",
         state_class=SensorStateClass.MEASUREMENT,
@@ -149,7 +136,6 @@ SENSORS = [
     ),
     SensorEntityDescription(
         key="spreading_factor",
-        name="Spreading Factor",
         icon="mdi:radio"
     ),
 ]
@@ -158,12 +144,10 @@ SENSORS = [
 CONTACT_SENSORS = [
     SensorEntityDescription(
         key="status",
-        name="Status",
         icon="mdi:radio-tower"
     ),
     SensorEntityDescription(
         key="battery",
-        name="Battery",
         device_class=SensorDeviceClass.VOLTAGE,
         native_unit_of_measurement="V",
         suggested_display_precision="2",
@@ -172,7 +156,6 @@ CONTACT_SENSORS = [
     ),
     SensorEntityDescription(
         key="battery_percentage",
-        name="Battery Percentage",
         device_class=SensorDeviceClass.BATTERY,
         native_unit_of_measurement="%",
         suggested_display_precision="0",
@@ -181,7 +164,6 @@ CONTACT_SENSORS = [
     ),
     SensorEntityDescription(
         key="last_rssi",
-        name="Last RSSI",
         native_unit_of_measurement="dBm",
         suggested_display_precision="0",
         state_class=SensorStateClass.MEASUREMENT,
@@ -189,7 +171,6 @@ CONTACT_SENSORS = [
     ),
     SensorEntityDescription(
         key="last_snr",
-        name="Last SNR",
         native_unit_of_measurement="dB",
         suggested_display_precision="1",
         state_class=SensorStateClass.MEASUREMENT,
@@ -201,7 +182,6 @@ CONTACT_SENSORS = [
 REPEATER_SENSORS = [
     SensorEntityDescription(
         key="bat",
-        name="Battery Voltage",
         device_class=SensorDeviceClass.VOLTAGE,
         native_unit_of_measurement="V",
         suggested_display_precision="2",
@@ -210,7 +190,6 @@ REPEATER_SENSORS = [
     ),
     SensorEntityDescription(
         key="battery_percentage",
-        name="Battery Percentage",
         device_class=SensorDeviceClass.BATTERY,
         native_unit_of_measurement="%",
         suggested_display_precision="0",
@@ -219,7 +198,6 @@ REPEATER_SENSORS = [
     ),
     SensorEntityDescription(
         key="uptime",
-        name="Uptime",
         device_class=SensorDeviceClass.DURATION,
         native_unit_of_measurement="min",
         suggested_unit_of_measurement="d",
@@ -228,7 +206,6 @@ REPEATER_SENSORS = [
     ),
     SensorEntityDescription(
         key="airtime",
-        name="Airtime",
         native_unit_of_measurement="min",
         suggested_display_precision="1",
         state_class=SensorStateClass.MEASUREMENT,
@@ -236,13 +213,11 @@ REPEATER_SENSORS = [
     ),
     SensorEntityDescription(
         key="nb_sent",
-        name="Messages Sent",
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:message-arrow-right",
     ),
     SensorEntityDescription(
         key="last_rssi",
-        name="Last RSSI",
         native_unit_of_measurement="dBm",
         suggested_display_precision="0",
         state_class=SensorStateClass.MEASUREMENT,
@@ -250,7 +225,6 @@ REPEATER_SENSORS = [
     ),
     SensorEntityDescription(
         key="last_snr",
-        name="Last SNR",
         native_unit_of_measurement="dB",
         suggested_display_precision="1",
         state_class=SensorStateClass.MEASUREMENT,
@@ -258,19 +232,16 @@ REPEATER_SENSORS = [
     ),
     SensorEntityDescription(
         key="nb_recv",
-        name="Messages Received",
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:message-arrow-left",
     ),
     SensorEntityDescription(
         key="tx_queue_len",
-        name="TX Queue Length",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:playlist-edit",
     ),
     SensorEntityDescription(
         key="noise_floor",
-        name="Noise Floor",
         native_unit_of_measurement="dBm",
         suggested_display_precision="0",
         state_class=SensorStateClass.MEASUREMENT,
@@ -278,49 +249,41 @@ REPEATER_SENSORS = [
     ),
     SensorEntityDescription(
         key="sent_flood",
-        name="Sent Flood Messages",
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:message-arrow-right-outline",
     ),
     SensorEntityDescription(
         key="sent_direct",
-        name="Sent Direct Messages",
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:message-arrow-right",
     ),
     SensorEntityDescription(
         key="recv_flood",
-        name="Received Flood Messages",
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:message-arrow-left-outline",
     ),
     SensorEntityDescription(
         key="recv_direct",
-        name="Received Direct Messages",
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:message-arrow-left",
     ),
     SensorEntityDescription(
         key="full_evts",
-        name="Full Events",
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:alert-circle",
     ),
     SensorEntityDescription(
         key="direct_dups",
-        name="Direct Duplicates",
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:content-duplicate",
     ),
     SensorEntityDescription(
         key="flood_dups",
-        name="Flood Duplicates",
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:content-duplicate",
     ),
     SensorEntityDescription(
         key="airtime_utilization",
-        name="Airtime Utilization",
         device_class=SensorDeviceClass.POWER_FACTOR,
         native_unit_of_measurement="%",
         suggested_display_precision="1",
@@ -329,7 +292,6 @@ REPEATER_SENSORS = [
     ),
     SensorEntityDescription(
         key="rx_airtime",
-        name="RX Airtime",
         native_unit_of_measurement="min",
         suggested_display_precision="1",
         state_class=SensorStateClass.MEASUREMENT,
@@ -337,7 +299,6 @@ REPEATER_SENSORS = [
     ),
     SensorEntityDescription(
         key="rx_airtime_utilization",
-        name="RX Airtime Utilization",
         device_class=SensorDeviceClass.POWER_FACTOR,
         native_unit_of_measurement="%",
         suggested_display_precision="1",
@@ -346,7 +307,6 @@ REPEATER_SENSORS = [
     ),
     SensorEntityDescription(
         key="direct_dups_rate",
-        name="Direct Duplicates Rate",
         native_unit_of_measurement="msg/min",
         suggested_display_precision="1",
         state_class=SensorStateClass.MEASUREMENT,
@@ -354,7 +314,6 @@ REPEATER_SENSORS = [
     ),
     SensorEntityDescription(
         key="flood_dups_rate",
-        name="Flood Duplicates Rate",
         native_unit_of_measurement="msg/min",
         suggested_display_precision="1",
         state_class=SensorStateClass.MEASUREMENT,
@@ -362,7 +321,6 @@ REPEATER_SENSORS = [
     ),
     SensorEntityDescription(
         key="nb_recv_rate",
-        name="Messages Received Rate",
         native_unit_of_measurement="msg/min",
         suggested_display_precision="1",
         state_class=SensorStateClass.MEASUREMENT,
@@ -370,7 +328,6 @@ REPEATER_SENSORS = [
     ),
     SensorEntityDescription(
         key="nb_sent_rate",
-        name="Messages Sent Rate",
         native_unit_of_measurement="msg/min",
         suggested_display_precision="1",
         state_class=SensorStateClass.MEASUREMENT,
@@ -378,7 +335,6 @@ REPEATER_SENSORS = [
     ),
     SensorEntityDescription(
         key="recv_direct_rate",
-        name="Received Direct Messages Rate",
         native_unit_of_measurement="msg/min",
         suggested_display_precision="1",
         state_class=SensorStateClass.MEASUREMENT,
@@ -386,7 +342,6 @@ REPEATER_SENSORS = [
     ),
     SensorEntityDescription(
         key="recv_flood_rate",
-        name="Received Flood Messages Rate",
         native_unit_of_measurement="msg/min",
         suggested_display_precision="1",
         state_class=SensorStateClass.MEASUREMENT,
@@ -394,7 +349,6 @@ REPEATER_SENSORS = [
     ),
     SensorEntityDescription(
         key="sent_direct_rate",
-        name="Sent Direct Messages Rate",
         native_unit_of_measurement="msg/min",
         suggested_display_precision="1",
         state_class=SensorStateClass.MEASUREMENT,
@@ -402,7 +356,6 @@ REPEATER_SENSORS = [
     ),
     SensorEntityDescription(
         key="sent_flood_rate",
-        name="Sent Flood Messages Rate",
         native_unit_of_measurement="msg/min",
         suggested_display_precision="1",
         state_class=SensorStateClass.MEASUREMENT,
@@ -537,6 +490,8 @@ async def async_setup_entry(
 
 class MeshCoreSensor(CoordinatorEntity, SensorEntity):
     """Representation of a MeshCore sensor."""
+    
+    _attr_has_entity_name = True
 
     def __init__(
         self,
@@ -564,11 +519,13 @@ class MeshCoreSensor(CoordinatorEntity, SensorEntity):
             raw_device_name
         )
 
-        # Set name
-        self._attr_name = description.name
-        
         # Store cached values
         self._native_value = None
+    
+    @property
+    def translation_key(self) -> str:
+        """Return the translation key."""
+        return self.entity_description.key
         
     async def async_added_to_hass(self):
         """Register event handlers when entity is added to hass."""
@@ -673,6 +630,8 @@ class MeshCoreSensor(CoordinatorEntity, SensorEntity):
 class MeshCoreReliabilitySensor(CoordinatorEntity, SensorEntity):
     """Sensor for tracking request successes/failures for nodes."""
     
+    _attr_has_entity_name = True
+    
     def __init__(
         self,
         coordinator: DataUpdateCoordinator,
@@ -688,7 +647,6 @@ class MeshCoreReliabilitySensor(CoordinatorEntity, SensorEntity):
         self.public_key_short = self.pubkey_prefix[:6] if self.pubkey_prefix else ""
 
         self.device_id = f"{coordinator.config_entry.entry_id}_{node_type}_{self.pubkey_prefix}"
-        self._attr_name = description.name
         device_name = f"MeshCore {node_type.title()}: {self.node_name} ({self.public_key_short})"
         self._attr_unique_id = f"{self.device_id}_{description.key}_{self.public_key_short}_{self.node_name}"
         
@@ -715,6 +673,11 @@ class MeshCoreReliabilitySensor(CoordinatorEntity, SensorEntity):
             coordinator._reliability_stats[stats_key] = 0
 
     @property
+    def translation_key(self) -> str:
+        """Return the translation key."""
+        return self.entity_description.key
+
+    @property
     def native_value(self) -> Any:
         if hasattr(self.coordinator, '_reliability_stats'):
             stats_key = f"{self.pubkey_prefix}_{self.entity_description.key}"
@@ -723,6 +686,8 @@ class MeshCoreReliabilitySensor(CoordinatorEntity, SensorEntity):
 
 class MeshCorePathSensor(CoordinatorEntity, SensorEntity):
     """Sensor for tracking node routing path with CONTACTS event updates."""
+    
+    _attr_has_entity_name = True
     
     def __init__(
         self,
@@ -745,7 +710,6 @@ class MeshCorePathSensor(CoordinatorEntity, SensorEntity):
         self.device_id = f"{coordinator.config_entry.entry_id}_{node_type}_{self.pubkey_prefix}"
 
         # Set friendly name
-        self._attr_name = description.name
 
         # Build device name with pubkey
         device_name = f"MeshCore {node_type.title()}: {self.node_name} ({self.public_key_short})"
@@ -813,11 +777,18 @@ class MeshCorePathSensor(CoordinatorEntity, SensorEntity):
         _LOGGER.debug(f"Set up path tracking for {self.node_type} {self.node_name} ({self.pubkey_prefix})")
 
     @property
+    def translation_key(self) -> str:
+        """Return the translation key."""
+        return self.entity_description.key
+
+    @property
     def native_value(self) -> Any:
         return self._native_value
 
 class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
     """Sensor for repeater statistics with event-based updates."""
+    
+    _attr_has_entity_name = True
     
     def __init__(
         self,
@@ -838,7 +809,6 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
         self.device_id = f"{coordinator.config_entry.entry_id}_repeater_{self.public_key}"
 
         # Set friendly name
-        self._attr_name = description.name
 
         # Build device name with pubkey
         device_name = f"MeshCore Repeater: {self.repeater_name} ({self.public_key_short})"
@@ -918,6 +888,11 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
         
         # Update the entity state
         self.async_write_ha_state()
+    
+    @property
+    def translation_key(self) -> str:
+        """Return the translation key."""
+        return self.entity_description.key
     
     @property
     def native_value(self) -> Any:
