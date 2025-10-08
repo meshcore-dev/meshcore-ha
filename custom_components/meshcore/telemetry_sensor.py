@@ -611,11 +611,7 @@ class MeshCoreBatteryPercentageSensor(MeshCoreTelemetrySensor):
         voltage_mv = int(voltage * 1000)
         # Find the appropriate percentage from the curve
         battery_percentage = (voltage_mv - BAT_VMIN) / (BAT_VMAX - BAT_VMIN) * 100
-        if battery_percentage >= 100:
-            battery_percentage = 100.0
-        if battery_percentage < 0:
-            battery_percentage = 0.0
-        return round(battery_percentage)
+        return round(max(0, min(100, battery_percentage)))
 
     @property
     def extra_state_attributes(self) -> Dict[str, Any]:
