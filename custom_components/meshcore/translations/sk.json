@@ -1,21 +1,185 @@
 {
+  "config": {
+    "abort": {
+      "already_configured": "Zariadenie už je nakonfigurované"
+    },
+   "error": {
+      "cannot_connect": "Nepodarilo sa spojiť",
+      "unknown": "Neočakávaná chyba",
+      "already_configured": "Opakovač je už nakonfigurovaný",
+      "client_already_tracked": "Klienta už sledujete",
+      "login_failed": "Nepodarilo sa pripojiť na opakovač. Skontrolujte heslo a skúste to znovu.",
+      "login_timeout": "Vypršal čas na prihlásenie",
+      "contact_not_found": "Kontakt nebol nájdený",
+      "no_repeaters_found": "Nenašli sa žiadne opakovače. Najprv obnovte kontakty.",
+      "no_clients_found": "Nenašli sa žiadni klienti. Najprv obnovte kontakty..",
+      "device_not_found": "Zariadenie nebolo nájdené v konfigurácii"
+    },
+    "title": "MeshCore",
+    "step": {
+      "user": {
+        "data": {
+          "connection_type": "Typ spojenia"
+        },
+        "description": "Vyberte, ako sa chcete pripojiť k vášmu uzlu MeshCore",
+        "title": "Nastavenie MeshCore"
+      },
+      "usb": {
+        "data": {
+          "usb_path": "Cesta k zariadeniu USB",
+          "baudrate": "Rýchlosť pripojenia",
+          "contact_refresh_interval": "Obnovovanie zoznamu kontaktov (v sekundách)"
+        },
+        "description": "Pripojte sa k vášmu uzlu MeshCore prostredníctvom USB",
+        "title": "Nastaviť USB pripojenie"
+      },
+      "ble": {
+        "data": {
+          "ble_address": "Bluetooth zariadenie",
+          "contact_refresh_interval": "Obnovovanie zoznamu kontaktov (v sekundách)"
+        },
+        "description": "Pripojte sa k vášmu uzlu MeshCore prostredníctvom Bluetooth",
+        "title": "Nastaviť pripojenie Bluetooth"
+      },
+      "tcp": {
+        "data": {
+          "tcp_host": "Adresa hostiteľa",
+          "tcp_port": "Port",
+          "contact_refresh_interval": "Obnovovanie zoznamu kontaktov (v sekundách)"
+        },
+        "description": "Pripojte sa k vášmu uzlu MeshCore prostredníctvom siete",
+        "title": "Nastaviť sieťové pripojenie"
+      },
+      "init": {
+        "data": {
+          "action": "Vyberte akciu"
+        },
+        "description": "Konfigurovať vašu MeshCore integráciu.\n\n{device_status}",
+        "title": "Konfigurácia MeshCore"
+      },
+      "add_repeater": {
+        "data": {
+          "repeater_name": "Dostupné opakovače",
+          "repeater_password": "Heslo opakovača",
+          "telemetry_enabled": "Povoliť dotazovanie na telemetriu (automaticky zisťuje a deteguje údaje telemetrie)",
+          "repeater_update_interval": "Frekvencia obnovovania údajov telemetrie (v sekundách)"
+        },
+        "description": "Sledovať telemetriu a stav opakovača",
+        "title": "Pridať stanicu opakovača"
+      },
+      "add_client": {
+        "data": {
+          "client_name": "Dostupní klienti",
+          "client_update_interval": "Frekvencia aktualizácií (GPS a telemetria bude zisťovaná a detegovaná automaticky)"
+        },
+        "description": "Sledovať prítomnosť a stav batérie klientského zariadenia",
+        "title": "Pridať sledovaného klienta"
+      },
+      "manage_devices": {
+        "data": {
+          "selected_device": "Vyberte zariadenie",
+          "device_action": "Akcia"
+        },
+        "description": "Spravujte vaše nakonfigurované zariadenia:\n\n{device_list}",
+        "title": "Spravovať sledované zariadenia"
+      },
+      "edit_repeater": {
+        "data": {
+          "repeater_password": "Aktualizovať heslo (nechajte prázdne, ak chcete ponechať aktuálne)",
+          "telemetry_enabled": "Povoliť dotazovanie na telemetriu (automaticky zisťuje a deteguje údaje telemetrie)",
+          "repeater_update_interval": "Frekvencia obnovovania údajov telemetrie (v sekundách)"
+        },
+        "description": "Upraviť nastavenia {device_name}",
+        "title": "Upraviť opakovač"
+      },
+      "edit_client": {
+        "data": {
+          "client_update_interval": "Frekvencia aktualizácií (GPS a telemetria bude zisťovaná a detegovaná automaticky)"
+        },
+        "description": "Upraviť nastavenia {device_name}",
+        "title": "Upraviť sledovaného klienta"
+      },
+      "global_settings": {
+        "data": {
+          "contact_refresh_interval": "Zisťovanie kontaktov (v sekundách)"
+        },
+        "description": "Nastavte predvolené hodnoty pre všetky zariadenia",
+        "title": "Globálne nastavenia"
+      }
+    }
+  },
+  "services": {
+    "send_message": {
+      "name": "Odoslať správu",
+      "description": "Poslať správu uzlu MeshCore",
+      "fields": {
+        "node_id": {
+          "name": "ID uzla",
+          "description": "Identifikátor uzla, ktorému má byť správa odoslaná"
+        },
+        "message": {
+          "name": "Správa",
+          "description": "Text správy, ktorý sa má odoslať"
+        }
+      }
+    }
+  },
   "entity": {
-    "out_path": "Smerovacia cesta",
-    "out_path_len": "Dĺžka cesty", 
-    "request_successes": "Úspešné požiadavky",
-    "request_failures": "Neúspešné požiadavky",
-    "node_status": "Stav uzla",
+    "sensor": {
+      "node_status": {
+        "name": "Stav uzla",
+        "state": {
+          "online": "Online",
+          "offline": "Offline"
+        }
+      },
+      "node_count": {
+        "name": "Počet uzlov"
+      },
+      "last_rssi": {
+        "name": "Sila signálu"
+      },
+      "last_snr": {
+        "name": "Pomer signál-šum"
+      },
+      "battery": {
+        "name": "Batéria"
+      },
+      "last_message": {
+        "name": "Posledná správa"
+      },
+      "uptime": {
+        "name": "Doba prevádzky"
+      },
+      "airtime": {
+        "name": "Doba vysielania"
+      },
+      "nb_sent": {
+        "name": "Odoslané správy"
+      },
+      "nb_recv": {
+        "name": "Prijaté správy"
+      },
+      "out_path": {
+        "name": "Smerovanie (cesta)"
+      },
+      "out_path_len": {
+        "name": "Dĺžka cesty"
+      },
+      "request_successes": {
+        "name": "Úspešné požiadavky"
+      },
+      "request_failures": {
+        "name": "Neúspešné požiadavky"
+      },
       "battery_voltage": {
         "name": "Napätie batérie"
       },
       "battery_percentage": {
         "name": "Percentá batérie"
       },
-      "node_count": {
-        "name": "Počet uzlov"
-      },
       "tx_power": {
-        "name": "Výkon vysielania"
+        "name": "Vysielací výkon"
       },
       "latitude": {
         "name": "Zemepisná šírka"
@@ -30,40 +194,19 @@
         "name": "Šírka pásma"
       },
       "spreading_factor": {
-        "name": "Faktor rozprestierania"
+        "name": "Faktor rozptylu"
       },
       "status": {
         "name": "Stav"
       },
-      "battery": {
-        "name": "Batéria"
-      },
-      "last_rssi": {
-        "name": "Posledné RSSI"
-      },
-      "last_snr": {
-        "name": "Posledné SNR"
-      },
       "bat": {
         "name": "Napätie batérie"
       },
-      "uptime": {
-        "name": "Doba prevádzky"
-      },
-      "airtime": {
-        "name": "Čas vysielania"
-      },
-      "nb_sent": {
-        "name": "Odoslané správy"
-      },
-      "nb_recv": {
-        "name": "Prijaté správy"
-      },
       "tx_queue_len": {
-        "name": "Dĺžka frontu TX"
+        "name": "Dĺžka TX frontu"
       },
       "noise_floor": {
-        "name": "Úrovň šumu"
+        "name": "Úroveň šumu"
       },
       "sent_flood": {
         "name": "Odoslané flood správy"
@@ -81,25 +224,25 @@
         "name": "Úplné udalosti"
       },
       "direct_dups": {
-        "name": "Priame duplikáty"
+        "name": "Priame duplicity"
       },
       "flood_dups": {
-        "name": "Flood duplikáty"
+        "name": "Flood duplicity"
       },
       "airtime_utilization": {
-        "name": "Využitie času vysielania"
+        "name": "Využitie vysielacieho času"
       },
       "rx_airtime": {
         "name": "RX čas vysielania"
       },
       "rx_airtime_utilization": {
-        "name": "Využitie RX času vysielania"
+        "name": "Využitie vysielacieho času"
       },
       "direct_dups_rate": {
-        "name": "Rýchlosť priamych duplikátov"
+        "name": "Rýchlosť priamych duplicít"
       },
       "flood_dups_rate": {
-        "name": "Rýchlosť flood duplikátov"
+        "name": "Rýchlosť flood duplicít"
       },
       "nb_recv_rate": {
         "name": "Rýchlosť prijatých správ"
@@ -121,3 +264,4 @@
       }
     }
   }
+}
