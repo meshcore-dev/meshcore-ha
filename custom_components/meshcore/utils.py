@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from .const import BAT_VMAX, BAT_VMIN, CHANNEL_PREFIX, DOMAIN, MESSAGES_SUFFIX, NodeType
+from .const import BAT_MVMAX, BAT_MVMIN, CHANNEL_PREFIX, DOMAIN, MESSAGES_SUFFIX, NodeType
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -18,6 +18,8 @@ def get_node_type_str(node_type: str | None) -> str:
         return "Repeater"
     elif node_type == NodeType.ROOM_SERVER:
         return "Room Server"
+    elif node_type == NodeType.SENSOR:
+        return "Sensor"
     else:
         return "Unknown"
 
@@ -130,7 +132,7 @@ def calculate_battery_percentage(voltage_mv: float) -> float:
     Returns:
         Battery percentage (0-100)
     """
-    battery_percentage = (voltage_mv - BAT_VMIN) / (BAT_VMAX - BAT_VMIN) * 100
+    battery_percentage = (voltage_mv - BAT_MVMIN) / (BAT_MVMAX - BAT_MVMIN) * 100
     if battery_percentage >= 100:
         battery_percentage = 100.0
     if battery_percentage < 0:

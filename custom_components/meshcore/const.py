@@ -85,8 +85,11 @@ MAX_RANDOM_DELAY: Final = 30  # Maximum random delay in seconds
 
 
 # Generic battery voltage to percentage lookup table
-BAT_VMIN: Final = 3000
-BAT_VMAX: Final = 4200
+BAT_VMIN: Final = 3.00
+BAT_MVMIN: Final = BAT_VMIN / 1000
+BAT_VMAX: Final = 4.20
+BAT_MVMAX: Final = BAT_VMAX / 1000
+
 
 # Update intervals for different data types
 CONF_INFO_INTERVAL: Final = "info_interval"  # For both node info and contacts
@@ -102,4 +105,5 @@ class NodeType(IntEnum):
     CLIENT = 1
     REPEATER = 2
     ROOM_SERVER = 3
+    SENSOR = 4
 
