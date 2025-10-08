@@ -1,15 +1,11 @@
 """Utility functions for the MeshCore integration."""
+
 from __future__ import annotations
+
 import logging
 from typing import Any
 
-from .const import (
-    DOMAIN,
-    MESSAGES_SUFFIX,
-    CHANNEL_PREFIX,
-    NodeType,
-    BATTERY_CURVE,
-)
+from .const import BAT_VMAX, BAT_VMIN, CHANNEL_PREFIX, DOMAIN, MESSAGES_SUFFIX, NodeType
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -22,59 +18,67 @@ def get_node_type_str(node_type: str | None) -> str:
         return "Repeater"
     elif node_type == NodeType.ROOM_SERVER:
         return "Room Server"
+    elif node_type == NodeType.SENSOR:
+        return "Sensor"
     else:
         return "Unknown"
 
 
 def sanitize_name(name: str, replace_hyphens: bool = True) -> str:
     """Convert a name to a format safe for entity IDs.
-    
+
     Converts to lowercase, replaces spaces with underscores,
     optionally replaces hyphens with underscores, and removes double underscores.
     """
     if not name:
         return ""
-        
+
     safe_name = name.lower().replace(" ", "_")
     if replace_hyphens:
         safe_name = safe_name.replace("-", "_")
     return safe_name.replace("__", "_")
 
 
-def format_entity_id(domain: str, device_name: str, entity_key: str, suffix: str = "") -> str:
+def format_entity_id(
+    domain: str, device_name: str, entity_key: str, suffix: str = ""
+) -> str:
     """Format a consistent entity ID.
-    
+
     Args:
         domain: Entity domain (e.g., 'binary_sensor', 'sensor')
         device_name: Device name (already sanitized)
         entity_key: Entity-specific identifier
         suffix: Optional suffix for the entity ID
-        
+
     Returns:
         Formatted entity ID with proper format: domain.name_parts
     """
     if not domain or not entity_key:
         _LOGGER.warning("Missing required parameters for entity ID formatting")
         return ""
-    
+
     # Build the entity name parts (everything after the domain)
     # Filter out empty strings to prevent double underscores
     name_parts = [part for part in [DOMAIN, device_name, entity_key, suffix] if part]
-    
+
     # Join parts with underscores and clean up any double underscores
     entity_name = "_".join(name_parts).replace("__", "_")
-    
+
     # Format as domain.entity_name
     return f"{domain}.{entity_name}"
 
 
-def get_channel_entity_id(domain: str, device_name: str, channel_idx: int, suffix: str = MESSAGES_SUFFIX) -> str:
+def get_channel_entity_id(
+    domain: str, device_name: str, channel_idx: int, suffix: str = MESSAGES_SUFFIX
+) -> str:
     """Create a consistent entity ID for channel entities."""
     safe_channel = f"{CHANNEL_PREFIX}{channel_idx}"
     return format_entity_id(domain, device_name, safe_channel, suffix)
 
 
-def get_contact_entity_id(domain: str, device_name: str, pubkey: str, suffix: str = MESSAGES_SUFFIX) -> str:
+def get_contact_entity_id(
+    domain: str, device_name: str, pubkey: str, suffix: str = MESSAGES_SUFFIX
+) -> str:
     """Create a consistent entity ID for contact entities."""
     return format_entity_id(domain, device_name, pubkey, suffix)
 
@@ -87,19 +91,19 @@ def extract_channel_idx(entity_key: str) -> int:
             return int(channel_idx_str)
     except (ValueError, TypeError):
         _LOGGER.warning(f"Could not extract channel index from {entity_key}")
-    
+
     return 0  # Default to channel 0 on error
 
 
 def sanitize_event_data(data: Any) -> Any:
     """Make event data JSON serializable by converting bytes to hex strings.
-    
+
     This function recursively processes dictionaries, lists and other data types
     to ensure they're safe for serialization in Home Assistant events.
-    
+
     Args:
         data: The event data to sanitize
-        
+
     Returns:
         JSON-serializable version of the data with bytes converted to hex strings
     """
@@ -121,51 +125,32 @@ def sanitize_event_data(data: Any) -> Any:
 
 def calculate_battery_percentage(voltage_mv: float) -> float:
     """Calculate battery percentage using generic battery discharge curve.
-    
+
     Args:
         voltage_mv: Battery voltage in millivolts
-        
+
     Returns:
         Battery percentage (0-100)
     """
-    voltage_v = voltage_mv / 1000.0  # Convert millivolts to volts
-    
-    # Handle edge cases
-    if voltage_v >= BATTERY_CURVE[0][0]:  # Above maximum voltage
-        return 100.0
-    if voltage_v <= BATTERY_CURVE[-1][0]:  # Below minimum voltage
-        return 0.0
-    
-    # Find the two closest points in the curve for interpolation
-    for i in range(len(BATTERY_CURVE) - 1):
-        v1, p1 = BATTERY_CURVE[i]
-        v2, p2 = BATTERY_CURVE[i + 1]
-        
-        if voltage_v <= v1 and voltage_v >= v2:
-            # Linear interpolation between the two points
-            percentage = p2 + (p1 - p2) * (voltage_v - v2) / (v1 - v2)
-            return round(max(0, min(100, percentage)), 1)
-    
-    # Fallback (should not happen with proper curve data)
-    return 0.0
-
+    battery_percentage = (voltage_mv - BAT_VMIN) / (BAT_VMAX - BAT_VMIN) * 100
+    return round(max(0, min(100, battery_percentage)))
 
 def build_device_name(name: str, pubkey_prefix: str, node_type: str = "unknown") -> str:
     """Build consistent device name based on node info.
-    
+
     Args:
         name: Node name
         pubkey_prefix: Public key prefix (at least 6 chars)
         node_type: Type of node ("root", "repeater", "client", "contact", "unknown")
-        
+
     Returns:
         Formatted device name
     """
     if not name:
         name = f"Node {pubkey_prefix[:6]}"
-        
+
     pubkey_short = pubkey_prefix[:6] if pubkey_prefix else ""
-    
+
     if node_type == "root":
         return f"MeshCore {name} ({pubkey_short})"
     elif node_type == "repeater":
@@ -178,10 +163,10 @@ def build_device_name(name: str, pubkey_prefix: str, node_type: str = "unknown")
 
 def get_device_model(node_type: str) -> str:
     """Get device model based on node type.
-    
+
     Args:
         node_type: Type of node ("root", "repeater", "client", "contact", "unknown")
-        
+
     Returns:
         Device model string
     """
@@ -195,14 +180,16 @@ def get_device_model(node_type: str) -> str:
         return "Mesh Node"
 
 
-def build_device_id(entry_id: str, pubkey_prefix: str, node_type: str = "unknown") -> str:
+def build_device_id(
+    entry_id: str, pubkey_prefix: str, node_type: str = "unknown"
+) -> str:
     """Build consistent device ID based on node info.
-    
+
     Args:
         entry_id: Config entry ID
         pubkey_prefix: Public key prefix
         node_type: Type of node ("root", "repeater", "client", "contact", "unknown")
-        
+
     Returns:
         Device ID string
     """
@@ -212,3 +199,4 @@ def build_device_id(entry_id: str, pubkey_prefix: str, node_type: str = "unknown
         return f"{entry_id}_{node_type}_{pubkey_prefix}"
     else:
         return f"{entry_id}_{node_type}_{pubkey_prefix}"
+

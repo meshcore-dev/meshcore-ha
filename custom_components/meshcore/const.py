@@ -85,23 +85,23 @@ MAX_RANDOM_DELAY: Final = 30  # Maximum random delay in seconds
 
 
 # Generic battery voltage to percentage lookup table
-BATTERY_CURVE: Final = [
-    (4.20, 100), (4.15, 95), (4.10, 90), (4.05, 85), (4.00, 80),
-    (3.95, 75), (3.90, 70), (3.85, 65), (3.80, 60), (3.75, 55),
-    (3.70, 50), (3.65, 40), (3.60, 30), (3.55, 20), (3.50, 15),
-    (3.45, 10), (3.40, 5), (3.30, 2), (3.20, 0)
-]
+BAT_VMIN: Final = 3000
+BAT_VMAX: Final = 4200
+
 
 # Update intervals for different data types
 CONF_INFO_INTERVAL: Final = "info_interval"  # For both node info and contacts
 CONF_MESSAGES_INTERVAL: Final = "messages_interval"
 
-DEFAULT_UPDATE_TICK: Final = 5   # base polling interval
+DEFAULT_UPDATE_TICK: Final = 5  # base polling interval
 
 # Other constants
 CONNECTION_TIMEOUT: Final = 10  # seconds
+
 
 class NodeType(IntEnum):
     CLIENT = 1
     REPEATER = 2
     ROOM_SERVER = 3
+    SENSOR = 4
+
