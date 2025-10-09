@@ -151,8 +151,7 @@
           "description": "The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device."
         }
         }
-      }
-    },
+      },
     "execute_command": {
       "name": "Execute MeshCore Command",
       "description": "Execute a command provided by the MeshCore Python library. This is an advanced feature that provides direct access to the underlying commands interface. CAUTION: Some commands will make PERMANENT CHANGES to your node's configuration. Use with care.",
