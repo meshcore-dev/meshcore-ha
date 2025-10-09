@@ -122,6 +122,60 @@
           "description": "The message text to send"
         }
       }
+    },
+    "send_channel_message": {
+      "name": "Send channel message",
+      "description": "Send a text message to a MeshCore public channel.",
+      "fields": {
+        "channel_idx": {
+          "name": "Channel Index",
+          "description": "The index number of the channel to send to."
+        },
+        "message": {
+          "name": "Message",
+          "description": "The message to send to the channel.",
+	  "example": "Hello from Home Assistant!"
+        },
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device."
+        }
+      }
+    },
+    "send_ui_message": {
+      "name": "Send UI Message",
+      "description": "Send a message using the MeshCore UI helpers. This service reads values from 'select.meshcore_recipient_type', 'select.meshcore_channel', 'select.meshcore_contact', and 'text.meshcore_message' to determine the recipient and message content. Call this service directly from a button card for a seamless messaging interface.",
+      "fields": {
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device."
+        }
+        }
+      }
+    },
+    "execute_command": {
+      "name": "Execute MeshCore Command",
+      "description": "Execute a command provided by the MeshCore Python library. This is an advanced feature that provides direct access to the underlying commands interface. CAUTION: Some commands will make PERMANENT CHANGES to your node's configuration. Use with care.",
+      "fields": {
+        "command": {
+          "name": "Command",
+          "description": "The command with parameters to execute. Format is \"[command_name] [param1] [param2] ...\" Examples: - set_name \"MyDevice\" - send_msg \"f293ac\" \"Hello from Home Assistant!\" - get_bat - set_tx_power 20 - set_coords 37.7749 -122.4194"
+        },
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device."
+        }
+      }
+    },
+    "execute_command_ui": {
+      "name": "Execute Command from UI",
+      "description": "Execute a command using the text.meshcore_command helper entity. This service reads the command from the text helper and executes it. It will automatically clear the input field after execution.",
+      "fields": {
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device."
+        }
+      }
     }
   },
   "entity": {

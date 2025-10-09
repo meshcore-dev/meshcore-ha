@@ -115,11 +115,72 @@
       "fields": {
         "node_id": {
           "name": "ID uzla",
-          "description": "Identifikátor uzla, ktorému má byť správa odoslaná"
+          "description": "Identifikátor uzla, ktorému sa má správa odoslať"
+        },
+        "pubkey_prefix": {
+          "name": "Prefix verejného kľúča",
+          "description": "Prefix verejného kľúča (aspoň 6 znakov) uzla, ktorému sa má správa odoslať."
         },
         "message": {
           "name": "Správa",
           "description": "Text správy, ktorý sa má odoslať"
+        },
+        "entry_id": {
+          "name": "ID konfigurácie",
+          "description": "ID konfigurácie, ak máte viac zariadení MeshCore. Nevyplňujte, ak chcete použiť prvé dostupné zariadenie."
+        }
+      }
+    },
+    "send_channel_message": {
+      "name": "Odoslať správu do kanála",
+      "description": "Odoslať správu do verejného MeshCore kanála.",
+      "fields": {
+        "channel_idx": {
+          "name": "Index kanála",
+          "description": "Index kanála, kam sa má správa odoslať."
+        },
+        "message": {
+          "name": "Správa",
+          "description": "Text správy, ktorý sa má odoslať",
+	  "example": "Pozdrav z Home Asistenta!"
+        },
+        "entry_id": {
+          "name": "ID konfigurácie",
+          "description": "ID konfigurácie, ak máte viac zariadení MeshCore. Nevyplňujte, ak chcete použiť prvé dostupné zariadenie."
+        }
+      }
+    },
+    "send_ui_message": {
+      "name": "Odoslať UI správu",
+      "description": "Odoslať správu prostredníctvom MeshCore UI pomocníkov. Táto služba prečíta hodnoty 'select.meshcore_recipient_type', 'select.meshcore_channel', 'select.meshcore_contact' a text.meshcore_message' a určí tak prijímateľa a obsah správy. Zavolajte túto službu z karty tlačidla pre pohodlné posielanie správ.",
+      "fields": {
+        "entry_id": {
+          "name": "ID konfigurácie",
+          "description": "ID konfigurácie, ak máte viac zariadení MeshCore. Nevyplňujte, ak chcete použiť prvé dostupné zariadenie."
+        }
+      }
+    },
+    "execute_command": {
+      "name": "Vykonať príkaz MeshCore",
+      "description": "Vykonať príkaz poskytovaný MeshCore knižnicou pre Python. Toto je pokročilá funkcia, ktorá poskytuje priamy prístup k základnému príkazovému rozhraniu. VAROVANIE: Niektoré príkazy vykonajú TRVALÉ ZMENY v konfigurácií vášho uzla. Buďte opatrný.",
+      "fields": {
+        "command": {
+          "name": "Príkaz",
+          "description": "Príkaz s parametrami, ktorý sa má vykonať. Formát je \"[názov príkazu\"] [param1] [param2] .. Príklady: - set_name \"MojeZariadenie\" - send_msg \"f293ac\" \"Pozdrav z Home Asistenta!\" - get_bat -set_tx_power 20 -set_coords 37.7749 -122.4194"
+        },
+        "entry_id": {
+          "name": "ID konfigurácie",
+          "description": "ID konfigurácie, ak máte viac zariadení MeshCore. Nevyplňujte, ak chcete použiť prvé dostupné zariadenie."
+        }
+      }
+    },
+    "execute_command_ui": {
+      "name": "Vykonať príkaz z UI",
+      "description": "Vykonať príkaz pomocou entity pomocníka text.meshcore_command. Táto služba prečíta príkaz z textového pomocníka a vykoná ho. Po spustení automaticky vyčistí pole pre vstup.",
+      "fields": {
+        "entry_id": {
+          "name": "ID konfigurácie",
+          "description": "ID konfigurácie, ak máte viac zariadení MeshCore. Nevyplňujte, ak chcete použiť prvé dostupné zariadenie."
         }
       }
     }
