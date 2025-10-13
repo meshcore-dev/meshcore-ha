@@ -133,7 +133,7 @@ def calculate_battery_percentage(voltage_mv: float) -> float:
         Battery percentage (0-100)
     """
     battery_percentage = (voltage_mv - BAT_VMIN) / (BAT_VMAX - BAT_VMIN) * 100
-    return round(max(0, min(100, battery_percentage)))
+    return round(max(0, min(100, battery_percentage)), 2)
 
 def build_device_name(name: str, pubkey_prefix: str, node_type: str = "unknown") -> str:
     """Build consistent device name based on node info.

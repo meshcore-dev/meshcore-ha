@@ -420,8 +420,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
             contact_type = contact.get("type")
 
-            # Check for repeater (2) or room server (3) node types
-            if contact_type == NodeType.REPEATER or contact_type == NodeType.ROOM_SERVER:
+            # Check for repeater (2), room server (3), or sensor (4) node types
+            if contact_type == NodeType.REPEATER or contact_type == NodeType.ROOM_SERVER or contact_type == NodeType.SENSOR:
                 public_key = contact.get("public_key", "")
                 pubkey_prefix = public_key[:12] if public_key else ""
 
