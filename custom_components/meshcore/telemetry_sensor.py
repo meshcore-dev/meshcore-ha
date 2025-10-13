@@ -30,6 +30,7 @@ from .const import (
 from .utils import (
     build_device_id,
     build_device_name,
+    calculate_battery_percentage,
     format_entity_id,
     get_device_model,
     sanitize_name,
@@ -609,9 +610,7 @@ class MeshCoreBatteryPercentageSensor(MeshCoreTelemetrySensor):
         if voltage is None:
             return None
         voltage_mv = int(voltage * 1000)
-        # Find the appropriate percentage from the curve
-        battery_percentage = (voltage_mv - BAT_VMIN) / (BAT_VMAX - BAT_VMIN) * 100
-        return round(max(0, min(100, battery_percentage)))
+        return calculate_battery_percentage(voltage_mv)
 
     @property
     def extra_state_attributes(self) -> Dict[str, Any]:
