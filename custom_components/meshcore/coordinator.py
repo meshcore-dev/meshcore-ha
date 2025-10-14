@@ -12,7 +12,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from meshcore.events import EventType
+from meshcore.events import Event, EventType
 from meshcore.packets import BinaryReqType
 
 from .const import (
@@ -78,6 +78,8 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         # Set up device info that entities can reference
         self._firmware_version = None
         self._hardware_model = None
+        self._max_channels = 4  # Default to 4 channels, updated from DEVICE_INFO
+        self._channel_info = {}  # Dict keyed by channel_idx to store channel info
         
         # Create a central device_info dict that all entities can reference
         self.device_info = {
@@ -146,6 +148,80 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         """Increment failure counter for a node."""
         stats_key = f"{pubkey_prefix}_request_failures"
         self._reliability_stats[stats_key] = self._reliability_stats.get(stats_key, 0) + 1
+    
+    def get_device_update_interval(self, pubkey_prefix: str) -> int:
+        """Get the configured update interval for a device by its pubkey prefix."""
+        # Check repeaters
+        for repeater_config in self._tracked_repeaters:
+            if repeater_config.get("pubkey_prefix") == pubkey_prefix:
+                return repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
+        
+        # Check clients  
+        for client_config in self._tracked_clients:
+            if client_config.get("pubkey_prefix") == pubkey_prefix:
+                return client_config.get(CONF_CLIENT_UPDATE_INTERVAL, DEFAULT_CLIENT_UPDATE_INTERVAL)
+        
+        # Default fallback - use a reasonable timeout
+        return DEFAULT_CLIENT_UPDATE_INTERVAL
+    
+    @property
+    def max_channels(self) -> int:
+        """Get the maximum number of channels supported by the device."""
+        return self._max_channels
+    
+    def _setup_channel_info_listener(self) -> None:
+        """Set up CHANNEL_INFO event listener to capture channel information."""
+        def handle_channel_info(event: Event):
+            try:
+                channel_idx = event.payload.get("channel_idx")
+                if channel_idx is not None:
+                    self._channel_info[channel_idx] = event.payload
+                    self.logger.debug(f"Saved channel info for channel {channel_idx}: {event.payload}")
+            except Exception as ex:
+                self.logger.error(f"Error handling CHANNEL_INFO event: {ex}")
+        
+        # Subscribe to CHANNEL_INFO events
+        self.api.mesh_core.dispatcher.subscribe(
+            EventType.CHANNEL_INFO,
+            handle_channel_info,
+        )
+        self.logger.debug("Registered CHANNEL_INFO event listener")
+    
+    async def _fetch_all_channel_info(self) -> None:
+        """Fetch channel info for all channels on startup."""
+        self.logger.info(f"Fetching channel info for {self._max_channels} channels...")
+        for channel_idx in range(self._max_channels):
+            try:
+                # Use get_channel command
+                channel_info_result = await self.api.mesh_core.commands.get_channel(channel_idx)
+                if channel_info_result and channel_info_result.type == EventType.CHANNEL_INFO:
+                    self._channel_info[channel_idx] = channel_info_result.payload
+                    self.logger.debug(f"Fetched channel info for channel {channel_idx}: {channel_info_result.payload}")
+                else:
+                    self.logger.warning(f"Failed to get channel info for channel {channel_idx}")
+            except Exception as ex:
+                self.logger.error(f"Error fetching channel info for channel {channel_idx}: {ex}")
+        
+        self.logger.info(f"Completed channel info fetch - got info for {len(self._channel_info)} channels")
+    
+    async def get_channel_info(self, channel_idx: int) -> dict:
+        """Get channel info for a specific channel, fetching if not present."""
+        if channel_idx not in self._channel_info:
+            self.logger.debug(f"Channel {channel_idx} info not cached, attempting to fetch")
+            try:
+                if self.api.mesh_core:
+                    channel_info_result = await self.api.mesh_core.commands.get_channel(channel_idx)
+                    if channel_info_result and channel_info_result.payload:
+                        self._channel_info[channel_idx] = channel_info_result.payload
+                        self.logger.debug(f"Successfully fetched channel {channel_idx} info")
+                    else:
+                        self.logger.warning(f"Failed to get channel info for channel {channel_idx}")
+                else:
+                    self.logger.warning("No MeshCore instance available for channel info fetch")
+            except Exception as ex:
+                self.logger.error(f"Error fetching channel info for channel {channel_idx}: {ex}")
+        
+        return self._channel_info.get(channel_idx, {})
     
     async def _reset_node_path(self, contact, node_config: dict) -> bool:
         """Reset routing path for a node and return success status."""
@@ -472,14 +548,21 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 if device_query_result.type is EventType.DEVICE_INFO:
                     self._firmware_version = device_query_result.payload.get("ver")
                     self._hardware_model = device_query_result.payload.get("model")
+                    self._max_channels = device_query_result.payload.get("max_channels", 4)  # Default to 4 if not provided
                     
                     if self._firmware_version:
                         self.device_info["sw_version"] = self._firmware_version
                     if self._hardware_model:
                         self.device_info["model"] = self._hardware_model
                         
-                    self.logger.info(f"Device info updated - Firmware: {self._firmware_version}, Model: {self._hardware_model}")
+                    self.logger.info(f"Device info updated - Firmware: {self._firmware_version}, Model: {self._hardware_model}, Max Channels: {self._max_channels}")
                     self._device_info_initialized = True
+                    
+                    # Set up CHANNEL_INFO event listener
+                    self._setup_channel_info_listener()
+                    
+                    # Fetch channel info for all channels
+                    await self._fetch_all_channel_info()
                     
                     self.async_update_listeners()
             except Exception as ex:
@@ -641,7 +724,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 if contact:
                     _LOGGER.debug(f"Starting telemetry update task for client {client_name}")
                     
-                    update_interval = client_config.get("update_interval", DEFAULT_CLIENT_UPDATE_INTERVAL)
+                    update_interval = client_config.get(CONF_CLIENT_UPDATE_INTERVAL, DEFAULT_CLIENT_UPDATE_INTERVAL)
                     
                     telemetry_task = asyncio.create_task(
                         self._update_node_telemetry(contact, client_config)

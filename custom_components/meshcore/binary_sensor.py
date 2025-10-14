@@ -120,7 +120,7 @@ def handle_contact_message(event, coordinator, async_add_entities):
     log_contact_message(event, coordinator)
 
 @callback
-def handle_channel_message(event, coordinator, async_add_entities):
+async def handle_channel_message(event, coordinator, async_add_entities):
     """Create channel message entity on first message in a channel."""
     if not event or not hasattr(event, "payload") or not event.payload:
         return
@@ -146,16 +146,20 @@ def handle_channel_message(event, coordinator, async_add_entities):
         
     # Add channel if it doesnt exist
     if channel_idx not in coordinator.tracked_channels:
+        # Get actual channel name from stored channel info
+        channel_info = await coordinator.get_channel_info(channel_idx)
+        channel_name = channel_info.get("channel_name", f"Channel {channel_idx}")
+        
         safe_channel = f"{CHANNEL_PREFIX}{channel_idx}"
         channel_entity = MeshCoreMessageEntity(
-            coordinator, safe_channel, f"Channel {channel_idx} Messages"
+            coordinator, safe_channel, f"{channel_name} Messages"
         )
         coordinator.tracked_channels.add(channel_idx)
-        _LOGGER.info(f"Adding message entity for channel {channel_idx} after receiving message")
+        _LOGGER.info(f"Adding message entity for channel {channel_idx} ({channel_name}) after receiving message")
         async_add_entities([channel_entity])
     
      # Log message to the logbook
-    log_channel_message(event, coordinator)
+    await log_channel_message(event, coordinator)
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
@@ -181,8 +185,8 @@ async def async_setup_entry(
         handle_contact_message(event, coordinator, async_add_entities)
         
     @callback
-    def channel_message_handler(event):
-        handle_channel_message(event, coordinator, async_add_entities)
+    async def channel_message_handler(event):
+        await handle_channel_message(event, coordinator, async_add_entities)
     
     # Subscribe to events directly from mesh_core
     if coordinator.api.mesh_core:
@@ -206,7 +210,7 @@ async def async_setup_entry(
         
     # Subscribe to our internal message sent event for outgoing messages
     @callback
-    def message_sent_handler(event):
+    async def message_sent_handler(event):
         """Handle outgoing message events."""
         if event.data.get("message_type") == "direct":
             # Handle outgoing direct message
@@ -232,17 +236,21 @@ async def async_setup_entry(
                 if not hasattr(coordinator, "tracked_channels"):
                     coordinator.tracked_channels = set()
                 if channel_idx not in coordinator.tracked_channels:
+                    # Get actual channel name from stored channel info
+                    channel_info = await coordinator.get_channel_info(channel_idx)
+                    channel_name = channel_info.get("channel_name", f"Channel {channel_idx}")
+                    
                     # Create channel entity
                     safe_channel = f"{CHANNEL_PREFIX}{channel_idx}"
                     channel_entity = MeshCoreMessageEntity(
-                        coordinator, safe_channel, f"Channel {channel_idx} Messages"
+                        coordinator, safe_channel, f"{channel_name} Messages"
                     )
                     coordinator.tracked_channels.add(channel_idx)
                     _LOGGER.info(f"Adding message entity for channel {channel_idx} after sending message")
                     async_add_entities([channel_entity])
         
         # Log the message to the logbook using our dedicated handler
-        handle_outgoing_message(event.data, coordinator)
+        await handle_outgoing_message(event.data, coordinator)
     
     # Register for the message_sent event - use a global check to prevent duplicates
     event_key = f"{DOMAIN}_message_sent_listener_{entry.entry_id}"

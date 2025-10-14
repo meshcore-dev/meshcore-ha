@@ -55,7 +55,7 @@ def async_describe_events(
     
     async_describe_event(DOMAIN, EVENT_MESHCORE_MESSAGE, process_message_event)
 
-def handle_channel_message(event, coordinator) -> None:
+async def handle_channel_message(event, coordinator) -> None:
     """Handle channel message event."""
     if not event or not event.payload:
         _LOGGER.debug("Invalid event data for channel message")
@@ -67,8 +67,9 @@ def handle_channel_message(event, coordinator) -> None:
         message_text = payload.get("text", "")
         channel_idx = payload.get("channel_idx", 0)
         
-        # Get channel name
-        channel_name = "public" if channel_idx == 0 else f"{channel_idx}"
+        # Get channel name from stored channel info
+        channel_info = await coordinator.get_channel_info(channel_idx)
+        channel_name = channel_info.get("channel_name", "public" if channel_idx == 0 else f"{channel_idx}")
 
         # Try to extract sender name from message format "Name: Message"
         sender_name = "Unknown"
@@ -196,7 +197,7 @@ def handle_contact_message(event, coordinator) -> None:
     except Exception as ex:
         _LOGGER.error("Error handling contact message: %s", ex, exc_info=True)
 
-def handle_outgoing_message(event_data, coordinator) -> None:
+async def handle_outgoing_message(event_data, coordinator) -> None:
     """Handle outgoing message events from the new message_sent event."""
     if not event_data:
         return
@@ -250,7 +251,9 @@ def handle_outgoing_message(event_data, coordinator) -> None:
     elif message_type == "channel":
         # Channel message
         channel_idx = event_data.get("channel_idx", 0)
-        channel_name = "public" if channel_idx == 0 else f"{channel_idx}"
+        # Get actual channel name from stored channel info
+        channel_info = await coordinator.get_channel_info(channel_idx)
+        channel_name = channel_info.get("channel_name", "public" if channel_idx == 0 else f"{channel_idx}")
         
         # Generate entity ID matching MeshCoreMessageEntity
         entity_id = get_channel_entity_id(
