@@ -975,8 +975,10 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
         # First check if we have cached stats from an event
         if self._cached_stats:
             last_updated = self._cached_stats.get("last_updated", 0)
-            # Consider stats fresh if they were updated in the last hour
-            if time.time() - last_updated < 3600:
+            # Use dynamic timeout based on configured update interval
+            update_interval = self.coordinator.get_device_update_interval(self.public_key)
+            timeout = update_interval * 1.5
+            if time.time() - last_updated < timeout:
                 return True
         
         # Otherwise check coordinator data

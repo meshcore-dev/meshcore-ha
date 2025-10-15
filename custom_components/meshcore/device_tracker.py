@@ -235,7 +235,10 @@ class MeshCoreGPSTracker(CoordinatorEntity, TrackerEntity):
         """Return if the tracker is available."""
         if self._last_updated is None:
             return False
-        return time.time() - self._last_updated < 3600
+        # Use dynamic timeout based on configured update interval with 1.5x buffer
+        update_interval = self.coordinator.get_device_update_interval(self.pubkey_prefix)
+        timeout = update_interval * 1.5
+        return time.time() - self._last_updated < timeout
         
     @property
     def extra_state_attributes(self) -> Dict[str, Any]:
