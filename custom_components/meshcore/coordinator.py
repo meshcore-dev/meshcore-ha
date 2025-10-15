@@ -151,14 +151,16 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
     
     def get_device_update_interval(self, pubkey_prefix: str) -> int:
         """Get the configured update interval for a device by its pubkey prefix."""
-        # Check repeaters
+        # Check repeaters - use startswith to handle varying prefix lengths
         for repeater_config in self._tracked_repeaters:
-            if repeater_config.get("pubkey_prefix") == pubkey_prefix:
+            config_prefix = repeater_config.get("pubkey_prefix", "")
+            if config_prefix and (pubkey_prefix.startswith(config_prefix) or config_prefix.startswith(pubkey_prefix)):
                 return repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
         
-        # Check clients  
+        # Check clients - use startswith to handle varying prefix lengths
         for client_config in self._tracked_clients:
-            if client_config.get("pubkey_prefix") == pubkey_prefix:
+            config_prefix = client_config.get("pubkey_prefix", "")
+            if config_prefix and (pubkey_prefix.startswith(config_prefix) or config_prefix.startswith(pubkey_prefix)):
                 return client_config.get(CONF_CLIENT_UPDATE_INTERVAL, DEFAULT_CLIENT_UPDATE_INTERVAL)
         
         # Default fallback - use a reasonable timeout
