@@ -811,10 +811,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         
         if user_input is not None:
             # Update repeater settings
-            repeater["password"] = user_input.get(CONF_REPEATER_PASSWORD, "")
-            repeater["telemetry_enabled"] = user_input[CONF_REPEATER_TELEMETRY_ENABLED]
-            repeater["update_interval"] = user_input[CONF_REPEATER_UPDATE_INTERVAL]
-            repeater["disable_path_reset"] = user_input[CONF_REPEATER_DISABLE_PATH_RESET]
+            repeater[CONF_REPEATER_PASSWORD] = user_input.get(CONF_REPEATER_PASSWORD, "")
+            repeater[CONF_REPEATER_TELEMETRY_ENABLED] = user_input[CONF_REPEATER_TELEMETRY_ENABLED]
+            repeater[CONF_REPEATER_UPDATE_INTERVAL] = user_input[CONF_REPEATER_UPDATE_INTERVAL]
+            repeater[CONF_REPEATER_DISABLE_PATH_RESET] = user_input[CONF_REPEATER_DISABLE_PATH_RESET]
             
             # Update config entry
             new_data = dict(self.config_entry.data)
@@ -827,10 +827,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         return self.async_show_form(
             step_id="edit_repeater",
             data_schema=vol.Schema({
-                vol.Optional(CONF_REPEATER_PASSWORD, ""): str,
-                vol.Optional(CONF_REPEATER_TELEMETRY_ENABLED, default=repeater.get("telemetry_enabled", False)): bool,
-                vol.Optional(CONF_REPEATER_UPDATE_INTERVAL, default=repeater.get("update_interval", DEFAULT_REPEATER_UPDATE_INTERVAL)): vol.All(cv.positive_int, vol.Range(min=MIN_UPDATE_INTERVAL)),
-                vol.Optional(CONF_REPEATER_DISABLE_PATH_RESET, default=repeater.get("disable_path_reset", False)): bool,
+                vol.Optional(CONF_REPEATER_PASSWORD, default=repeater.get(CONF_REPEATER_PASSWORD, "")): str,
+                vol.Optional(CONF_REPEATER_TELEMETRY_ENABLED, default=repeater.get(CONF_REPEATER_TELEMETRY_ENABLED, False)): bool,
+                vol.Optional(CONF_REPEATER_UPDATE_INTERVAL, default=repeater.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)): vol.All(cv.positive_int, vol.Range(min=MIN_UPDATE_INTERVAL)),
+                vol.Optional(CONF_REPEATER_DISABLE_PATH_RESET, default=repeater.get(CONF_REPEATER_DISABLE_PATH_RESET, False)): bool,
             }),
             description_placeholders={
                 "device_name": repeater.get("name", "Unknown")
