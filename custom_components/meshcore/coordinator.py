@@ -346,7 +346,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 self._increment_failure(pubkey_prefix)
                 
                 # Reset path after configured failures if there's an established path
-                if new_failure_count == MAX_FAILURES_BEFORE_PATH_RESET and contact and contact.get("out_path_len", -1) >= 0:
+                if new_failure_count >= MAX_FAILURES_BEFORE_PATH_RESET and contact and contact.get("out_path_len", -1) > -1:
                     await self._reset_node_path(contact, repeater_config)
                 
                 update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
@@ -472,7 +472,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 self._increment_failure(pubkey_prefix)
                 
                 # Reset path after configured failures if there's an established path
-                if new_failure_count == MAX_FAILURES_BEFORE_PATH_RESET and contact and contact.get("out_path_len", -1) >= 0:
+                if new_failure_count >= MAX_FAILURES_BEFORE_PATH_RESET and contact and contact.get("out_path_len", -1) > -1:
                     await self._reset_node_path(contact, node_config)
                 
                 self._apply_backoff(pubkey_prefix, new_failure_count, update_interval, "telemetry")
@@ -485,7 +485,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             self._increment_failure(pubkey_prefix)
             
             # Reset path after configured failures if there's an established path
-            if new_failure_count == MAX_FAILURES_BEFORE_PATH_RESET and contact and contact.get("out_path_len", -1) != -1:
+            if new_failure_count >= MAX_FAILURES_BEFORE_PATH_RESET and contact and contact.get("out_path_len", -1) > -1:
                 await self._reset_node_path(contact, node_config)
             
             self._apply_backoff(pubkey_prefix, new_failure_count, update_interval, "telemetry")
