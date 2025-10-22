@@ -565,10 +565,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             "name": repeater_name,
             "pubkey_prefix": pubkey_prefix,
             "firmware_version": ver,
-            "password": password,
-            "telemetry_enabled": telemetry_enabled,
-            "update_interval": update_interval,
-            "disable_path_reset": disable_path_reset,
+            CONF_REPEATER_PASSWORD: password,
+            CONF_REPEATER_TELEMETRY_ENABLED: telemetry_enabled,
+            CONF_REPEATER_UPDATE_INTERVAL: update_interval,
+            CONF_REPEATER_DISABLE_PATH_RESET: disable_path_reset,
         })
 
         # Update the config entry data
@@ -853,8 +853,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         
         if user_input is not None:
             # Update client settings
-            client["update_interval"] = user_input[CONF_CLIENT_UPDATE_INTERVAL]
-            client["disable_path_reset"] = user_input[CONF_CLIENT_DISABLE_PATH_RESET]
+            client[CONF_CLIENT_UPDATE_INTERVAL] = user_input[CONF_CLIENT_UPDATE_INTERVAL]
+            client[CONF_CLIENT_DISABLE_PATH_RESET] = user_input[CONF_CLIENT_DISABLE_PATH_RESET]
             
             # Update config entry
             new_data = dict(self.config_entry.data)
@@ -867,8 +867,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         return self.async_show_form(
             step_id="edit_client",
             data_schema=vol.Schema({
-                vol.Optional(CONF_CLIENT_UPDATE_INTERVAL, default=client.get("update_interval", DEFAULT_CLIENT_UPDATE_INTERVAL)): vol.All(cv.positive_int, vol.Range(min=MIN_UPDATE_INTERVAL)),
-                vol.Optional(CONF_CLIENT_DISABLE_PATH_RESET, default=client.get("disable_path_reset", False)): bool,
+                vol.Optional(CONF_CLIENT_UPDATE_INTERVAL, default=client.get(CONF_CLIENT_UPDATE_INTERVAL, DEFAULT_CLIENT_UPDATE_INTERVAL)): vol.All(cv.positive_int, vol.Range(min=MIN_UPDATE_INTERVAL)),
+                vol.Optional(CONF_CLIENT_DISABLE_PATH_RESET, default=client.get(CONF_CLIENT_DISABLE_PATH_RESET, False)): bool,
             }),
             description_placeholders={
                 "device_name": client.get("name", "Unknown")

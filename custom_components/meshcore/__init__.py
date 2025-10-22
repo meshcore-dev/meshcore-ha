@@ -1,6 +1,7 @@
 """The MeshCore integration."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from pathlib import Path
@@ -103,13 +104,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     
     # Initialize API
     api = MeshCoreAPI(**api_kwargs)
-    await api.connect()
-    
+
+    # Try to connect with retries for initial setup
+    max_retries = 3
+    retry_delay = 5  # seconds
+    connected = False
+
+    for attempt in range(max_retries):
+        _LOGGER.info(f"Connection attempt {attempt + 1}/{max_retries}...")
+        connected = await api.connect()
+
+        if connected:
+            _LOGGER.info("Successfully connected to MeshCore device")
+            break
+
+        if attempt < max_retries - 1:
+            _LOGGER.warning(f"Connection attempt {attempt + 1} failed, retrying in {retry_delay} seconds...")
+            await asyncio.sleep(retry_delay)
+        else:
+            _LOGGER.error(f"Failed to connect after {max_retries} attempts")
+
+    # Continue setup even if connection failed - coordinator will retry
+    if not connected:
+        _LOGGER.warning("Starting integration with no initial connection - coordinator will retry")
+
     # TODO: remove this with contact refresh interval migration?
     # Get the messages interval for base update frequency
     # Check options first, then data, then use default
     messages_interval = entry.options.get(
-        CONF_MESSAGES_INTERVAL, 
+        CONF_MESSAGES_INTERVAL,
         entry.data.get(CONF_MESSAGES_INTERVAL, DEFAULT_UPDATE_TICK)
     )
     
@@ -187,7 +210,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
     
     # Fetch initial data immediately
-    await coordinator._async_update_data()
+    # await coordinator._async_update_data()
     
     return True
 
