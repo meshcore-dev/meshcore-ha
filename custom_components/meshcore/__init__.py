@@ -85,6 +85,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Get configuration from entry
     connection_type = entry.data[CONF_CONNECTION_TYPE]
     
+    _LOGGER.debug("Entry data: %s", entry.data)
+    
     # Create API instance based on connection type
     api_kwargs = {
         "hass": hass,
