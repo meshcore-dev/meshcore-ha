@@ -115,14 +115,41 @@ class MeshCoreAPI:
             if not self._mesh_core:
                 _LOGGER.error("Failed to create MeshCore instance")
                 return False
-                
+
+            await asyncio.sleep(1)  # Small delay to ensure connection stability
+
+            # Validate connection with appstart command
+            try:
+                _LOGGER.info("Validating connection with appstart command...")
+                appstart_result = await self._mesh_core.commands.send_appstart()
+
+                if appstart_result is None:
+                    _LOGGER.error("Connection validation failed: appstart returned None")
+                    self._connected = False
+                    self._mesh_core = None
+                    return False
+
+                if appstart_result.type == EventType.ERROR:
+                    _LOGGER.error(f"Connection validation failed: appstart returned error: {appstart_result.payload}")
+                    self._connected = False
+                    self._mesh_core = None
+                    return False
+
+                _LOGGER.info("Connection validated successfully", appstart_result)
+            except Exception as ex:
+                _LOGGER.error(f"Connection validation failed (appstart exception): {ex}")
+                self._connected = False
+                self._mesh_core = None
+                return False
+
             # Set up disconnect event handler for backup reconnect
             self._setup_disconnect_handler()
             
             # Load contacts
             _LOGGER.info("Loading contacts...")
+            await asyncio.sleep(1)  # Small delay to ensure connection stability
             await self._mesh_core.ensure_contacts()
-            
+
             # Sync time on connection
             try:
                 _LOGGER.info("Syncing time with MeshCore device...")
@@ -155,25 +182,40 @@ class MeshCoreAPI:
         """Disconnect from the MeshCore device."""
         _LOGGER.debug("Disconnecting from MeshCore device... (HA)")
         try:
+            # Cancel reconnect task first if it exists
+            if self._reconnect_task and not self._reconnect_task.done():
+                _LOGGER.info("Cancelling reconnect task")
+                self._reconnect_task.cancel()
+                try:
+                    await self._reconnect_task
+                except asyncio.CancelledError:
+                    pass
+                self._reconnect_task = None
+
             # Trigger device disconnected event
             if self.hass:
                 self.hass.bus.async_fire(f"{DOMAIN}_disconnected", {})
-                
+
             # Properly disconnect using the MeshCore instance
             if self._mesh_core:
-                await self._mesh_core.disconnect()
                 try:
+                    # Clean up event subscriptions BEFORE disconnecting
                     _LOGGER.info("Cleaning up event subscriptions")
                     if hasattr(self._mesh_core, "dispatcher") and hasattr(self._mesh_core.dispatcher, "subscriptions"):
                         subscription_count = len(self._mesh_core.dispatcher.subscriptions)
                         for subscription in list(self._mesh_core.dispatcher.subscriptions):
                             subscription.unsubscribe()
                         _LOGGER.info(f"Cleared {subscription_count} event subscriptions")
-                    # Close the connection
+                except Exception as ex:
+                    _LOGGER.error(f"Error cleaning up subscriptions: {ex}")
+
+                # Now disconnect from the device
+                try:
                     _LOGGER.info("Closing connection to MeshCore device")
+                    await self._mesh_core.disconnect()
                 except Exception as ex:
                     _LOGGER.error(f"Error during MeshCore disconnect: {ex}")
-            
+
         except Exception as ex:
             _LOGGER.error(f"Error during disconnect: {ex}")
         finally:

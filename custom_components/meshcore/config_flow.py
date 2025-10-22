@@ -1,6 +1,7 @@
 """Config flow for MeshCore integration."""
-import logging
 import asyncio
+import copy
+import logging
 from typing import Any, Dict, Optional
 
 import voluptuous as vol
@@ -335,9 +336,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
     def __init__(self, config_entry):
         """Initialize options flow."""
-        self.config_entry = config_entry
-        self.repeater_subscriptions = list(config_entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, []))
-        self.tracked_clients = list(config_entry.data.get(CONF_TRACKED_CLIENTS, []))
+        self.repeater_subscriptions = copy.deepcopy(config_entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, []))
+        self.tracked_clients = copy.deepcopy(config_entry.data.get(CONF_TRACKED_CLIENTS, []))
         self.hass = None
 
     async def async_step_init(self, user_input=None):
@@ -565,15 +565,15 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             "name": repeater_name,
             "pubkey_prefix": pubkey_prefix,
             "firmware_version": ver,
-            "password": password,
-            "telemetry_enabled": telemetry_enabled,
-            "update_interval": update_interval,
-            "disable_path_reset": disable_path_reset,
+            CONF_REPEATER_PASSWORD: password,
+            CONF_REPEATER_TELEMETRY_ENABLED: telemetry_enabled,
+            CONF_REPEATER_UPDATE_INTERVAL: update_interval,
+            CONF_REPEATER_DISABLE_PATH_RESET: disable_path_reset,
         })
 
         # Update the config entry data
-        new_data = dict(self.config_entry.data)
-        new_data[CONF_REPEATER_SUBSCRIPTIONS] = self.repeater_subscriptions
+        new_data = copy.deepcopy(dict(self.config_entry.data))
+        new_data[CONF_REPEATER_SUBSCRIPTIONS] = copy.deepcopy(self.repeater_subscriptions)
         self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
 
         # Return to the init step
@@ -647,8 +647,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         })
 
         # Update the config entry data
-        new_data = dict(self.config_entry.data)
-        new_data[CONF_TRACKED_CLIENTS] = self.tracked_clients
+        new_data = copy.deepcopy(dict(self.config_entry.data))
+        new_data[CONF_TRACKED_CLIENTS] = copy.deepcopy(self.tracked_clients)
         self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
 
         # Return to the init step
@@ -684,9 +684,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     ]
                 
                 # Update config entry
-                new_data = dict(self.config_entry.data)
-                new_data[CONF_REPEATER_SUBSCRIPTIONS] = self.repeater_subscriptions
-                new_data[CONF_TRACKED_CLIENTS] = self.tracked_clients
+                new_data = copy.deepcopy(dict(self.config_entry.data))
+                new_data[CONF_REPEATER_SUBSCRIPTIONS] = copy.deepcopy(self.repeater_subscriptions)
+                new_data[CONF_TRACKED_CLIENTS] = copy.deepcopy(self.tracked_clients)
                 self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
                 
                 return await self.async_step_manage_devices()
@@ -742,7 +742,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         """Handle global settings."""
         if user_input is not None:
             # Update global settings in config entry
-            new_data = dict(self.config_entry.data)
+            new_data = copy.deepcopy(dict(self.config_entry.data))
             new_data[CONF_CONTACT_REFRESH_INTERVAL] = user_input[CONF_CONTACT_REFRESH_INTERVAL]
             new_data[CONF_SELF_TELEMETRY_ENABLED] = user_input[CONF_SELF_TELEMETRY_ENABLED]
             new_data[CONF_SELF_TELEMETRY_INTERVAL] = user_input[CONF_SELF_TELEMETRY_INTERVAL]
@@ -807,27 +807,33 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 break
         
         if not repeater:
+            _LOGGER.error("Repeater not found for editing: %s", prefix)
             return await self.async_step_manage_devices()
         
+        _LOGGER.debug("User_input for editing repeater: %s", user_input)
         if user_input is not None:
             # Update repeater settings
             repeater[CONF_REPEATER_PASSWORD] = user_input.get(CONF_REPEATER_PASSWORD, "")
             repeater[CONF_REPEATER_TELEMETRY_ENABLED] = user_input[CONF_REPEATER_TELEMETRY_ENABLED]
             repeater[CONF_REPEATER_UPDATE_INTERVAL] = user_input[CONF_REPEATER_UPDATE_INTERVAL]
             repeater[CONF_REPEATER_DISABLE_PATH_RESET] = user_input[CONF_REPEATER_DISABLE_PATH_RESET]
-            
-            # Update config entry
-            new_data = dict(self.config_entry.data)
-            new_data[CONF_REPEATER_SUBSCRIPTIONS] = self.repeater_subscriptions
+
+            # Update config entry - deep copy entire data to ensure HA detects changes
+            new_data = copy.deepcopy(dict(self.config_entry.data))
+            new_data[CONF_REPEATER_SUBSCRIPTIONS] = copy.deepcopy(self.repeater_subscriptions)
+            _LOGGER.debug("Updating repeater subscriptions: %s", new_data[CONF_REPEATER_SUBSCRIPTIONS])
             self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
-            
-            return await self.async_step_manage_devices()
+
+            return await self.async_step_init()
         
         # Show current settings
         return self.async_show_form(
             step_id="edit_repeater",
             data_schema=vol.Schema({
-                vol.Optional(CONF_REPEATER_PASSWORD, default=repeater.get(CONF_REPEATER_PASSWORD, "")): str,
+                vol.Optional(
+                    CONF_REPEATER_PASSWORD,
+                    description={"suggested_value": repeater.get(CONF_REPEATER_PASSWORD, "")}
+                ): str,
                 vol.Optional(CONF_REPEATER_TELEMETRY_ENABLED, default=repeater.get(CONF_REPEATER_TELEMETRY_ENABLED, False)): bool,
                 vol.Optional(CONF_REPEATER_UPDATE_INTERVAL, default=repeater.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)): vol.All(cv.positive_int, vol.Range(min=MIN_UPDATE_INTERVAL)),
                 vol.Optional(CONF_REPEATER_DISABLE_PATH_RESET, default=repeater.get(CONF_REPEATER_DISABLE_PATH_RESET, False)): bool,
@@ -853,22 +859,22 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         
         if user_input is not None:
             # Update client settings
-            client["update_interval"] = user_input[CONF_CLIENT_UPDATE_INTERVAL]
-            client["disable_path_reset"] = user_input[CONF_CLIENT_DISABLE_PATH_RESET]
-            
+            client[CONF_CLIENT_UPDATE_INTERVAL] = user_input[CONF_CLIENT_UPDATE_INTERVAL]
+            client[CONF_CLIENT_DISABLE_PATH_RESET] = user_input[CONF_CLIENT_DISABLE_PATH_RESET]
+
             # Update config entry
-            new_data = dict(self.config_entry.data)
-            new_data[CONF_TRACKED_CLIENTS] = self.tracked_clients
+            new_data = copy.deepcopy(dict(self.config_entry.data))
+            new_data[CONF_TRACKED_CLIENTS] = copy.deepcopy(self.tracked_clients)
             self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
-            
-            return await self.async_step_manage_devices()
+
+            return await self.async_step_init()
         
         # Show current settings
         return self.async_show_form(
             step_id="edit_client",
             data_schema=vol.Schema({
-                vol.Optional(CONF_CLIENT_UPDATE_INTERVAL, default=client.get("update_interval", DEFAULT_CLIENT_UPDATE_INTERVAL)): vol.All(cv.positive_int, vol.Range(min=MIN_UPDATE_INTERVAL)),
-                vol.Optional(CONF_CLIENT_DISABLE_PATH_RESET, default=client.get("disable_path_reset", False)): bool,
+                vol.Optional(CONF_CLIENT_UPDATE_INTERVAL, default=client.get(CONF_CLIENT_UPDATE_INTERVAL, DEFAULT_CLIENT_UPDATE_INTERVAL)): vol.All(cv.positive_int, vol.Range(min=MIN_UPDATE_INTERVAL)),
+                vol.Optional(CONF_CLIENT_DISABLE_PATH_RESET, default=client.get(CONF_CLIENT_DISABLE_PATH_RESET, False)): bool,
             }),
             description_placeholders={
                 "device_name": client.get("name", "Unknown")

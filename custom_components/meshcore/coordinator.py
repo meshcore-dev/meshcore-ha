@@ -28,12 +28,9 @@ from .const import (
     CONF_CLIENT_UPDATE_INTERVAL,
     CONF_CLIENT_DISABLE_PATH_RESET,
     DEFAULT_CLIENT_UPDATE_INTERVAL,
-    DEFAULT_UPDATE_TICK,
     MAX_REPEATER_FAILURES_BEFORE_LOGIN,
     REPEATER_BACKOFF_BASE,
-    REPEATER_BACKOFF_MAX_MULTIPLIER,
     MAX_FAILURES_BEFORE_PATH_RESET,
-    MAX_RETRY_ATTEMPTS,
     MAX_RANDOM_DELAY,
     CONF_CONTACT_REFRESH_INTERVAL,
     DEFAULT_CONTACT_REFRESH_INTERVAL,
@@ -127,7 +124,6 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self._telemetry_consecutive_failures = {}  # Track consecutive failed telemetry updates by pubkey_prefix
         
         # Initialization tracking flags
-        self._appstart_initialized = False
         self._device_info_initialized = False
         
         # Telemetry sensor manager - will be initialized when sensors are set up
@@ -526,18 +522,11 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             self.logger.info("Connecting to device... (init)")
             await self.api.disconnect()
             # Reset initialization flags
-            self._appstart_initialized = False
             self._device_info_initialized = False
             connection_success = await self.api.connect()
             if not connection_success:
                 self.logger.error("Failed to connect to MeshCore device")
                 raise UpdateFailed("Failed to connect to MeshCore device")
-
-        # Only send appstart if not initialized or after reconnection
-        if not self._appstart_initialized:
-            self.logger.info("Initializing app start...")
-            await self.api.mesh_core.commands.send_appstart()
-            self._appstart_initialized = True
         
         # Always get battery status
         await self.api.mesh_core.commands.get_bat()

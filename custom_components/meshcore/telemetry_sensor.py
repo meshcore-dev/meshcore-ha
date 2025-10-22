@@ -600,25 +600,19 @@ class MeshCoreBatteryPercentageSensor(MeshCoreTelemetrySensor):
                     self._last_updated = time.time()
 
                     # Convert voltage to battery percentage
-                    self._native_value = self._voltage_to_percentage(voltage)
+                    voltage_mv = int(voltage * 1000)
+                    self._native_value = calculate_battery_percentage(voltage_mv)
 
                     # Update Home Assistant state only if requested
                     if update_state:
                         self.async_write_ha_state()
                 break
 
-    def _voltage_to_percentage(self, voltage: float) -> int:
-        """Convert battery voltage to percentage using the battery curve."""
-        if voltage is None:
-            return None
-        voltage_mv = int(voltage * 1000)
-        return calculate_battery_percentage(voltage_mv)
-
     @property
     def extra_state_attributes(self) -> Dict[str, Any]:
         """Return additional state attributes including the raw voltage."""
         attributes = super().extra_state_attributes
         if self._raw_value is not None:
-            attributes["voltage"] = round(self._raw_value, 2)
+            attributes["voltage"] = round(self._raw_value, 3)
         return attributes
 
