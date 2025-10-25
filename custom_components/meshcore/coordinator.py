@@ -291,17 +291,15 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 
             # Get the current failure count
             failure_count = self._repeater_consecutive_failures.get(pubkey_prefix, 0)
-            
-            # Check if we need to login (initial login or after failures)
-            last_login_time = self._repeater_login_times.get(pubkey_prefix)
-            needs_initial_login = last_login_time is None
+
+            # Check if we need to login (only after failures and not too recently)
             needs_failure_recovery = failure_count >= MAX_REPEATER_FAILURES_BEFORE_LOGIN
-            
-            if needs_initial_login or needs_failure_recovery:
-                if needs_initial_login:
-                    self.logger.info(f"Attempting initial login to repeater {repeater_name}")
-                else:
-                    self.logger.info(f"Attempting login to repeater {repeater_name} after {failure_count} failures")
+            last_login_time = self._repeater_login_times.get(pubkey_prefix, 0)
+            time_since_login = self._current_time() - last_login_time
+            login_cooldown = 3600  # 1 hour in seconds
+
+            if needs_failure_recovery and time_since_login >= login_cooldown:
+                self.logger.info(f"Attempting login to repeater {repeater_name} after {failure_count} failures")
 
                 # Check rate limiter before making mesh request
                 if not self._rate_limiter.try_consume(1):
@@ -320,21 +318,22 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     if login_result and login_result.type == EventType.LOGIN_SUCCESS:
                         self.logger.info(f"Successfully logged in to repeater {repeater_name}")
                         self._increment_success(pubkey_prefix)
-                        # Track login time for telemetry refresh
+                        # Track login time and reset failure count on success
                         self._repeater_login_times[pubkey_prefix] = self._current_time()
+                        self._repeater_consecutive_failures[pubkey_prefix] = 0
                     else:
                         error_msg = login_result.payload if login_result and login_result.type == EventType.ERROR else "timeout or no response"
                         self.logger.error(f"Login to repeater {repeater_name} failed: {error_msg}")
                         self._increment_failure(pubkey_prefix)
-                
+                        # Update login time to enforce cooldown even on failure
+                        self._repeater_login_times[pubkey_prefix] = self._current_time()
+
                 except Exception as ex:
                     self.logger.error(f"Exception during login to repeater {repeater_name}: {ex}")
                     self._increment_failure(pubkey_prefix)
-                await asyncio.sleep(1)  # Small delay to avoid tight loops
-                
-                # Reset failures after login attempt regardless of outcome
-                # This prevents repeated login attempts if they keep failing
-                self._repeater_consecutive_failures[pubkey_prefix] = 0
+                    # Update login time to enforce cooldown even on exception
+                    self._repeater_login_times[pubkey_prefix] = self._current_time()
+                await asyncio.sleep(1)
             
             # Request status from the repeater
             self.logger.debug(f"Sending status request to repeater: {repeater_name} ({pubkey_prefix})")
