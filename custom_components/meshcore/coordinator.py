@@ -305,7 +305,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                         repeater_config.get(CONF_REPEATER_PASSWORD, "")
                     )
                     
-                    if login_result and login_result.type != None and login_result.type != EventType.ERROR:
+                    if login_result and login_result.type == EventType.LOGIN_SUCCESS:
                         self.logger.info(f"Successfully logged in to repeater {repeater_name}")
                         self._increment_success(pubkey_prefix)
                         # Track login time for telemetry refresh
@@ -334,17 +334,17 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             _LOGGER.debug(f"Status response received: {result}")
                 
             # Handle response
-            if not result:
+            if not result or result.type == EventType.ERROR:
                 self.logger.warn(f"Error requesting status from repeater {repeater_name}: {result}")
                 # Increment failure count and apply backoff
                 new_failure_count = failure_count + 1
                 self._repeater_consecutive_failures[pubkey_prefix] = new_failure_count
                 self._increment_failure(pubkey_prefix)
-                
+
                 # Reset path after configured failures if there's an established path
                 if new_failure_count >= MAX_FAILURES_BEFORE_PATH_RESET and contact and contact.get("out_path_len", -1) > -1:
                     await self._reset_node_path(contact, repeater_config)
-                
+
                 update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
                 self._apply_repeater_backoff(pubkey_prefix, new_failure_count, update_interval)
             elif result.payload.get('uptime', 0) == 0:
@@ -452,7 +452,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 attribute_filters={"pubkey_prefix": pubkey_prefix},
             )
             
-            if telemetry_result:
+            if telemetry_result and telemetry_result.type != EventType.ERROR:
                 self.logger.debug(f"Telemetry response received from {node_name}: {telemetry_result}")
                 # Reset failure count on success
                 self._telemetry_consecutive_failures[pubkey_prefix] = 0
