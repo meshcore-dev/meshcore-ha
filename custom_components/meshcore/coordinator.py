@@ -15,6 +15,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from meshcore.events import Event, EventType
 from meshcore.packets import BinaryReqType
 
+from .rate_limiter import TokenBucket
 from .const import (
     CONF_NAME,
     CONF_PUBKEY,
@@ -90,7 +91,10 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         # Single map to track all message timestamps (key -> timestamp)
         # Keys can be channel indices (int) or public key prefixes (str)
         self.message_timestamps = {}
-        
+
+        # Rate limiter for mesh requests (20 burst capacity, 1 req per 5 minutes average)
+        self._rate_limiter = TokenBucket(capacity=20, refill_rate_seconds=180)
+
         # Repeater subscription tracking
         self._tracked_repeaters = self.config_entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, [])
         self._repeater_stats = {}
@@ -298,10 +302,18 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     self.logger.info(f"Attempting initial login to repeater {repeater_name}")
                 else:
                     self.logger.info(f"Attempting login to repeater {repeater_name} after {failure_count} failures")
-                
+
+                # Check rate limiter before making mesh request
+                if not self._rate_limiter.try_consume(1):
+                    self.logger.debug(f"Rate limited: skipping login to {repeater_name}")
+                    self._increment_failure(pubkey_prefix)
+                    update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
+                    self._apply_repeater_backoff(pubkey_prefix, failure_count + 1, update_interval)
+                    return
+
                 try:
                     login_result = await self.api.mesh_core.commands.send_login(
-                        contact, 
+                        contact,
                         repeater_config.get(CONF_REPEATER_PASSWORD, "")
                     )
                     
@@ -326,6 +338,17 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             
             # Request status from the repeater
             self.logger.debug(f"Sending status request to repeater: {repeater_name} ({pubkey_prefix})")
+
+            # Check rate limiter before making mesh request
+            if not self._rate_limiter.try_consume(1):
+                self.logger.debug(f"Rate limited: skipping status request to {repeater_name}")
+                new_failure_count = failure_count + 1
+                self._repeater_consecutive_failures[pubkey_prefix] = new_failure_count
+                self._increment_failure(pubkey_prefix)
+                update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
+                self._apply_repeater_backoff(pubkey_prefix, new_failure_count, update_interval)
+                return
+
             await self.api.mesh_core.commands.send_binary_req(contact, BinaryReqType.STATUS)
             result = await self.api.mesh_core.wait_for_event(
                 EventType.STATUS_RESPONSE,
@@ -446,6 +469,16 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         
         try:
             self.logger.debug(f"Sending telemetry request to node: {node_name} ({pubkey_prefix})")
+
+            # Check rate limiter before making mesh request
+            if not self._rate_limiter.try_consume(1):
+                self.logger.debug(f"Rate limited: skipping telemetry request to {node_name}")
+                new_failure_count = failure_count + 1
+                self._telemetry_consecutive_failures[pubkey_prefix] = new_failure_count
+                self._increment_failure(pubkey_prefix)
+                self._apply_backoff(pubkey_prefix, new_failure_count, update_interval, "telemetry")
+                return
+
             await self.api.mesh_core.commands.send_binary_req(contact, BinaryReqType.TELEMETRY)
             telemetry_result = await self.api.mesh_core.wait_for_event(
                 EventType.TELEMETRY_RESPONSE,

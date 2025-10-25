@@ -370,10 +370,13 @@ async def async_setup_entry(
     _LOGGER.debug("Setting up MeshCore sensors")
     
     entities = []
-    
+
     # Create sensors for the main device
     for description in SENSORS:
         entities.append(MeshCoreSensor(coordinator, description))
+
+    # Add rate limiter monitoring sensor
+    entities.append(RateLimiterSensor(coordinator))
     
     # Store the async_add_entities function for later use
     coordinator.sensor_add_entities = async_add_entities
@@ -485,6 +488,65 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
+class RateLimiterSensor(CoordinatorEntity, SensorEntity):
+    """Sensor for monitoring rate limiter token bucket."""
+
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator: MeshCoreDataUpdateCoordinator) -> None:
+        """Initialize the rate limiter sensor."""
+        super().__init__(coordinator)
+        self.coordinator = coordinator
+
+        raw_device_name = coordinator.name or "Unknown"
+        public_key_short = coordinator.pubkey[:6] if coordinator.pubkey else ""
+
+        self._attr_unique_id = "_".join([
+            coordinator.config_entry.entry_id,
+            "rate_limiter_tokens",
+            public_key_short,
+            raw_device_name
+        ])
+
+        self.entity_id = format_entity_id(
+            ENTITY_DOMAIN_SENSOR,
+            public_key_short,
+            "rate_limiter_tokens",
+            raw_device_name
+        )
+
+        self._attr_native_unit_of_measurement = "tokens"
+        self._attr_suggested_display_precision = 1
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_icon = "mdi:bucket-outline"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device info."""
+        return self.coordinator.device_info
+
+    @property
+    def translation_key(self) -> str:
+        """Return the translation key."""
+        return "rate_limiter_tokens"
+
+    @property
+    def native_value(self) -> int:
+        """Return current token count."""
+        tokens = self.coordinator._rate_limiter.get_tokens()
+        _LOGGER.debug(f"Rate limiter tokens: {tokens}")
+        return tokens
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return True
+
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+
 class MeshCoreSensor(CoordinatorEntity, SensorEntity):
     """Representation of a MeshCore sensor."""
     
@@ -518,11 +580,16 @@ class MeshCoreSensor(CoordinatorEntity, SensorEntity):
 
         # Store cached values
         self._native_value = None
-    
+
     @property
     def translation_key(self) -> str:
         """Return the translation key."""
         return self.entity_description.key
+
+    @property
+    def native_value(self) -> Any:
+        """Return the native value of the sensor."""
+        return self._native_value
         
     async def async_added_to_hass(self):
         """Register event handlers when entity is added to hass."""
