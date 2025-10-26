@@ -56,8 +56,10 @@ End devices that primarily send telemetry data.
 6. Configure:
    - **Password**: Required if the repeater has authentication
    - **Enable Telemetry**: Collect sensor data from the repeater
-   - **Update Interval**: minimum 300 seconds (default: 900)
+   - **Update Interval**: Minimum 300 seconds (default: 7200 seconds / 2 hours)
 7. Click **Submit**
+
+**Note**: Advanced options like "Disable Path Reset" and "Disabled" can be configured after adding the repeater by editing it in **Manage Monitored Devices**.
 
 The integration will:
 - Attempt to log into the repeater
@@ -73,8 +75,10 @@ The integration will:
 4. Select **Add Tracked Client**
 5. Choose the client from your contacts list
 6. Configure:
-   - **Update Interval**: minimum 300 seconds (default: 1800)
+   - **Update Interval**: Minimum 300 seconds (default: 7200 seconds / 2 hours)
 7. Click **Submit**
+
+**Note**: Advanced options like "Disable Path Reset" and "Disabled" can be configured after adding the client by editing it in **Manage Monitored Devices**.
 
 The integration will:
 - Send telemetry requests at the configured interval
@@ -189,10 +193,26 @@ These sensors help monitor network health and identify problematic nodes or rout
 2. Select the node to edit
 3. Choose **Edit**
 4. Modify settings:
-   - Update interval
-   - Password (repeaters)
-   - Telemetry collection (repeaters)
+   - **Update Interval**: How often to poll the device
+   - **Password**: Authentication password (repeaters only)
+   - **Telemetry Collection**: Enable/disable telemetry requests (repeaters only)
+   - **Disable Path Reset**: Prevent automatic path resets on failures
+   - **Disabled**: Temporarily stop all updates to this device
 5. Click **Submit**
+
+#### Device Options Explained
+
+**Disable Path Reset:**
+By default, after 3 consecutive failures, the integration automatically resets the routing path to the node. Enable this option to prevent path resets if you have a stable, manually-configured path using the `update_contact` command.
+
+**Disabled:**
+Temporarily stop all status, telemetry, and login requests to this device without removing it from your configuration. Useful when:
+- A node is temporarily offline for maintenance
+- You want to reduce network traffic temporarily
+- Testing network performance without a specific node
+- A device is causing excessive failures
+
+When disabled, the device and its sensors remain in Home Assistant but no updates are requested.
 
 ### Remove Tracked Node
 
@@ -210,6 +230,46 @@ Each update cycle generates:
 - **Repeater Telemetry**: 1 additional request + response
 - **Client Telemetry**: 1 request + possible response
 
+### Rate Limiting
+
+The integration implements a **token bucket rate limiter** to prevent overwhelming the mesh network with requests:
+
+**Configuration:**
+- **Burst Capacity**: 20 tokens (allows up to 20 rapid requests)
+- **Refill Rate**: 1 token per 3 minutes (180 seconds)
+- **Average Rate**: ~0.33 requests per minute (20 requests per hour)
+
+**How It Works:**
+
+1. Each mesh request (login, status, telemetry) consumes 1 token
+2. The bucket starts full with 20 tokens, allowing immediate bursts
+3. Tokens refill gradually at 1 per 3 minutes
+4. If no tokens are available, the request is skipped (not queued)
+5. Skipped requests count as failures and trigger exponential backoff
+
+**Practical Impact:**
+
+- Initial startup can process 20 requests rapidly
+- Sustained operation limited to ~20 requests/hour across all tracked devices
+- With default 2-hour update intervals:
+  - 10 repeaters = 5 requests/hour (well within limit)
+  - 20 devices = 10 requests/hour (manageable)
+  - 30+ devices may experience rate limiting
+
+**When Rate Limited:**
+- Requests are skipped and logged as debug messages
+- The update is counted as a failure
+- Exponential backoff increases retry delay
+- Network traffic is protected from excessive load
+
+**Adjusting for Large Networks:**
+
+If you're monitoring many devices and experiencing rate limiting:
+1. Increase update intervals (3-4 hours instead of 2)
+2. Disable telemetry on less-critical repeaters
+3. Use the "Disabled" option for devices that don't need constant monitoring
+4. Stagger device addition to avoid burst consumption
+
 ### Best Practices
 
 Make the update interval as high as you can to support your needs to avoid excess mesh traffic.
@@ -219,11 +279,14 @@ Make the update interval as high as you can to support your needs to avoid exces
 If nodes frequently fail to update:
 1. Check radio signal strength (RSSI/SNR)
 2. Verify node is powered and online
-3. Increase update interval
-4. Check for network congestion
-5. Review repeater passwords
-6. Verify client ACL permissions
-7. Set a direct path to the remote node via the `update_contact` command if you have a stable path
+3. Check for rate limiting (review debug logs)
+4. Increase update interval
+5. Check for network congestion
+6. Review repeater passwords
+7. Verify client ACL permissions
+8. Set a direct path to the remote node via the `update_contact` command if you have a stable path
+9. Enable "Disable Path Reset" if you have a manually-configured stable path
+10. Temporarily disable problematic nodes to isolate network issues
 
 ## Entity Organization
 
@@ -306,6 +369,15 @@ action:
 - Consider increasing base update interval
 - Review network congestion
 - Check for repeater firmware issues
+
+### Rate Limiting Issues
+If you see debug messages about rate limiting:
+- Calculate your total requests per hour (devices × updates/hour)
+- Ensure you're under 20 requests/hour sustained
+- Increase update intervals on less critical devices
+- Disable telemetry collection where not needed
+- Consider temporarily disabling some devices
+- Review logs: rate limiting shows as "Rate limited: skipping [operation]"
 
 ### Missing Sensors
 - Sensors are created on first data reception
