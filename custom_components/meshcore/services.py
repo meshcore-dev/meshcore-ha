@@ -478,7 +478,11 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     # Execute the command with the converted arguments
                     _LOGGER.debug(f"Executing {command_name} with prepared arguments: {prepared_args}")
                     result = await command_method(*prepared_args)
-                    
+
+                    # Mark contacts as dirty after add_contact or remove_contact so next ensure_contacts() will sync
+                    if command_name in ["add_contact", "remove_contact"]:
+                        api.mesh_core._contacts_dirty = True
+
                     # Convert any binary data to hex strings for logging and events
                     if hasattr(result, 'payload') and isinstance(result.payload, dict):
                         # Create a JSON-serializable version of the payload

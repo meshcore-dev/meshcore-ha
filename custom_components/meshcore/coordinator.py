@@ -155,7 +155,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
 
         # Build set of public keys that are in added contacts
         added_pubkeys = set(c.get("public_key") for c in self._contacts if c.get("public_key"))
-        _LOGGER.debug(f"discovered contacts: {self._discovered_contacts}")
+
         # Process all contacts (discovered + added)
         all_contacts = list(self._discovered_contacts.values()) + self._contacts
 
@@ -654,7 +654,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         
         # Sync contacts if dirty (uses SDK's internal dirty flag)
         try:
-            contacts_changed = await self.api.mesh_core.ensure_contacts()
+            contacts_changed = await self.api.mesh_core.ensure_contacts(follow=True)
             if contacts_changed:
                 self.logger.info("Contacts synced from node")
             # Always read from meshcore's in-memory list

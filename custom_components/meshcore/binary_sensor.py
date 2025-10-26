@@ -89,7 +89,6 @@ def handle_contacts_update(event, coordinator, async_add_entities):
 
     # Add new entities
     if contact_entities:
-        _LOGGER.info(f"Adding {len(contact_entities)} diagnostic entities")
         async_add_entities(contact_entities)
 
 @callback
@@ -240,7 +239,6 @@ async def async_setup_entry(
                 _LOGGER.error(f"Error creating sensor for existing contact: {ex}")
 
         if contact_entities:
-            _LOGGER.info(f"Adding {len(contact_entities)} diagnostic entities for existing contacts")
             async_add_entities(contact_entities)
 
     # Subscribe to our internal message sent event for outgoing messages
