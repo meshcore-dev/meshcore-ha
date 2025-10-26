@@ -144,11 +144,6 @@ class MeshCoreAPI:
 
             # Set up disconnect event handler for backup reconnect
             self._setup_disconnect_handler()
-            
-            # Load contacts
-            _LOGGER.info("Loading contacts...")
-            await asyncio.sleep(1)  # Small delay to ensure connection stability
-            await self._mesh_core.ensure_contacts()
 
             # Sync time on connection
             try:

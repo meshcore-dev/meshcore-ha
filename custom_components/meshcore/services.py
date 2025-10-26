@@ -422,8 +422,17 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                                     if contact:
                                         prepared_args.append(contact)
                                     else:
-                                        _LOGGER.error(f"Contact not found with key or name: {arg}")
-                                        return
+                                        # For add_contact, also check discovered contacts
+                                        if command_name == "add_contact":
+                                            for discovered_contact in coordinator._discovered_contacts.values():
+                                                if discovered_contact.get("public_key", "").startswith(arg) or discovered_contact.get("adv_name") == arg:
+                                                    contact = discovered_contact
+                                                    prepared_args.append(contact)
+                                                    break
+
+                                        if not contact:
+                                            _LOGGER.error(f"Contact not found with key or name: {arg}")
+                                            return
                             else:
                                 _LOGGER.error(f"Invalid pubkey prefix length: {arg}")
                                 return

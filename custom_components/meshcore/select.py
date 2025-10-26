@@ -116,13 +116,13 @@ class MeshCoreContactSelect(CoordinatorEntity, SelectEntity):
         """Get the list of contact options directly from the API."""
         # Check if we have access to the API and mesh_core
         if not hasattr(self.coordinator, "api") or not self.coordinator.api or not self.coordinator.api.mesh_core:
-            return ["No contacts"]
+            return ["cts"]
             
         try:
             # Access contacts directly from the mesh_core API
             contacts = self.coordinator.api.mesh_core.contacts.values()
             if not contacts:
-                return ["No contacts"]
+                return ["cts"]
                 
             # Include only client type contacts, not repeaters
             contact_options = []

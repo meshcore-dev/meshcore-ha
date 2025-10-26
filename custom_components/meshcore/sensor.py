@@ -519,6 +519,7 @@ class RateLimiterSensor(CoordinatorEntity, SensorEntity):
         self._attr_suggested_display_precision = 1
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_icon = "mdi:bucket-outline"
+        self._attr_name = "Request Rate Limiter"
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -627,9 +628,15 @@ class MeshCoreSensor(CoordinatorEntity, SensorEntity):
             
         elif key == "node_count":
             def update_count(event: Event):
-                self._native_value = len(event.payload) + 1
+                # Count all added contacts + self
+                self._native_value = len([c for c in self.coordinator.get_all_contacts() if c.get("added_to_node", True)]) + 1
+                self.async_write_ha_state()
             meshcore.dispatcher.subscribe(
                 EventType.CONTACTS,
+                update_count,
+            )
+            meshcore.dispatcher.subscribe(
+                EventType.NEW_CONTACT,
                 update_count,
             )
             

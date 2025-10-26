@@ -11,6 +11,7 @@ from typing import Any, Dict
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.helpers.storage import Store
 
 from meshcore.events import Event, EventType
 from meshcore.packets import BinaryReqType
@@ -69,6 +70,11 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self.data: Dict[str, Any] = {}
         self._current_node_info = {}
         self._contacts = []
+        self._discovered_contacts = {}  # Dict keyed by public_key
+        self._manual_mode_initialized = False
+
+        # Storage for discovered contacts
+        self._store = Store[dict[str, dict]](hass, 1, f"meshcore.{config_entry.entry_id}.discovered_contacts")
         # Get name and pubkey from config_entry.data (not options)
         self.name = config_entry.data.get(CONF_NAME)
         self.pubkey = config_entry.data.get(CONF_PUBKEY)
@@ -138,7 +144,43 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             
         # Initialize reliability stats tracking
         self._reliability_stats = {}
-    
+
+    def get_all_contacts(self) -> list:
+        """Get deduplicated list of all contacts (added + discovered).
+
+        For each public_key, uses the contact with the latest lastmod.
+        Marks as added_to_node=True if contact exists in added list.
+        """
+        contacts_dict = {}
+
+        # Build set of public keys that are in added contacts
+        added_pubkeys = set(c.get("public_key") for c in self._contacts if c.get("public_key"))
+        _LOGGER.debug(f"discovered contacts: {self._discovered_contacts}")
+        # Process all contacts (discovered + added)
+        all_contacts = list(self._discovered_contacts.values()) + self._contacts
+
+        for contact in all_contacts:
+            public_key = contact.get("public_key")
+            if not public_key:
+                continue
+
+            contact_copy = dict(contact)
+            contact_copy["pubkey_prefix"] = public_key[:12]
+            contact_copy["added_to_node"] = public_key in added_pubkeys
+
+            # If we already have this contact, keep the one with latest lastmod
+            if public_key in contacts_dict:
+                existing = contacts_dict[public_key]
+                existing_lastmod = existing.get("lastmod", 0)
+                new_lastmod = contact_copy.get("lastmod", 0)
+
+                if new_lastmod > existing_lastmod:
+                    contacts_dict[public_key] = contact_copy
+            else:
+                contacts_dict[public_key] = contact_copy
+
+        return list(contacts_dict.values())
+
     def _increment_success(self, pubkey_prefix: str) -> None:
         """Increment success counter for a node."""
         stats_key = f"{pubkey_prefix}_request_successes"
@@ -563,6 +605,25 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         # Always get battery status
         await self.api.mesh_core.commands.get_bat()
         
+        # Initialize manual contact mode on first run
+        if not self._manual_mode_initialized:
+            try:
+                self.logger.info("Setting manual contact mode...")
+                result = await self.api.mesh_core.commands.set_manual_add_contacts(True)
+                if result and result.type != EventType.ERROR:
+                    self.logger.info("Manual contact mode enabled")
+                    self._manual_mode_initialized = True
+
+                    # Load discovered contacts from storage
+                    stored_contacts = await self._store.async_load()
+                    if stored_contacts:
+                        self._discovered_contacts = stored_contacts
+                        self.logger.info(f"Loaded {len(stored_contacts)} discovered contacts from storage")
+                else:
+                    self.logger.error(f"Failed to set manual contact mode: {result}")
+            except Exception as ex:
+                self.logger.error(f"Error setting manual contact mode: {ex}")
+
         # Fetch device info if we don't have it yet or don't have complete info
         if not self._device_info_initialized:
             try:
@@ -572,43 +633,37 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     self._firmware_version = device_query_result.payload.get("ver")
                     self._hardware_model = device_query_result.payload.get("model")
                     self._max_channels = device_query_result.payload.get("max_channels", 4)  # Default to 4 if not provided
-                    
+
                     if self._firmware_version:
                         self.device_info["sw_version"] = self._firmware_version
                     if self._hardware_model:
                         self.device_info["model"] = self._hardware_model
-                        
+
                     self.logger.info(f"Device info updated - Firmware: {self._firmware_version}, Model: {self._hardware_model}, Max Channels: {self._max_channels}")
                     self._device_info_initialized = True
-                    
+
                     # Set up CHANNEL_INFO event listener
                     self._setup_channel_info_listener()
-                    
+
                     # Fetch channel info for all channels
                     await self._fetch_all_channel_info()
-                    
+
                     self.async_update_listeners()
             except Exception as ex:
                 self.logger.error(f"Error fetching device info: {ex}")
         
-        # Get contacts based on refresh interval
-        contact_refresh_interval = self.config_entry.options.get(CONF_CONTACT_REFRESH_INTERVAL, DEFAULT_CONTACT_REFRESH_INTERVAL)
-        
-        if current_time - self._last_contact_refresh >= contact_refresh_interval:
-            self.logger.debug(f"Refreshing contacts (interval: {contact_refresh_interval}s)")
-            contacts_result = await self.api.mesh_core.commands.get_contacts()
-            
-            # Convert contacts to list and store
-            if contacts_result.type == EventType.CONTACTS:
-                self._contacts = list(contacts_result.payload.values())
-                self._last_contact_refresh = current_time
-            else:
-                self.logger.error(f"Failed to get contacts: {contacts_result.payload}")
-        else:
-            self.logger.debug(f"Skipping contact refresh (next in {contact_refresh_interval - (current_time - self._last_contact_refresh):.1f}s)")
-            
-        # Store contacts in result data
-        result_data["contacts"] = self._contacts
+        # Sync contacts if dirty (uses SDK's internal dirty flag)
+        try:
+            contacts_changed = await self.api.mesh_core.ensure_contacts()
+            if contacts_changed:
+                self.logger.info("Contacts synced from node")
+            # Always read from meshcore's in-memory list
+            self._contacts = list(self.api.mesh_core.contacts.values())
+        except Exception as ex:
+            self.logger.error(f"Error syncing contacts: {ex}")
+
+        # Store combined contacts (added + discovered) in result data
+        result_data["contacts"] = self.get_all_contacts()
 
         # Check for self telemetry updates if enabled
         if self._self_telemetry_enabled:
