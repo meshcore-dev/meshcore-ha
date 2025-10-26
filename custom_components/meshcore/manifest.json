@@ -1,7 +1,7 @@
 {
   "domain": "meshcore",
   "name": "MeshCore",
-  "documentation": "https://github.com/meshcore-dev/meshcore-ha",
+  "documentation": "https:/a/github.com/meshcore-dev/meshcore-ha",
   "dependencies": ["logbook"],
   "codeowners": ["@awolden"],
   "loggers": ["custom_components.meshcore"],

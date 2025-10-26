@@ -428,7 +428,15 @@ class MeshCoreContactDiagnosticBinarySensor(CoordinatorEntity, BinarySensorEntit
         contact_data = self._get_contact_data()
         if contact_data:
             self._update_from_contact_data(contact_data)
+        else:
+            # Contact no longer exists, clear data
+            self._contact_data = {}
         self.async_write_ha_state()
+
+    @property
+    def available(self) -> bool:
+        """Return True if contact data exists."""
+        return bool(self._contact_data)
 
     @property
     def device_info(self):

@@ -16,7 +16,11 @@ from homeassistant.helpers.update_coordinator import (
 from .const import (
     DOMAIN,
     NodeType,
+    SELECT_NO_CONTACTS,
+    SELECT_NO_DISCOVERED,
+    SELECT_NO_ADDED,
 )
+from .utils import extract_pubkey_from_selection
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -32,57 +36,83 @@ async def async_setup_entry(
     entities.extend([
         MeshCoreChannelSelect(coordinator),
         MeshCoreContactSelect(coordinator),
-        MeshCoreRecipientTypeSelect(coordinator)
+        MeshCoreRecipientTypeSelect(coordinator),
+        MeshCoreDiscoveredContactSelect(coordinator),
+        MeshCoreAddedContactSelect(coordinator)
     ])
-    
+
     # Add entities
     async_add_entities(entities)
 
 
 class MeshCoreChannelSelect(CoordinatorEntity, SelectEntity):
-    """Helper entity for selecting MeshCore channels."""
-    
+    """Helper entity for selecting MeshCore channels with actual channel names."""
+
     def __init__(self, coordinator: DataUpdateCoordinator) -> None:
         """Initialize the channel select entity."""
         super().__init__(coordinator)
-        
+
         # Set unique ID and name
         self._attr_unique_id = f"{coordinator.config_entry.entry_id}_channel_select"
         self._attr_name = "MeshCore Channel"
-        
-        # Available options - channels 0-3
-        self._attr_options = ["Channel 0", "Channel 1", "Channel 2", "Channel 3"]
-        self._attr_current_option = self._attr_options[0]
-        
-        # Don't associate with device to keep it off device page
-        # self._attr_device_info = DeviceInfo(
-        #     identifiers={(DOMAIN, coordinator.config_entry.entry_id)},
-        # )
-        
+
+        # Get initial channel options
+        self._attr_options = self._get_channel_options()
+        self._attr_current_option = self._attr_options[0] if self._attr_options else "No channels"
+
         # Set icon
         self._attr_icon = "mdi:tune-vertical"
-        
+
         # Hide from device page
         self._attr_entity_registry_visible_default = False
-    
+
+    def _get_channel_options(self) -> List[str]:
+        """Get list of channels with their names."""
+        options = []
+
+        # Get max channels from coordinator (default 4)
+        max_channels = getattr(self.coordinator, "_max_channels", 4)
+
+        for idx in range(max_channels):
+            # Get channel info from coordinator
+            channel_info = self.coordinator._channel_info.get(idx, {})
+            channel_name = channel_info.get("channel_name", "(unused)")
+
+            # Format as "Name (idx)"
+            option = f"{channel_name} ({idx})"
+            options.append(option)
+
+        return options if options else ["No channels"]
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        # Update channel options when coordinator data changes
+        self._attr_options = self._get_channel_options()
+
+        # If current option is not in the new options, reset to first option
+        if self._attr_current_option not in self._attr_options:
+            self._attr_current_option = self._attr_options[0]
+
+        self.async_write_ha_state()
+
     async def async_select_option(self, option: str) -> None:
         """Change the selected option."""
         self._attr_current_option = option
         self.async_write_ha_state()
-        
+
     @property
     def extra_state_attributes(self) -> Dict[str, Any]:
         """Return additional state attributes."""
         attributes = {}
-        
-        # Add the channel index as an integer attribute for easier use in automations
-        if self._attr_current_option.startswith("Channel "):
-            try:
-                channel_idx = int(self._attr_current_option.replace("Channel ", ""))
-                attributes["channel_idx"] = channel_idx
-            except (ValueError, TypeError):
-                pass
-            
+
+        # Extract channel_idx from format "Name (idx)"
+        if self._attr_current_option and self._attr_current_option != "No channels":
+            import re
+            match = re.search(r'\((\d+)\)$', self._attr_current_option)
+            if match:
+                attributes["channel_idx"] = int(match.group(1))
+
         return attributes
 
 
@@ -177,24 +207,20 @@ class MeshCoreContactSelect(CoordinatorEntity, SelectEntity):
     def extra_state_attributes(self) -> Dict[str, Any]:
         """Return additional state attributes."""
         attributes = {}
-        
+
         # Add the selected contact's public key as an attribute
         if self._attr_current_option and self._attr_current_option != "No contacts":
-            try:
-                # Extract the public key from the selection format "Name (pubkey12345)"
-                if "(" in self._attr_current_option and ")" in self._attr_current_option:
-                    pubkey_part = self._attr_current_option.split("(")[1].split(")")[0]
-                    attributes["public_key_prefix"] = pubkey_part
-                    
-                    # Find the full contact details from the API
-                    if hasattr(self.coordinator, "api") and self.coordinator.api and self.coordinator.api.mesh_core:
-                        contact = self.coordinator.api.mesh_core.get_contact_by_key_prefix(pubkey_part)
-                        if contact:
-                            attributes["public_key"] = contact.get("public_key")
-                            attributes["contact_name"] = contact.get("adv_name")
-            except (IndexError, AttributeError, Exception) as ex:
-                _LOGGER.error(f"Error retrieving contact details: {ex}")
-                
+            pubkey_part = extract_pubkey_from_selection(self._attr_current_option)
+            if pubkey_part:
+                attributes["public_key_prefix"] = pubkey_part
+
+                # Find the full contact details from the API
+                if hasattr(self.coordinator, "api") and self.coordinator.api and self.coordinator.api.mesh_core:
+                    contact = self.coordinator.api.mesh_core.get_contact_by_key_prefix(pubkey_part)
+                    if contact:
+                        attributes["public_key"] = contact.get("public_key")
+                        attributes["contact_name"] = contact.get("adv_name")
+
         return attributes
 
 
@@ -219,13 +245,150 @@ class MeshCoreRecipientTypeSelect(CoordinatorEntity, SelectEntity):
         # Available options
         self._attr_options = ["Channel", "Contact"]
         self._attr_current_option = "Channel"
-        
+
         # Don't associate with device to keep it off device page
         # self._attr_device_info = DeviceInfo(
         #     identifiers={(DOMAIN, coordinator.config_entry.entry_id)},
         # )
-    
+
     async def async_select_option(self, option: str) -> None:
         """Change the selected option."""
         self._attr_current_option = option
         self.async_write_ha_state()
+
+
+class MeshCoreDiscoveredContactSelect(CoordinatorEntity, SelectEntity):
+    """Select entity for discovered contacts not yet added to node."""
+
+    def __init__(self, coordinator: DataUpdateCoordinator) -> None:
+        """Initialize the discovered contact select entity."""
+        super().__init__(coordinator)
+
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_discovered_contact_select"
+        self._attr_name = "MeshCore Discovered Contact"
+        self._attr_icon = "mdi:account-question"
+        self._attr_entity_registry_visible_default = False
+
+        self._attr_options = self._get_discovered_contact_options()
+        self._attr_current_option = SELECT_NO_CONTACTS
+
+    def _get_discovered_contact_options(self) -> List[str]:
+        """Get list of discovered contacts not yet added."""
+        all_contacts = self.coordinator.get_all_contacts()
+
+        discovered_options = [SELECT_NO_CONTACTS]
+
+        for contact in all_contacts:
+            if not isinstance(contact, dict):
+                continue
+
+            if not contact.get("added_to_node", True):
+                name = contact.get("adv_name", "Unknown")
+                pubkey_prefix = contact.get("pubkey_prefix", "")
+                if pubkey_prefix:
+                    option = f"{name} ({pubkey_prefix})"
+                    discovered_options.append(option)
+
+        return discovered_options
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self._attr_options = self._get_discovered_contact_options()
+
+        if self._attr_current_option not in self._attr_options:
+            self._attr_current_option = self._attr_options[0]
+
+        self.async_write_ha_state()
+
+    async def async_select_option(self, option: str) -> None:
+        """Change the selected option."""
+        self._attr_current_option = option
+        self.async_write_ha_state()
+
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return additional state attributes."""
+        attributes = {}
+
+        if self._attr_current_option and self._attr_current_option not in [SELECT_NO_CONTACTS, SELECT_NO_DISCOVERED]:
+            pubkey_prefix = extract_pubkey_from_selection(self._attr_current_option)
+            if pubkey_prefix:
+                attributes["pubkey_prefix"] = pubkey_prefix
+
+                all_contacts = self.coordinator.get_all_contacts()
+                for contact in all_contacts:
+                    if contact.get("pubkey_prefix") == pubkey_prefix:
+                        attributes["public_key"] = contact.get("public_key")
+                        attributes["contact_name"] = contact.get("adv_name")
+                        break
+
+        return attributes
+
+
+class MeshCoreAddedContactSelect(CoordinatorEntity, SelectEntity):
+    """Select entity for contacts already added to node."""
+
+    def __init__(self, coordinator: DataUpdateCoordinator) -> None:
+        """Initialize the added contact select entity."""
+        super().__init__(coordinator)
+
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_added_contact_select"
+        self._attr_name = "MeshCore Added Contact"
+        self._attr_icon = "mdi:account-check"
+        self._attr_entity_registry_visible_default = False
+
+        self._attr_options = self._get_added_contact_options()
+        self._attr_current_option = SELECT_NO_CONTACTS
+
+    def _get_added_contact_options(self) -> List[str]:
+        """Get list of contacts already added to node."""
+        all_contacts = self.coordinator.get_all_contacts()
+
+        added_options = [SELECT_NO_CONTACTS]
+        for contact in all_contacts:
+            if not isinstance(contact, dict):
+                continue
+
+            if contact.get("added_to_node", False):
+                name = contact.get("adv_name", "Unknown")
+                pubkey_prefix = contact.get("pubkey_prefix", "")
+                if pubkey_prefix:
+                    option = f"{name} ({pubkey_prefix})"
+                    added_options.append(option)
+
+        return added_options
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self._attr_options = self._get_added_contact_options()
+
+        if self._attr_current_option not in self._attr_options:
+            self._attr_current_option = self._attr_options[0]
+
+        self.async_write_ha_state()
+
+    async def async_select_option(self, option: str) -> None:
+        """Change the selected option."""
+        self._attr_current_option = option
+        self.async_write_ha_state()
+
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return additional state attributes."""
+        attributes = {}
+
+        if self._attr_current_option and self._attr_current_option not in [SELECT_NO_CONTACTS, SELECT_NO_ADDED]:
+            pubkey_prefix = extract_pubkey_from_selection(self._attr_current_option)
+            if pubkey_prefix:
+                attributes["pubkey_prefix"] = pubkey_prefix
+
+                all_contacts = self.coordinator.get_all_contacts()
+                for contact in all_contacts:
+                    if contact.get("pubkey_prefix") == pubkey_prefix:
+                        attributes["public_key"] = contact.get("public_key")
+                        attributes["contact_name"] = contact.get("adv_name")
+                        break
+
+        return attributes
