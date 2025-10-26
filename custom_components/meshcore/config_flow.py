@@ -43,6 +43,7 @@ from .const import (
     CONF_CLIENT_DISABLE_PATH_RESET,
     DEFAULT_CLIENT_UPDATE_INTERVAL,
     CONF_CONTACT_REFRESH_INTERVAL,
+    CONF_DEVICE_DISABLED,
     DEFAULT_CONTACT_REFRESH_INTERVAL,
     CONF_SELF_TELEMETRY_ENABLED,
     CONF_SELF_TELEMETRY_INTERVAL,
@@ -817,6 +818,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             repeater[CONF_REPEATER_TELEMETRY_ENABLED] = user_input[CONF_REPEATER_TELEMETRY_ENABLED]
             repeater[CONF_REPEATER_UPDATE_INTERVAL] = user_input[CONF_REPEATER_UPDATE_INTERVAL]
             repeater[CONF_REPEATER_DISABLE_PATH_RESET] = user_input[CONF_REPEATER_DISABLE_PATH_RESET]
+            repeater[CONF_DEVICE_DISABLED] = user_input[CONF_DEVICE_DISABLED]
 
             # Update config entry - deep copy entire data to ensure HA detects changes
             new_data = copy.deepcopy(dict(self.config_entry.data))
@@ -825,7 +827,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
 
             return await self.async_step_init()
-        
+
         # Show current settings
         return self.async_show_form(
             step_id="edit_repeater",
@@ -837,6 +839,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_REPEATER_TELEMETRY_ENABLED, default=repeater.get(CONF_REPEATER_TELEMETRY_ENABLED, False)): bool,
                 vol.Optional(CONF_REPEATER_UPDATE_INTERVAL, default=repeater.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)): vol.All(cv.positive_int, vol.Range(min=MIN_UPDATE_INTERVAL)),
                 vol.Optional(CONF_REPEATER_DISABLE_PATH_RESET, default=repeater.get(CONF_REPEATER_DISABLE_PATH_RESET, False)): bool,
+                vol.Optional(CONF_DEVICE_DISABLED, default=repeater.get(CONF_DEVICE_DISABLED, False)): bool,
             }),
             description_placeholders={
                 "device_name": repeater.get("name", "Unknown")
@@ -861,6 +864,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             # Update client settings
             client[CONF_CLIENT_UPDATE_INTERVAL] = user_input[CONF_CLIENT_UPDATE_INTERVAL]
             client[CONF_CLIENT_DISABLE_PATH_RESET] = user_input[CONF_CLIENT_DISABLE_PATH_RESET]
+            client[CONF_DEVICE_DISABLED] = user_input[CONF_DEVICE_DISABLED]
 
             # Update config entry
             new_data = copy.deepcopy(dict(self.config_entry.data))
@@ -868,13 +872,14 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
 
             return await self.async_step_init()
-        
+
         # Show current settings
         return self.async_show_form(
             step_id="edit_client",
             data_schema=vol.Schema({
                 vol.Optional(CONF_CLIENT_UPDATE_INTERVAL, default=client.get(CONF_CLIENT_UPDATE_INTERVAL, DEFAULT_CLIENT_UPDATE_INTERVAL)): vol.All(cv.positive_int, vol.Range(min=MIN_UPDATE_INTERVAL)),
                 vol.Optional(CONF_CLIENT_DISABLE_PATH_RESET, default=client.get(CONF_CLIENT_DISABLE_PATH_RESET, False)): bool,
+                vol.Optional(CONF_DEVICE_DISABLED, default=client.get(CONF_DEVICE_DISABLED, False)): bool,
             }),
             description_placeholders={
                 "device_name": client.get("name", "Unknown")

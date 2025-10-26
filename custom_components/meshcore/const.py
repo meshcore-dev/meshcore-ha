@@ -75,6 +75,9 @@ CONF_CLIENT_UPDATE_INTERVAL: Final = "update_interval"
 CONF_CLIENT_DISABLE_PATH_RESET: Final = "disable_path_reset"
 DEFAULT_CLIENT_UPDATE_INTERVAL: Final = 7200  # 2 hours in seconds
 
+# Device monitoring
+CONF_DEVICE_DISABLED: Final = "disabled"
+
 # Contact refresh interval
 CONF_CONTACT_REFRESH_INTERVAL: Final = "contact_refresh_interval"
 DEFAULT_CONTACT_REFRESH_INTERVAL: Final = 60  # 1 minute in seconds
