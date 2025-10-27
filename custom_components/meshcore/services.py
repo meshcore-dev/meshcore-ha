@@ -483,6 +483,17 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     _LOGGER.debug(f"Executing {command_name} with prepared arguments: {prepared_args}")
                     result = await command_method(*prepared_args)
 
+                    # Update coordinator channel info after set_channel
+                    if command_name == "set_channel" and result.type != EventType.ERROR:
+                        channel_idx = prepared_args[0]
+                        # Fetch updated channel info
+                        channel_info_result = await api.mesh_core.commands.get_channel(channel_idx)
+                        if channel_info_result.type != EventType.ERROR:
+                            coordinator._channel_info[channel_idx] = channel_info_result.payload
+                            _LOGGER.info(f"Updated channel {channel_idx} info: {channel_info_result.payload}")
+                            # Trigger coordinator update to refresh select entities
+                            coordinator.async_set_updated_data(coordinator.data)
+
                     # Mark contacts as dirty after add_contact or remove_contact so next ensure_contacts() will sync
                     if command_name == "add_contact" and result.type != EventType.ERROR:
                         api.mesh_core._contacts_dirty = True

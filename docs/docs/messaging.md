@@ -111,6 +111,121 @@ Message activity creates binary sensor entities that track communication:
 - **State**: Always "Active" when messages exist
 - **Attributes**: Public key
 
+## Channel Configuration
+
+Meshcore devices support multiple channels with configurable names and hash-based encryption.
+
+### Hash-Based Channel Encryption
+
+Channels use hash-based encryption where the channel name is hashed to derive the encryption key. Only nodes with the exact channel name can decrypt messages on that channel.
+
+**How it works:**
+- Each channel has a name and a hash derived from that name
+- The hash is used as the encryption key for the channel
+- Only devices configured with the same name+hash combination can communicate
+- You can create private channels by using unique names and sharing them securely
+
+### Setting Channel Names
+
+Use the `set_channel` command to configure channel names:
+
+```yaml
+service: meshcore.execute_command
+data:
+  command: "set_channel 1 #pdx {{ '#pdx' | sha256 | truncate(32, true, '') }}"
+```
+
+**Important**: When using `#` in YAML, the entire command must be quoted (as shown above) since `#` starts a comment in YAML.
+
+#### Command Format
+
+```
+set_channel <channel_idx> <name> <hash>
+```
+
+- **channel_idx**: Channel number (e.g., 0, 1, 2, etc.)
+- **name**: Display name (e.g., `#pdx`, `private`, `work`, `my-secret-channel`)
+- **hash**: SHA256 hash of the channel name, truncated to 32 characters
+
+The template `{{ '#pdx' | sha256 | truncate(32, true, '') }}` automatically generates the correct hash from the name.
+
+**Note**: The `#` prefix is a convention for public/community channels but is not required. You can name channels anything you want.
+
+### Channel Management UI Card
+
+Create a dashboard card to manage your channels:
+
+```yaml
+type: vertical-stack
+cards:
+  - type: markdown
+    content: |
+      ## Channel Configuration
+      Configure channels with hash-based encryption.
+  - type: entities
+    entities:
+      - entity: input_text.meshcore_channel_name
+      - entity: input_number.meshcore_channel_index
+  - type: button
+    name: Set Channel
+    icon: mdi:pound
+    tap_action:
+      action: call-service
+      service: meshcore.execute_command
+      data:
+        command: >
+          set_channel {{ states('input_number.meshcore_channel_index') | int }}
+          {{ states('input_text.meshcore_channel_name') }}
+          {{ states('input_text.meshcore_channel_name') | sha256 | truncate(32, true, '') }}
+```
+
+**Required Helper Entities** (create in Settings → Devices & Services → Helpers):
+
+1. **Channel Index** (Number):
+   - Name: `Meshcore Channel Index`
+   - Entity ID: `input_number.meshcore_channel_index`
+   - Min: 0, Max: 99, Step: 1
+   - Icon: `mdi:numeric`
+
+2. **Channel Name** (Text):
+   - Name: `Meshcore Channel Name`
+   - Entity ID: `input_text.meshcore_channel_name`
+   - Max length: 32
+   - Icon: `mdi:pound`
+
+### Example Channel Configurations
+
+#### Public Channel (Convention: # prefix)
+```yaml
+service: meshcore.execute_command
+data:
+  command: "set_channel 0 #public {{ '#public' | sha256 | truncate(32, true, '') }}"
+```
+
+#### Regional Channel
+```yaml
+service: meshcore.execute_command
+data:
+  command: "set_channel 1 #pdx {{ '#pdx' | sha256 | truncate(32, true, '') }}"
+```
+
+#### Private Channel (Any name)
+```yaml
+service: meshcore.execute_command
+data:
+  command: "set_channel 2 my-secret-channel {{ 'my-secret-channel' | sha256 | truncate(32, true, '') }}"
+```
+
+### Viewing Configured Channels
+
+To see your currently configured channels, use the **MeshCore Channel** select entity:
+- Entity ID: `select.meshcore_channel`
+- Shows all configured channels with their names
+- Displays as "Name (idx)" format (e.g., "#pdx (1)", "work (2)")
+- Updates automatically when channels are configured
+
+Use this select entity in your messaging UI to choose which channel to send to.
+
 ## Message Services
 
 Send messages using these services:
