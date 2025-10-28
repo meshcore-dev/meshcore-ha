@@ -11,10 +11,12 @@ from typing import Any, Dict
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.helpers.storage import Store
 
 from meshcore.events import Event, EventType
 from meshcore.packets import BinaryReqType
 
+from .rate_limiter import TokenBucket
 from .const import (
     CONF_NAME,
     CONF_PUBKEY,
@@ -68,6 +70,11 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self.data: Dict[str, Any] = {}
         self._current_node_info = {}
         self._contacts = []
+        self._discovered_contacts = {}  # Dict keyed by public_key
+        self._manual_mode_initialized = False
+
+        # Storage for discovered contacts
+        self._store = Store[dict[str, dict]](hass, 1, f"meshcore.{config_entry.entry_id}.discovered_contacts")
         # Get name and pubkey from config_entry.data (not options)
         self.name = config_entry.data.get(CONF_NAME)
         self.pubkey = config_entry.data.get(CONF_PUBKEY)
@@ -90,7 +97,10 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         # Single map to track all message timestamps (key -> timestamp)
         # Keys can be channel indices (int) or public key prefixes (str)
         self.message_timestamps = {}
-        
+
+        # Rate limiter for mesh requests (20 burst capacity, 1 req per 5 minutes average)
+        self._rate_limiter = TokenBucket(capacity=20, refill_rate_seconds=180)
+
         # Repeater subscription tracking
         self._tracked_repeaters = self.config_entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, [])
         self._repeater_stats = {}
@@ -134,7 +144,43 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             
         # Initialize reliability stats tracking
         self._reliability_stats = {}
-    
+
+    def get_all_contacts(self) -> list:
+        """Get deduplicated list of all contacts (added + discovered).
+
+        For each public_key, uses the contact with the latest lastmod.
+        Marks as added_to_node=True if contact exists in added list.
+        """
+        contacts_dict = {}
+
+        # Build set of public keys that are in added contacts
+        added_pubkeys = set(c.get("public_key") for c in self._contacts if c.get("public_key"))
+
+        # Process all contacts (discovered + added)
+        all_contacts = list(self._discovered_contacts.values()) + self._contacts
+
+        for contact in all_contacts:
+            public_key = contact.get("public_key")
+            if not public_key:
+                continue
+
+            contact_copy = dict(contact)
+            contact_copy["pubkey_prefix"] = public_key[:12]
+            contact_copy["added_to_node"] = public_key in added_pubkeys
+
+            # If we already have this contact, keep the one with latest lastmod
+            if public_key in contacts_dict:
+                existing = contacts_dict[public_key]
+                existing_lastmod = existing.get("lastmod", 0)
+                new_lastmod = contact_copy.get("lastmod", 0)
+
+                if new_lastmod > existing_lastmod:
+                    contacts_dict[public_key] = contact_copy
+            else:
+                contacts_dict[public_key] = contact_copy
+
+        return list(contacts_dict.values())
+
     def _increment_success(self, pubkey_prefix: str) -> None:
         """Increment success counter for a node."""
         stats_key = f"{pubkey_prefix}_request_successes"
@@ -287,45 +333,63 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 
             # Get the current failure count
             failure_count = self._repeater_consecutive_failures.get(pubkey_prefix, 0)
-            
-            # Check if we need to login (initial login or after failures)
-            last_login_time = self._repeater_login_times.get(pubkey_prefix)
-            needs_initial_login = last_login_time is None
+
+            # Check if we need to login (only after failures and not too recently)
             needs_failure_recovery = failure_count >= MAX_REPEATER_FAILURES_BEFORE_LOGIN
-            
-            if needs_initial_login or needs_failure_recovery:
-                if needs_initial_login:
-                    self.logger.info(f"Attempting initial login to repeater {repeater_name}")
-                else:
-                    self.logger.info(f"Attempting login to repeater {repeater_name} after {failure_count} failures")
-                
+            last_login_time = self._repeater_login_times.get(pubkey_prefix, 0)
+            time_since_login = self._current_time() - last_login_time
+            login_cooldown = 3600  # 1 hour in seconds
+
+            if needs_failure_recovery and time_since_login >= login_cooldown:
+                self.logger.info(f"Attempting login to repeater {repeater_name} after {failure_count} failures")
+
+                # Check rate limiter before making mesh request
+                if not self._rate_limiter.try_consume(1):
+                    self.logger.debug(f"Rate limited: skipping login to {repeater_name}")
+                    self._increment_failure(pubkey_prefix)
+                    update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
+                    self._apply_repeater_backoff(pubkey_prefix, failure_count + 1, update_interval)
+                    return
+
                 try:
                     login_result = await self.api.mesh_core.commands.send_login(
-                        contact, 
+                        contact,
                         repeater_config.get(CONF_REPEATER_PASSWORD, "")
                     )
                     
-                    if login_result and login_result.type != None and login_result.type != EventType.ERROR:
+                    if login_result and login_result.type == EventType.LOGIN_SUCCESS:
                         self.logger.info(f"Successfully logged in to repeater {repeater_name}")
                         self._increment_success(pubkey_prefix)
-                        # Track login time for telemetry refresh
+                        # Track login time and reset failure count on success
                         self._repeater_login_times[pubkey_prefix] = self._current_time()
+                        self._repeater_consecutive_failures[pubkey_prefix] = 0
                     else:
                         error_msg = login_result.payload if login_result and login_result.type == EventType.ERROR else "timeout or no response"
                         self.logger.error(f"Login to repeater {repeater_name} failed: {error_msg}")
                         self._increment_failure(pubkey_prefix)
-                
+                        # Update login time to enforce cooldown even on failure
+                        self._repeater_login_times[pubkey_prefix] = self._current_time()
+
                 except Exception as ex:
                     self.logger.error(f"Exception during login to repeater {repeater_name}: {ex}")
                     self._increment_failure(pubkey_prefix)
-                await asyncio.sleep(1)  # Small delay to avoid tight loops
-                
-                # Reset failures after login attempt regardless of outcome
-                # This prevents repeated login attempts if they keep failing
-                self._repeater_consecutive_failures[pubkey_prefix] = 0
+                    # Update login time to enforce cooldown even on exception
+                    self._repeater_login_times[pubkey_prefix] = self._current_time()
+                await asyncio.sleep(1)
             
             # Request status from the repeater
             self.logger.debug(f"Sending status request to repeater: {repeater_name} ({pubkey_prefix})")
+
+            # Check rate limiter before making mesh request
+            if not self._rate_limiter.try_consume(1):
+                self.logger.debug(f"Rate limited: skipping status request to {repeater_name}")
+                new_failure_count = failure_count + 1
+                self._repeater_consecutive_failures[pubkey_prefix] = new_failure_count
+                self._increment_failure(pubkey_prefix)
+                update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
+                self._apply_repeater_backoff(pubkey_prefix, new_failure_count, update_interval)
+                return
+
             await self.api.mesh_core.commands.send_binary_req(contact, BinaryReqType.STATUS)
             result = await self.api.mesh_core.wait_for_event(
                 EventType.STATUS_RESPONSE,
@@ -334,17 +398,17 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             _LOGGER.debug(f"Status response received: {result}")
                 
             # Handle response
-            if not result:
+            if not result or result.type == EventType.ERROR:
                 self.logger.warn(f"Error requesting status from repeater {repeater_name}: {result}")
                 # Increment failure count and apply backoff
                 new_failure_count = failure_count + 1
                 self._repeater_consecutive_failures[pubkey_prefix] = new_failure_count
                 self._increment_failure(pubkey_prefix)
-                
+
                 # Reset path after configured failures if there's an established path
                 if new_failure_count >= MAX_FAILURES_BEFORE_PATH_RESET and contact and contact.get("out_path_len", -1) > -1:
                     await self._reset_node_path(contact, repeater_config)
-                
+
                 update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
                 self._apply_repeater_backoff(pubkey_prefix, new_failure_count, update_interval)
             elif result.payload.get('uptime', 0) == 0:
@@ -446,13 +510,23 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         
         try:
             self.logger.debug(f"Sending telemetry request to node: {node_name} ({pubkey_prefix})")
+
+            # Check rate limiter before making mesh request
+            if not self._rate_limiter.try_consume(1):
+                self.logger.debug(f"Rate limited: skipping telemetry request to {node_name}")
+                new_failure_count = failure_count + 1
+                self._telemetry_consecutive_failures[pubkey_prefix] = new_failure_count
+                self._increment_failure(pubkey_prefix)
+                self._apply_backoff(pubkey_prefix, new_failure_count, update_interval, "telemetry")
+                return
+
             await self.api.mesh_core.commands.send_binary_req(contact, BinaryReqType.TELEMETRY)
             telemetry_result = await self.api.mesh_core.wait_for_event(
                 EventType.TELEMETRY_RESPONSE,
                 attribute_filters={"pubkey_prefix": pubkey_prefix},
             )
             
-            if telemetry_result:
+            if telemetry_result and telemetry_result.type != EventType.ERROR:
                 self.logger.debug(f"Telemetry response received from {node_name}: {telemetry_result}")
                 # Reset failure count on success
                 self._telemetry_consecutive_failures[pubkey_prefix] = 0
@@ -531,6 +605,25 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         # Always get battery status
         await self.api.mesh_core.commands.get_bat()
         
+        # Initialize manual contact mode on first run
+        if not self._manual_mode_initialized:
+            try:
+                self.logger.info("Setting manual contact mode...")
+                result = await self.api.mesh_core.commands.set_manual_add_contacts(True)
+                if result and result.type != EventType.ERROR:
+                    self.logger.info("Manual contact mode enabled")
+                    self._manual_mode_initialized = True
+
+                    # Load discovered contacts from storage
+                    stored_contacts = await self._store.async_load()
+                    if stored_contacts:
+                        self._discovered_contacts = stored_contacts
+                        self.logger.info(f"Loaded {len(stored_contacts)} discovered contacts from storage")
+                else:
+                    self.logger.error(f"Failed to set manual contact mode: {result}")
+            except Exception as ex:
+                self.logger.error(f"Error setting manual contact mode: {ex}")
+
         # Fetch device info if we don't have it yet or don't have complete info
         if not self._device_info_initialized:
             try:
@@ -540,43 +633,37 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     self._firmware_version = device_query_result.payload.get("ver")
                     self._hardware_model = device_query_result.payload.get("model")
                     self._max_channels = device_query_result.payload.get("max_channels", 4)  # Default to 4 if not provided
-                    
+
                     if self._firmware_version:
                         self.device_info["sw_version"] = self._firmware_version
                     if self._hardware_model:
                         self.device_info["model"] = self._hardware_model
-                        
+
                     self.logger.info(f"Device info updated - Firmware: {self._firmware_version}, Model: {self._hardware_model}, Max Channels: {self._max_channels}")
                     self._device_info_initialized = True
-                    
+
                     # Set up CHANNEL_INFO event listener
                     self._setup_channel_info_listener()
-                    
+
                     # Fetch channel info for all channels
                     await self._fetch_all_channel_info()
-                    
+
                     self.async_update_listeners()
             except Exception as ex:
                 self.logger.error(f"Error fetching device info: {ex}")
         
-        # Get contacts based on refresh interval
-        contact_refresh_interval = self.config_entry.options.get(CONF_CONTACT_REFRESH_INTERVAL, DEFAULT_CONTACT_REFRESH_INTERVAL)
-        
-        if current_time - self._last_contact_refresh >= contact_refresh_interval:
-            self.logger.debug(f"Refreshing contacts (interval: {contact_refresh_interval}s)")
-            contacts_result = await self.api.mesh_core.commands.get_contacts()
-            
-            # Convert contacts to list and store
-            if contacts_result.type == EventType.CONTACTS:
-                self._contacts = list(contacts_result.payload.values())
-                self._last_contact_refresh = current_time
-            else:
-                self.logger.error(f"Failed to get contacts: {contacts_result.payload}")
-        else:
-            self.logger.debug(f"Skipping contact refresh (next in {contact_refresh_interval - (current_time - self._last_contact_refresh):.1f}s)")
-            
-        # Store contacts in result data
-        result_data["contacts"] = self._contacts
+        # Sync contacts if dirty (uses SDK's internal dirty flag)
+        try:
+            contacts_changed = await self.api.mesh_core.ensure_contacts(follow=True)
+            if contacts_changed:
+                self.logger.info("Contacts synced from node")
+            # Always read from meshcore's in-memory list
+            self._contacts = list(self.api.mesh_core.contacts.values())
+        except Exception as ex:
+            self.logger.error(f"Error syncing contacts: {ex}")
+
+        # Store combined contacts (added + discovered) in result data
+        result_data["contacts"] = self.get_all_contacts()
 
         # Check for self telemetry updates if enabled
         if self._self_telemetry_enabled:

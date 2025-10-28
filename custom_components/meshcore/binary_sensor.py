@@ -38,44 +38,57 @@ from .logbook import (
 
 _LOGGER = logging.getLogger(__name__)
 
+def create_contact_sensor(coordinator, contact: dict):
+    """Create a contact diagnostic sensor if not already tracked."""
+    if not isinstance(contact, dict):
+        return None
+
+    contact_name = contact.get("adv_name", "Unknown")
+    public_key = contact.get("public_key", "")
+
+    if public_key and public_key not in coordinator.tracked_diagnostic_binary_contacts:
+        coordinator.tracked_diagnostic_binary_contacts.add(public_key)
+        return MeshCoreContactDiagnosticBinarySensor(
+            coordinator,
+            contact_name,
+            public_key,
+            public_key[:12]
+        )
+    return None
+
 @callback
 def handle_contacts_update(event, coordinator, async_add_entities):
     """Process contacts update from mesh_core."""
     if not event or not hasattr(event, "payload") or not event.payload:
         return
-        
+
     # Initialize tracking sets if needed
     if not hasattr(coordinator, "tracked_contacts"):
         coordinator.tracked_contacts = set()
     if not hasattr(coordinator, "tracked_diagnostic_binary_contacts"):
         coordinator.tracked_diagnostic_binary_contacts = set()
-    
+
     contact_entities = []
-    
-    # Process each contact in the event payload
-    for key, contact in event.payload.items():
-        if not isinstance(contact, dict):
-            continue
-            
-        contact_name = contact.get("adv_name", "Unknown")
-        public_key = contact.get("public_key", "")
-        
-        # Create diagnostic binary sensor
-        if public_key and public_key not in coordinator.tracked_diagnostic_binary_contacts:
-            try:
-                coordinator.tracked_diagnostic_binary_contacts.add(public_key)
-                contact_entities.append(MeshCoreContactDiagnosticBinarySensor(
-                    coordinator, 
-                    contact_name,
-                    public_key,
-                    public_key[:12]
-                ))
-            except Exception as ex:
-                _LOGGER.error(f"Error setting up contact diagnostic binary sensor: {ex}")
-    
+
+    # Handle both CONTACTS (dict) and NEW_CONTACT (single contact) events
+    if event.type == EventType.NEW_CONTACT:
+        # NEW_CONTACT: payload is a single contact dict
+        contacts_to_process = [event.payload]
+    else:
+        # CONTACTS: payload is a dict of contacts
+        contacts_to_process = list(event.payload.values())
+
+    # Process each contact
+    for contact in contacts_to_process:
+        try:
+            sensor = create_contact_sensor(coordinator, contact)
+            if sensor:
+                contact_entities.append(sensor)
+        except Exception as ex:
+            _LOGGER.error(f"Error setting up contact diagnostic binary sensor: {ex}")
+
     # Add new entities
     if contact_entities:
-        _LOGGER.info(f"Adding {len(contact_entities)} diagnostic entities from CONTACTS event")
         async_add_entities(contact_entities)
 
 @callback
@@ -190,24 +203,44 @@ async def async_setup_entry(
     
     # Subscribe to events directly from mesh_core
     if coordinator.api.mesh_core:
-        # Contact discovery for diagnostic entities
+        # Contact discovery for diagnostic entities (both CONTACTS and NEW_CONTACT events)
         listeners.append(coordinator.api.mesh_core.subscribe(
             EventType.CONTACTS,
             contacts_event_handler
         ))
-        
+
+        listeners.append(coordinator.api.mesh_core.subscribe(
+            EventType.NEW_CONTACT,
+            contacts_event_handler
+        ))
+
         # Message events to create entities on first message
         listeners.append(coordinator.api.mesh_core.subscribe(
             EventType.CONTACT_MSG_RECV,
             contact_message_handler
         ))
-        
+
         # Channel message events
         listeners.append(coordinator.api.mesh_core.subscribe(
             EventType.CHANNEL_MSG_RECV,
             channel_message_handler
         ))
         
+    # Create sensors for any existing contacts (including discovered ones loaded from storage)
+    existing_contacts = coordinator.get_all_contacts()
+    if existing_contacts:
+        contact_entities = []
+        for contact in existing_contacts:
+            try:
+                sensor = create_contact_sensor(coordinator, contact)
+                if sensor:
+                    contact_entities.append(sensor)
+            except Exception as ex:
+                _LOGGER.error(f"Error creating sensor for existing contact: {ex}")
+
+        if contact_entities:
+            async_add_entities(contact_entities)
+
     # Subscribe to our internal message sent event for outgoing messages
     @callback
     async def message_sent_handler(event):
@@ -390,60 +423,20 @@ class MeshCoreContactDiagnosticBinarySensor(CoordinatorEntity, BinarySensorEntit
         if initial_data:
             self._update_from_contact_data(initial_data)
 
-    async def async_added_to_hass(self):
-        """Register contact events when added to hass."""
-        await super().async_added_to_hass()
-        
-        # Only set up listeners if a MeshCore instance is available
-        if not self.coordinator.api.mesh_core:
-            return
-        
-        # Import here to avoid import errors
-        import importlib
-        meshcore_events = importlib.import_module('meshcore.events')
-        EventType = meshcore_events.EventType
-        
-        try:
-            # Subscribe to contacts update events
-            self._remove_contacts_listener = self.coordinator.api.mesh_core.subscribe(
-                EventType.CONTACTS, 
-                self._handle_contacts_event
-            )
-        except Exception as ex:
-            _LOGGER.error(f"Error setting up contacts event subscription: {ex}")
-    
-    async def async_will_remove_from_hass(self):
-        """Clean up subscriptions when entity is removed."""           
-        if self._remove_contacts_listener:
-            try:
-                self._remove_contacts_listener.unsubscribe()
-                self._remove_contacts_listener = None
-            except Exception as ex:
-                _LOGGER.error(f"Error removing contacts listener: {ex}")
-        
-        await super().async_will_remove_from_hass()
-    
-    async def _handle_contacts_event(self, event):
-        """Handle contacts update events."""
-        if not event or not hasattr(event, "payload") or not event.payload:
-            return
-            
-        # Look for our contact in the contacts list
-        for contact in event.payload.values():
-            if not isinstance(contact, dict):
-                continue
-                
-            # Match by public key
-            if contact.get("public_key", "").startswith(self.public_key):
-                self._update_from_contact_data(contact)
-                self.async_write_ha_state()
-                break
-                
-            # Match by name (fallback)
-            if contact.get("adv_name") == self.contact_name:
-                self._update_from_contact_data(contact)
-                self.async_write_ha_state()
-                break
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        contact_data = self._get_contact_data()
+        if contact_data:
+            self._update_from_contact_data(contact_data)
+        else:
+            # Contact no longer exists, clear data
+            self._contact_data = {}
+        self.async_write_ha_state()
+
+    @property
+    def available(self) -> bool:
+        """Return True if contact data exists."""
+        return bool(self._contact_data)
 
     @property
     def device_info(self):
@@ -451,18 +444,15 @@ class MeshCoreContactDiagnosticBinarySensor(CoordinatorEntity, BinarySensorEntit
         
     def _get_contact_data(self) -> Dict[str, Any]:
         """Get the data for this contact from the coordinator."""
-        if not self.coordinator.data or not isinstance(self.coordinator.data, dict):
-            return {}
-            
-        contacts = self.coordinator.data.get("contacts", [])
+        contacts = self.coordinator.get_all_contacts()
         if not contacts:
             return {}
-            
+
         # Find this contact by name or by public key
         for contact in contacts:
             if not isinstance(contact, dict):
                 continue
-                
+
             # Match by public key prefix
             if contact.get("public_key", "").startswith(self.public_key):
                 return contact
@@ -470,7 +460,7 @@ class MeshCoreContactDiagnosticBinarySensor(CoordinatorEntity, BinarySensorEntit
             # Match by name
             if contact.get("adv_name") == self.contact_name:
                 return contact
-                
+
         return {}
     
     def _update_from_contact_data(self, contact: Dict[str, Any]):
@@ -519,7 +509,9 @@ class MeshCoreContactDiagnosticBinarySensor(CoordinatorEntity, BinarySensorEntit
         
     @property
     def state(self) -> str:
-        """Return the state of the binary sensor as "fresh" or "stale"."""
+        """Return the state of the binary sensor as "discovered", "fresh" or "stale"."""
+        if self._contact_data and not self._contact_data.get("added_to_node", True):
+            return "discovered"
         return "fresh" if self.is_on else "stale"
         
     @property

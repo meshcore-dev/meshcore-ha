@@ -3,11 +3,22 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from .const import BAT_VMAX, BAT_VMIN, CHANNEL_PREFIX, DOMAIN, MESSAGES_SUFFIX, NodeType
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def extract_pubkey_from_selection(selection: str) -> str | None:
+    """Extract pubkey from selection format 'Name (pubkey)'.
+
+    Handles names with parentheses by extracting only the last parentheses.
+    Example: 'Queen Anne (Soon) (abc123)' returns 'abc123'
+    """
+    match = re.search(r'\(([^)]+)\)$', selection)
+    return match.group(1) if match else None
 
 
 def get_node_type_str(node_type: str | None) -> str:

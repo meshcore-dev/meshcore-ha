@@ -12,18 +12,25 @@ from meshcore.events import EventType
 
 from .const import (
     ATTR_PUBKEY_PREFIX,
-    DOMAIN, 
+    DOMAIN,
     SERVICE_SEND_MESSAGE,
     SERVICE_SEND_CHANNEL_MESSAGE,
     SERVICE_EXECUTE_COMMAND,
     SERVICE_EXECUTE_COMMAND_UI,
     SERVICE_MESSAGE_SCRIPT,
+    SERVICE_ADD_SELECTED_CONTACT,
+    SERVICE_REMOVE_SELECTED_CONTACT,
+    SERVICE_CLEANUP_UNAVAILABLE_CONTACTS,
+    SELECT_NO_CONTACTS,
+    SELECT_NO_DISCOVERED,
+    SELECT_NO_ADDED,
     ATTR_NODE_ID,
     ATTR_CHANNEL_IDX,
     ATTR_MESSAGE,
     ATTR_COMMAND,
     ATTR_ENTRY_ID,
 )
+from .utils import extract_pubkey_from_selection
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -238,16 +245,13 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             if not channel_entity:
                 _LOGGER.error("Channel helper not found: select.meshcore_channel")
                 return
-                
-            channel_value = channel_entity.state
-            
-            # Parse channel number
-            try:
-                channel_idx = int(channel_value.replace("Channel ", ""))
-            except (ValueError, AttributeError):
-                _LOGGER.error(f"Invalid channel format: {channel_value}")
+
+            # Get the channel_idx from attributes
+            channel_idx = channel_entity.attributes.get("channel_idx")
+            if channel_idx is None:
+                _LOGGER.error("Channel index not found in channel attributes")
                 return
-                
+
             # Create channel message service call
             channel_call = create_service_call(
                 DOMAIN, 
@@ -422,8 +426,17 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                                     if contact:
                                         prepared_args.append(contact)
                                     else:
-                                        _LOGGER.error(f"Contact not found with key or name: {arg}")
-                                        return
+                                        # For add_contact, also check discovered contacts
+                                        if command_name == "add_contact":
+                                            for discovered_contact in coordinator._discovered_contacts.values():
+                                                if discovered_contact.get("public_key", "").startswith(arg) or discovered_contact.get("adv_name") == arg:
+                                                    contact = discovered_contact
+                                                    prepared_args.append(contact)
+                                                    break
+
+                                        if not contact:
+                                            _LOGGER.error(f"Contact not found with key or name: {arg}")
+                                            return
                             else:
                                 _LOGGER.error(f"Invalid pubkey prefix length: {arg}")
                                 return
@@ -469,7 +482,43 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     # Execute the command with the converted arguments
                     _LOGGER.debug(f"Executing {command_name} with prepared arguments: {prepared_args}")
                     result = await command_method(*prepared_args)
-                    
+
+                    # Mark contacts as dirty after add_contact or remove_contact so next ensure_contacts() will sync
+                    if command_name == "add_contact" and result.type != EventType.ERROR:
+                        api.mesh_core._contacts_dirty = True
+                        # Also add to coordinator and trigger immediate update
+                        contact_to_add = prepared_args[0]
+                        if contact_to_add and isinstance(contact_to_add, dict):
+                            pubkey = contact_to_add.get("public_key")
+                            if pubkey:
+                                # Mark as added to node
+                                contact_to_add["added_to_node"] = True
+
+                                # Add to coordinator if not already present
+                                if not any(c.get("public_key") == pubkey for c in coordinator._contacts):
+                                    coordinator._contacts.append(contact_to_add)
+
+                                # Trigger immediate update
+                                updated_data = dict(coordinator.data) if coordinator.data else {}
+                                updated_data["contacts"] = coordinator.get_all_contacts()
+                                coordinator.async_set_updated_data(updated_data)
+                    elif command_name == "remove_contact" and result.type != EventType.ERROR:
+                        api.mesh_core._contacts_dirty = True
+                        # Also remove from SDK's internal contacts dict and coordinator
+                        contact_to_remove = prepared_args[0]
+                        if contact_to_remove and isinstance(contact_to_remove, dict):
+                            pubkey = contact_to_remove.get("public_key")
+                            if pubkey:
+                                # Remove from SDK
+                                if pubkey in api.mesh_core._contacts:
+                                    del api.mesh_core._contacts[pubkey]
+
+                                # Remove from coordinator and trigger immediate update
+                                coordinator._contacts = [c for c in coordinator._contacts if c.get("public_key") != pubkey]
+                                updated_data = dict(coordinator.data) if coordinator.data else {}
+                                updated_data["contacts"] = coordinator.get_all_contacts()
+                                coordinator.async_set_updated_data(updated_data)
+
                     # Convert any binary data to hex strings for logging and events
                     if hasattr(result, 'payload') and isinstance(result.payload, dict):
                         # Create a JSON-serializable version of the payload
@@ -578,6 +627,148 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         async_message_script_service,
         schema=UI_MESSAGE_SCHEMA,
     )
+
+    async def async_add_selected_contact_service(call: ServiceCall) -> None:
+        """Add the contact selected in the discovered contact select entity."""
+        entry_id = call.data.get(ATTR_ENTRY_ID)
+
+        # Find the discovered contact select entity for this entry_id
+        # If entry_id not specified, look for first available
+        select_entity_id = None
+        if entry_id:
+            # Look for entity with matching unique_id
+            registry = hass.helpers.entity_registry.async_get()
+            for entity in registry.entities.values():
+                if entity.unique_id == f"{entry_id}_discovered_contact_select":
+                    select_entity_id = entity.entity_id
+                    break
+        else:
+            # Find first discovered contact select entity
+            for state in hass.states.async_all():
+                if state.entity_id.startswith("select.") and "discovered_contact" in state.entity_id:
+                    select_entity_id = state.entity_id
+                    break
+
+        if not select_entity_id:
+            _LOGGER.error("Discovered contact select entity not found")
+            return
+
+        select_entity = hass.states.get(select_entity_id)
+        if not select_entity:
+            _LOGGER.error(f"Could not get state for {select_entity_id}")
+            return
+
+        selected_option = select_entity.state
+        if not selected_option or selected_option in [SELECT_NO_CONTACTS, SELECT_NO_DISCOVERED]:
+            _LOGGER.error("No contact selected")
+            return
+
+        pubkey_prefix = extract_pubkey_from_selection(selected_option)
+        if not pubkey_prefix:
+            _LOGGER.error(f"Could not parse pubkey from selection: {selected_option}")
+            return
+
+        # Call execute_command with add_contact
+        command_call = create_service_call(
+            DOMAIN,
+            SERVICE_EXECUTE_COMMAND,
+            {"command": f"add_contact {pubkey_prefix}", "entry_id": entry_id},
+            hass
+        )
+        await async_execute_command_service(command_call)
+
+    async def async_remove_selected_contact_service(call: ServiceCall) -> None:
+        """Remove the contact selected in the added contact select entity."""
+        entry_id = call.data.get(ATTR_ENTRY_ID)
+
+        # Find the added contact select entity for this entry_id
+        # If entry_id not specified, look for first available
+        select_entity_id = None
+        if entry_id:
+            # Look for entity with matching unique_id
+            registry = hass.helpers.entity_registry.async_get()
+            for entity in registry.entities.values():
+                if entity.unique_id == f"{entry_id}_added_contact_select":
+                    select_entity_id = entity.entity_id
+                    break
+        else:
+            # Find first added contact select entity
+            for state in hass.states.async_all():
+                if state.entity_id.startswith("select.") and "added_contact" in state.entity_id:
+                    select_entity_id = state.entity_id
+                    break
+
+        if not select_entity_id:
+            _LOGGER.error("Added contact select entity not found")
+            return
+
+        select_entity = hass.states.get(select_entity_id)
+        if not select_entity:
+            _LOGGER.error(f"Could not get state for {select_entity_id}")
+            return
+
+        selected_option = select_entity.state
+        if not selected_option or selected_option in [SELECT_NO_CONTACTS, SELECT_NO_ADDED]:
+            _LOGGER.error("No contact selected")
+            return
+
+        pubkey_prefix = extract_pubkey_from_selection(selected_option)
+        if not pubkey_prefix:
+            _LOGGER.error(f"Could not parse pubkey from selection: {selected_option}")
+            return
+
+        # Call execute_command with remove_contact
+        command_call = create_service_call(
+            DOMAIN,
+            SERVICE_EXECUTE_COMMAND,
+            {"command": f"remove_contact {pubkey_prefix}", "entry_id": entry_id},
+            hass
+        )
+        await async_execute_command_service(command_call)
+
+    # Register the contact management services
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_ADD_SELECTED_CONTACT,
+        async_add_selected_contact_service,
+        schema=UI_MESSAGE_SCHEMA,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_REMOVE_SELECTED_CONTACT,
+        async_remove_selected_contact_service,
+        schema=UI_MESSAGE_SCHEMA,
+    )
+
+    async def async_cleanup_unavailable_contacts_service(call: ServiceCall) -> None:
+        """Remove all unavailable MeshCore contact binary sensors."""
+        entry_id = call.data.get(ATTR_ENTRY_ID)
+
+        entity_registry = hass.helpers.entity_registry.async_get()
+        removed_count = 0
+
+        for entity in list(entity_registry.entities.values()):
+            if entity.platform == DOMAIN and entity.domain == "binary_sensor":
+                # If entry_id specified, only clean for that device
+                if entry_id and not entity.unique_id.startswith(entry_id):
+                    continue
+
+                # Check if entity is unavailable
+                state = hass.states.get(entity.entity_id)
+                if state and state.state == "unavailable":
+                    _LOGGER.info(f"Removing unavailable entity: {entity.entity_id}")
+                    entity_registry.async_remove(entity.entity_id)
+                    removed_count += 1
+
+        _LOGGER.info(f"Removed {removed_count} unavailable MeshCore contact sensors")
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CLEANUP_UNAVAILABLE_CONTACTS,
+        async_cleanup_unavailable_contacts_service,
+        schema=UI_MESSAGE_SCHEMA,
+    )
     
     # Create CLI command execution service from UI helper
     # async def async_execute_cli_command_ui(call: ServiceCall) -> None:
@@ -629,21 +820,30 @@ async def async_unload_services(hass: HomeAssistant) -> None:
     """Unload MeshCore services."""
     if hass.services.has_service(DOMAIN, SERVICE_SEND_MESSAGE):
         hass.services.async_remove(DOMAIN, SERVICE_SEND_MESSAGE)
-        
+
     if hass.services.has_service(DOMAIN, SERVICE_SEND_CHANNEL_MESSAGE):
         hass.services.async_remove(DOMAIN, SERVICE_SEND_CHANNEL_MESSAGE)
-        
+
     # if hass.services.has_service(DOMAIN, SERVICE_CLI_COMMAND):
     #     hass.services.async_remove(DOMAIN, SERVICE_CLI_COMMAND)
-        
+
     if hass.services.has_service(DOMAIN, SERVICE_MESSAGE_SCRIPT):
         hass.services.async_remove(DOMAIN, SERVICE_MESSAGE_SCRIPT)
-        
+
     if hass.services.has_service(DOMAIN, SERVICE_EXECUTE_COMMAND):
         hass.services.async_remove(DOMAIN, SERVICE_EXECUTE_COMMAND)
-        
+
     if hass.services.has_service(DOMAIN, SERVICE_EXECUTE_COMMAND_UI):
         hass.services.async_remove(DOMAIN, SERVICE_EXECUTE_COMMAND_UI)
+
+    if hass.services.has_service(DOMAIN, SERVICE_ADD_SELECTED_CONTACT):
+        hass.services.async_remove(DOMAIN, SERVICE_ADD_SELECTED_CONTACT)
+
+    if hass.services.has_service(DOMAIN, SERVICE_REMOVE_SELECTED_CONTACT):
+        hass.services.async_remove(DOMAIN, SERVICE_REMOVE_SELECTED_CONTACT)
+
+    if hass.services.has_service(DOMAIN, SERVICE_CLEANUP_UNAVAILABLE_CONTACTS):
+        hass.services.async_remove(DOMAIN, SERVICE_CLEANUP_UNAVAILABLE_CONTACTS)
 
 
 def create_service_call(

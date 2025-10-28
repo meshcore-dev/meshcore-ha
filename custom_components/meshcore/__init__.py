@@ -6,6 +6,8 @@ import logging
 import time
 from pathlib import Path
 from datetime import timedelta
+from meshcore.events import EventType
+
 from .const import (
     CONF_REPEATER_TELEMETRY_ENABLED,
     CONF_TRACKED_CLIENTS,
@@ -152,6 +154,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if repeater.get("pubkey_prefix"):
             coordinator._next_repeater_update_times[repeater.get("pubkey_prefix")] = 0
     
+    # Load discovered contacts from storage before platforms set up
+    try:
+        stored_contacts = await coordinator._store.async_load()
+        if stored_contacts:
+            coordinator._discovered_contacts = stored_contacts
+            _LOGGER.info(f"Loaded {len(stored_contacts)} discovered contacts from storage")
+    except Exception as ex:
+        _LOGGER.error(f"Error loading discovered contacts: {ex}")
+
     # Store coordinator for this entry
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
@@ -210,7 +221,37 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             None,
             forward_all_events
         )
-    
+
+        # Subscribe to NEW_CONTACT events to track discovered contacts
+        async def handle_new_contact(event):
+            """Handle NEW_CONTACT events for discovered but not-yet-added contacts."""
+            if not event or not event.payload:
+                return
+
+            contact = event.payload
+            public_key = contact.get("public_key")
+
+            if public_key:
+                _LOGGER.info(f"Discovered new contact: {contact.get('adv_name', 'Unknown')} ({public_key[:12]})")
+                coordinator._discovered_contacts[public_key] = contact
+
+                # Save to storage
+                try:
+                    await coordinator._store.async_save(coordinator._discovered_contacts)
+                except Exception as ex:
+                    _LOGGER.error(f"Error saving discovered contacts: {ex}")
+
+                # Update coordinator data with new contacts list
+                updated_data = dict(coordinator.data) if coordinator.data else {}
+                updated_data["contacts"] = coordinator.get_all_contacts()
+                coordinator.async_set_updated_data(updated_data)
+
+        _LOGGER.info("Setting up NEW_CONTACT event listener")
+        coordinator.api.mesh_core.subscribe(
+            EventType.NEW_CONTACT,
+            handle_new_contact
+        )
+
     # Fetch initial data immediately
     # await coordinator._async_update_data()
     
