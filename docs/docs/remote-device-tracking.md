@@ -371,13 +371,14 @@ action:
 - Check for repeater firmware issues
 
 ### Rate Limiting Issues
-If you see debug messages about rate limiting:
+To check if rate limiting is affecting your network:
+- Monitor the **Rate Limiter Tokens** sensor (shows current available tokens)
+- If tokens frequently reach 0, you're hitting the rate limit
 - Calculate your total requests per hour (devices × updates/hour)
 - Ensure you're under 20 requests/hour sustained
 - Increase update intervals on less critical devices
 - Disable telemetry collection where not needed
 - Consider temporarily disabling some devices
-- Review logs: rate limiting shows as "Rate limited: skipping [operation]"
 
 ### Missing Sensors
 - Sensors are created on first data reception

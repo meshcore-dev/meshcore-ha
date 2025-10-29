@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import random
 import time
@@ -109,6 +110,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self._next_repeater_update_times = {}  # Track when each repeater should next be updated
         self._active_repeater_tasks = {}  # Track active update tasks by pubkey_prefix
         self._repeater_consecutive_failures = {}  # Track consecutive failed updates by pubkey_prefix
+        self._last_successful_request = {}  # Track last successful request timestamp by pubkey_prefix
         
         # Tracked clients tracking (no login needed, uses ACLs)
         self._tracked_clients = self.config_entry.data.get(CONF_TRACKED_CLIENTS, [])
@@ -186,6 +188,8 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         """Increment success counter for a node."""
         stats_key = f"{pubkey_prefix}_request_successes"
         self._reliability_stats[stats_key] = self._reliability_stats.get(stats_key, 0) + 1
+        # Track last successful request time
+        self._last_successful_request[pubkey_prefix] = time.time()
         
     def _increment_failure(self, pubkey_prefix: str) -> None:
         """Increment failure counter for a node."""
@@ -709,7 +713,24 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
 
             pubkey_prefix = repeater_config.get("pubkey_prefix")
             repeater_name = repeater_config.get("name")
-            
+
+            # Check if repeater has had no successful requests in 7 days
+            if pubkey_prefix in self._last_successful_request:
+                last_success_time = self._last_successful_request[pubkey_prefix]
+                days_since_success = (current_time - last_success_time) / 86400  # Convert to days
+
+                if days_since_success >= 7 and not repeater_config.get(CONF_DEVICE_DISABLED, False):
+                    _LOGGER.warning(
+                        f"Repeater {repeater_name} has had no successful requests in {days_since_success:.1f} days. "
+                        f"Automatically disabling to reduce network traffic."
+                    )
+                    # Update config to disable this repeater
+                    repeater_config[CONF_DEVICE_DISABLED] = True
+                    new_data = copy.deepcopy(dict(self.config_entry.data))
+                    new_data[CONF_REPEATER_SUBSCRIPTIONS] = copy.deepcopy(self._tracked_repeaters)
+                    self.hass.config_entries.async_update_entry(self.config_entry, data=new_data)
+                    continue
+
             # Clean c completed or failed tasks
             if pubkey_prefix in self._active_repeater_tasks:
                 task = self._active_repeater_tasks[pubkey_prefix]
