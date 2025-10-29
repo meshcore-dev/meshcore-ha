@@ -175,11 +175,14 @@ class MeshCoreContactSelect(CoordinatorEntity, SelectEntity):
                 # Format as "Name (pubkey12345)"
                 option = f"{name} ({public_key[:12]})"
                 contact_options.append(option)
-            
+
             # Add a default option if no contacts found
             if not contact_options:
                 return ["No contacts"]
-                
+
+            # Sort alphabetically (case-insensitive)
+            contact_options.sort(key=str.lower)
+
             return contact_options
         except Exception as ex:
             _LOGGER.error(f"Error getting contacts from API: {ex}")
@@ -276,7 +279,7 @@ class MeshCoreDiscoveredContactSelect(CoordinatorEntity, SelectEntity):
         """Get list of discovered contacts not yet added."""
         all_contacts = self.coordinator.get_all_contacts()
 
-        discovered_options = [SELECT_NO_CONTACTS]
+        discovered_options = []
 
         for contact in all_contacts:
             if not isinstance(contact, dict):
@@ -289,7 +292,11 @@ class MeshCoreDiscoveredContactSelect(CoordinatorEntity, SelectEntity):
                     option = f"{name} ({pubkey_prefix})"
                     discovered_options.append(option)
 
-        return discovered_options
+        # Sort alphabetically (case-insensitive)
+        discovered_options.sort(key=str.lower)
+
+        # Add placeholder at the beginning
+        return [SELECT_NO_CONTACTS] + discovered_options
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -345,7 +352,7 @@ class MeshCoreAddedContactSelect(CoordinatorEntity, SelectEntity):
         """Get list of contacts already added to node."""
         all_contacts = self.coordinator.get_all_contacts()
 
-        added_options = [SELECT_NO_CONTACTS]
+        added_options = []
         for contact in all_contacts:
             if not isinstance(contact, dict):
                 continue
@@ -357,7 +364,11 @@ class MeshCoreAddedContactSelect(CoordinatorEntity, SelectEntity):
                     option = f"{name} ({pubkey_prefix})"
                     added_options.append(option)
 
-        return added_options
+        # Sort alphabetically (case-insensitive)
+        added_options.sort(key=str.lower)
+
+        # Add placeholder at the beginning
+        return [SELECT_NO_CONTACTS] + added_options
 
     @callback
     def _handle_coordinator_update(self) -> None:

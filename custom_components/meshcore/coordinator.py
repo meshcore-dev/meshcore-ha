@@ -40,6 +40,7 @@ from .const import (
     CONF_SELF_TELEMETRY_ENABLED,
     CONF_SELF_TELEMETRY_INTERVAL,
     DEFAULT_SELF_TELEMETRY_INTERVAL,
+    CONF_DEVICE_DISABLED,
 )
 from .meshcore_api import MeshCoreAPI
 
@@ -702,7 +703,10 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             if not repeater_config.get('name') or not repeater_config.get('pubkey_prefix'):
                 _LOGGER.warning(f"Repeater config missing name or pubkey_prefix: {repeater_config}")
                 continue
-                
+
+            if repeater_config.get(CONF_DEVICE_DISABLED, False):
+                continue
+
             pubkey_prefix = repeater_config.get("pubkey_prefix")
             repeater_name = repeater_config.get("name")
             
@@ -737,11 +741,14 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         for repeater_config in self._tracked_repeaters:
             if not repeater_config.get('name') or not repeater_config.get('pubkey_prefix'):
                 continue
-                
+
+            if repeater_config.get(CONF_DEVICE_DISABLED, False):
+                continue
+
             telemetry_enabled = repeater_config.get(CONF_REPEATER_TELEMETRY_ENABLED, False)
             if not telemetry_enabled:
                 continue
-                
+
             pubkey_prefix = repeater_config.get("pubkey_prefix")
             repeater_name = repeater_config.get("name")
             
@@ -782,7 +789,10 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             if not client_config.get('name') or not client_config.get('pubkey_prefix'):
                 _LOGGER.warning(f"Client config missing name or pubkey_prefix: {client_config}")
                 continue
-                
+
+            if client_config.get(CONF_DEVICE_DISABLED, False):
+                continue
+
             pubkey_prefix = client_config.get("pubkey_prefix")
             client_name = client_config.get("name")
             
