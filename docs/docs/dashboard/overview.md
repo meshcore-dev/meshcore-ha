@@ -191,6 +191,20 @@ filter:
     - entity_id: binary_sensor.meshcore_*_messages
   exclude: []
 ```
+If you wish you can limit this view for each of your channels. For this you need the following card.
+
+```yaml
+type: logbook
+visibility:
+  - condition: state
+    entity: select.meshcore_channel
+    state: Public (0)
+target:
+  entity_id:
+    - binary_sensor.meshcore_696e4b_ch_0_messages
+```
+You need to duplicate this card for each channel you have. When you select a channel in the message card you logbook focus will be automaticly on the correct channel.
+Make sure that visibility and target are in line.
 
 ## Dashboard Examples
 
