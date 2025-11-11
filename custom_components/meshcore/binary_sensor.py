@@ -137,17 +137,17 @@ async def handle_channel_message(event, coordinator, async_add_entities):
     """Create channel message entity on first message in a channel."""
     if not event or not hasattr(event, "payload") or not event.payload:
         return
-        
+
     _LOGGER.debug(f"Received channel message event: {event}")
-    
+
     # Skip if we don't have meshcore
     if not coordinator.api.mesh_core:
         return
-    
+
     # Extract channel_idx from the event payload
     payload = event.payload
     channel_idx = payload.get("channel_idx")
-    
+
     # Skip if no channel_idx or if channels are already added
     if channel_idx is None or hasattr(coordinator, "channels_added") and coordinator.channels_added:
         return

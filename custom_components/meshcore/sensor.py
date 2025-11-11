@@ -1048,7 +1048,7 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
             last_updated = self._cached_stats.get("last_updated", 0)
             # Use dynamic timeout based on configured update interval
             update_interval = self.coordinator.get_device_update_interval(self.public_key)
-            timeout = update_interval * 1.5
+            timeout = update_interval * 3
             if time.time() - last_updated < timeout:
                 return True
         
