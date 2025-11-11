@@ -165,22 +165,76 @@ action:
 
 ### Poor Signal Alert
 
-Monitor signal quality and alert on degradation:
+Monitor signal quality and alert on degradation using RX_LOG data:
 
 ```yaml
 alias: Poor Signal Alert
 trigger:
   - platform: event
-    event_type: meshcore_raw_event
+    event_type: meshcore_message
     event_data:
-      event_type: "EventType.CONTACT_MSG_RECV"
+      message_type: "channel"
 condition:
   - condition: template
-    value_template: "{{ trigger.event.data.payload.SNR < 5 }}"
+    value_template: >
+      {{ trigger.event.data.rx_log_data is defined and
+         trigger.event.data.rx_log_data | selectattr('snr', 'lt', 5) | list | length > 0 }}
 action:
   - service: notify.notify
     data:
-      message: "Poor signal from {{ trigger.event.data.payload.name }}: SNR {{ trigger.event.data.payload.SNR }}"
+      title: "Poor Signal Quality"
+      message: >
+        Message from {{ trigger.event.data.sender_name }} had poor signal:
+        {% for rx in trigger.event.data.rx_log_data %}
+        Path {{ rx.path_len }} hops: SNR {{ rx.snr }}dB, RSSI {{ rx.rssi }}
+        {% endfor %}
+```
+
+### Multi-Path Reception Monitoring
+
+Track when messages are received via multiple mesh routes:
+
+```yaml
+alias: Multi-Path Message Detection
+trigger:
+  - platform: event
+    event_type: meshcore_message
+    event_data:
+      message_type: "channel"
+condition:
+  - condition: template
+    value_template: "{{ trigger.event.data.rx_log_data | length > 1 }}"
+action:
+  - service: logbook.log
+    data:
+      name: "Mesh Routing"
+      message: >
+        Message received via {{ trigger.event.data.rx_log_data | length }} paths:
+        {% for rx in trigger.event.data.rx_log_data %}
+        - {{ rx.path_len }} hops ({{ rx.path }}): SNR {{ rx.snr }}dB
+        {% endfor %}
+```
+
+### Direct Path Messages Only
+
+Get notifications only for messages received directly (no hops):
+
+```yaml
+alias: Direct Path Messages
+trigger:
+  - platform: event
+    event_type: meshcore_message
+    event_data:
+      message_type: "channel"
+condition:
+  - condition: template
+    value_template: >
+      {{ trigger.event.data.rx_log_data is defined and
+         trigger.event.data.rx_log_data | selectattr('path_len', 'eq', 0) | list | length > 0 }}
+action:
+  - service: notify.notify
+    data:
+      message: "Direct: {{ trigger.event.data.sender_name }}: {{ trigger.event.data.message }}"
 ```
 
 ## Raw Event Monitoring

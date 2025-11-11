@@ -36,6 +36,12 @@ from .const import (
 from .coordinator import MeshCoreDataUpdateCoordinator
 from .meshcore_api import MeshCoreAPI
 from .services import async_setup_services, async_unload_services
+from .utils import (
+    create_message_correlation_key,
+    parse_and_decrypt_rx_log,
+    parse_rx_log_data,
+    sanitize_event_data,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -192,16 +198,56 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Convert event type to string if possible
         event_type_str = str(event.type) if hasattr(event, "type") else "UNKNOWN"
-        
+
         try:
-            # Import the sanitize function for JSON serialization
-            from .utils import sanitize_event_data
-                
+            sanitized_payload = sanitize_event_data(event.payload)
+
+            # Special handling for RX_LOG events
+            if hasattr(event, "type") and event.type == EventType.RX_LOG_DATA:
+                # Parse basic packet structure
+                parsed_rx_log = parse_rx_log_data(event.payload)
+
+                # Also attempt to decrypt GroupText payload
+                decrypted_data = parse_and_decrypt_rx_log(event.payload, coordinator._channel_info)
+
+                if isinstance(sanitized_payload, dict):
+                    if parsed_rx_log:
+                        sanitized_payload["parsed"] = parsed_rx_log
+                    if decrypted_data:
+                        sanitized_payload["decrypted"] = decrypted_data
+
+                # Store for correlation if decryption succeeded
+                if decrypted_data.get("decrypted") and decrypted_data.get("timestamp") and decrypted_data.get("text"):
+                    channel_idx = decrypted_data["channel_idx"]
+                    timestamp = decrypted_data["timestamp"]
+                    text = decrypted_data["text"]
+
+                    hash_key = create_message_correlation_key(channel_idx, timestamp, text)
+
+                    rx_log_entry = {
+                        "channel_idx": channel_idx,
+                        "channel_name": decrypted_data.get("channel_name"),
+                        "timestamp": timestamp,
+                        "text": text,
+                        "snr": event.payload.get("snr"),
+                        "rssi": event.payload.get("rssi"),
+                        "path_len": decrypted_data.get("path_len"),
+                        "path": decrypted_data.get("path"),
+                        "channel_hash": decrypted_data.get("channel_hash"),
+                    }
+
+                    if hash_key in coordinator._pending_rx_logs:
+                        coordinator._pending_rx_logs[hash_key].append(rx_log_entry)
+                    else:
+                        coordinator._pending_rx_logs[hash_key] = [rx_log_entry]
+
+                    _LOGGER.debug(f"Stored RX_LOG for correlation: ch={channel_idx}, hash={hash_key[:8]}")
+
             # Fire event to HA event bus with sanitized payload
             _LOGGER.debug(f"Firing event to HA event bus: {event}")
             hass.bus.async_fire(f"{DOMAIN}_raw_event", {
                 "event_type": event_type_str,
-                "payload": sanitize_event_data(event.payload),
+                "payload": sanitized_payload,
                 "timestamp": time.time()
             })
         except Exception as ex:

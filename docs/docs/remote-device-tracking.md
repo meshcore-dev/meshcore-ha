@@ -140,6 +140,31 @@ When updates fail, the integration implements smart exponential backoff:
 
 For repeaters, the integration automatically re-logs in after 5 consecutive failures.
 
+### Auto-Disable for Inactive Devices
+
+To protect network resources, tracked devices are automatically disabled if they haven't had a successful request in 5 days (120 hours):
+
+**How It Works:**
+- The integration tracks the last successful request timestamp for each device
+- Every update cycle checks if 5 days have passed since the last success
+- If the threshold is exceeded, the device is automatically marked as disabled
+- Disabled devices stop making requests to reduce network traffic
+- Auto-disabled devices automatically re-enable on integration reload (restart or reload integration)
+
+**Manual Re-enabling:**
+If you want to re-enable before the next integration reload:
+1. Go to **Settings → Devices & Services**
+2. Click **Configure** on Meshcore integration
+3. Select **Manage Monitored Devices**
+4. Select the auto-disabled device and edit
+5. Uncheck **Disabled** and submit
+
+**Why This Helps:**
+- Prevents continuous failed requests to permanently offline nodes
+- Reduces network congestion from unreachable devices
+- Conserves rate limiter tokens for active devices
+- Auto-recovery on integration reload means no manual intervention needed when devices come back online
+
 ## Data Collection
 
 ### Repeater Statistics
@@ -177,6 +202,15 @@ Each tracked node provides reliability metrics:
 - **Path Length**: Number of hops to reach the node
 
 These sensors help monitor network health and identify problematic nodes or routing issues.
+
+### Sensor Availability
+
+Tracked node sensors automatically mark as unavailable when data becomes stale:
+
+**Timeout Calculation:**
+- Sensors wait **3x the configured update interval** before marking unavailable
+- Example: 2-hour (7200s) interval = 6 hours before unavailable
+- Example: 5-minute (300s) interval = 15 minutes before unavailable
 
 ## Managing Tracked Nodes
 
@@ -236,25 +270,25 @@ The integration implements a **token bucket rate limiter** to prevent overwhelmi
 
 **Configuration:**
 - **Burst Capacity**: 20 tokens (allows up to 20 rapid requests)
-- **Refill Rate**: 1 token per 3 minutes (180 seconds)
-- **Average Rate**: ~0.33 requests per minute (20 requests per hour)
+- **Refill Rate**: 1 token per 2 minutes (120 seconds)
+- **Average Rate**: ~0.5 requests per minute (30 requests per hour)
 
 **How It Works:**
 
 1. Each mesh request (login, status, telemetry) consumes 1 token
 2. The bucket starts full with 20 tokens, allowing immediate bursts
-3. Tokens refill gradually at 1 per 3 minutes
+3. Tokens refill gradually at 1 per 2 minutes
 4. If no tokens are available, the request is skipped (not queued)
 5. Skipped requests count as failures and trigger exponential backoff
 
 **Practical Impact:**
 
 - Initial startup can process 20 requests rapidly
-- Sustained operation limited to ~20 requests/hour across all tracked devices
+- Sustained operation limited to ~30 requests/hour across all tracked devices
 - With default 2-hour update intervals:
-  - 10 repeaters = 5 requests/hour (well within limit)
-  - 20 devices = 10 requests/hour (manageable)
-  - 30+ devices may experience rate limiting
+  - 15 repeaters = 7.5 requests/hour (well within limit)
+  - 30 devices = 15 requests/hour (manageable)
+  - 40+ devices may experience rate limiting
 
 **When Rate Limited:**
 - Requests are skipped and logged as debug messages
@@ -371,13 +405,14 @@ action:
 - Check for repeater firmware issues
 
 ### Rate Limiting Issues
-If you see debug messages about rate limiting:
+To check if rate limiting is affecting your network:
+- Monitor the **Rate Limiter Tokens** sensor (shows current available tokens)
+- If tokens frequently reach 0, you're hitting the rate limit
 - Calculate your total requests per hour (devices × updates/hour)
 - Ensure you're under 20 requests/hour sustained
 - Increase update intervals on less critical devices
 - Disable telemetry collection where not needed
 - Consider temporarily disabling some devices
-- Review logs: rate limiting shows as "Rate limited: skipping [operation]"
 
 ### Missing Sensors
 - Sensors are created on first data reception

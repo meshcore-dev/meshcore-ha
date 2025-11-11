@@ -77,6 +77,7 @@ DEFAULT_CLIENT_UPDATE_INTERVAL: Final = 7200  # 2 hours in seconds
 
 # Device monitoring
 CONF_DEVICE_DISABLED: Final = "disabled"
+AUTO_DISABLE_HOURS: Final = 120  # Auto-disable devices after this many hours without success
 
 # Contact refresh interval
 CONF_CONTACT_REFRESH_INTERVAL: Final = "contact_refresh_interval"
@@ -108,6 +109,14 @@ DEFAULT_UPDATE_TICK: Final = 5  # base polling interval
 
 # Other constants
 CONNECTION_TIMEOUT: Final = 10  # seconds
+
+# Rate limiter settings
+RATE_LIMITER_CAPACITY: Final = 20
+RATE_LIMITER_REFILL_RATE_SECONDS: Final = 120
+
+# RX_LOG correlation cache settings
+RX_LOG_CACHE_MAX_SIZE: Final = 100
+RX_LOG_CACHE_TTL_SECONDS: Final = 5.0
 
 
 class NodeType(IntEnum):
