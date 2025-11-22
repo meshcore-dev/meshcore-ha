@@ -44,57 +44,81 @@ When a device broadcasts on the mesh network, the integration:
 3. Creates a diagnostic binary sensor showing the contact as "discovered"
 4. Makes it available in the "Discovered Contacts" dropdown
 
+#### Disabling Contact Discovery
+
+If you have many contacts on your mesh network but only want to track specific repeaters or clients, you can disable automatic contact discovery:
+
+**To disable:**
+1. Go to **Settings → Devices & Services**
+2. Find your MeshCore integration
+3. Click **Configure**
+4. Select **Global Settings**
+5. Enable **Disable Contact Discovery**
+6. Click **Submit**
+
+**When disabled:**
+- No contact binary sensors are automatically created
+- Discovered contacts are not persisted to storage
+- Contact selectors (discovered/added) will not populate
+- Reduces overhead if you have 50+ contacts on the network
+- You can still manually track specific devices using repeater/client tracking
+
+**When to use:**
+- Large mesh networks with many nodes you don't need to monitor
+- Performance optimization when you only care about tracked repeaters/clients
+- Reducing entity count in Home Assistant
+- You want to use services/automations without contact entities
+
 ## Managing Contacts via UI
 
-### Adding Discovered Contacts
-
-Use this card to add discovered contacts to your node:
+Use this card to manage discovered and added contacts:
 
 ```yaml
-type: vertical-stack
-cards:
-  - type: entities
-    entities:
-      - entity: select.meshcore_discovered_contact
+type: entities
+title: Manage Contacts
+entities:
+  - entity: select.meshcore_discovered_contact
+    name: Discovered
+    secondary_info: last-changed
   - type: button
-    name: Add Contact
-    icon: mdi:plus-circle
+    name: ➕ Add Contact
+    action_name: Add
     tap_action:
       action: call-service
       service: meshcore.add_selected_contact
-```
-
-**Steps:**
-1. Select a discovered contact from the dropdown
-2. Click "Add Contact"
-3. The contact is added to your node
-4. The sensor updates to show state `fresh` or `stale`
-5. You can now send/receive messages with this contact
-
-### Removing Added Contacts
-
-Use this card to remove contacts from your node:
-
-```yaml
-type: vertical-stack
-cards:
-  - type: entities
-    entities:
-      - entity: select.meshcore_added_contact
   - type: button
-    name: Remove Contact
-    icon: mdi:minus-circle
+    name: 🗑️ Remove Discovered
+    action_name: Remove
+    tap_action:
+      action: call-service
+      service: meshcore.remove_discovered_contact
+  - entity: select.meshcore_added_contact
+    name: Added
+    secondary_info: last-changed
+  - type: button
+    name: ➖ Remove Contact
+    action_name: Remove
     tap_action:
       action: call-service
       service: meshcore.remove_selected_contact
 ```
 
-**Steps:**
-1. Select an added contact from the dropdown
-2. Click "Remove Contact"
-3. The contact is removed from your node
-4. The sensor becomes unavailable
-5. If the device broadcasts again, it will reappear as "discovered"
+**Actions:**
+
+- **Add Contact**: Adds the selected discovered contact to your node
+  - Contact is added to node's contact list
+  - Sensor updates to show state `fresh` or `stale`
+  - You can now send/receive messages
+
+- **Remove Discovered**: Removes the selected discovered contact from Home Assistant
+  - Contact removed from discovered list
+  - Binary sensor entity removed
+  - **Does NOT remove from node** (use if never added)
+
+- **Remove Contact**: Removes the selected added contact from your node
+  - Contact removed from node's contact list
+  - Sensor becomes unavailable
+  - If device broadcasts again, reappears as "discovered"
 
 ### Multiple Devices
 
@@ -145,6 +169,31 @@ service: meshcore.execute_command
 data:
   command: remove_contact 1a2b3c4d5e6f
 ```
+
+### Remove Discovered Contact
+
+Remove a discovered contact from Home Assistant (without removing from node):
+
+```yaml
+service: meshcore.remove_discovered_contact
+data:
+  pubkey_prefix: <pubkey_prefix>
+```
+
+Example:
+```yaml
+service: meshcore.remove_discovered_contact
+data:
+  pubkey_prefix: 1a2b3c4d5e6f
+```
+
+Or use without specifying pubkey_prefix to use the selected contact from the discovered contact dropdown:
+
+```yaml
+service: meshcore.remove_discovered_contact
+```
+
+**Note**: This only removes the contact from Home Assistant's discovered list and removes the binary sensor entity. It does **NOT** remove the contact from your node's contact list. Use this to clean up discovered contacts you don't want to track.
 
 ### Cleanup Unavailable Contacts
 

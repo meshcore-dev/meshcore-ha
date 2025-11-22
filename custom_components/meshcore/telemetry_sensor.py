@@ -26,6 +26,7 @@ from .const import (
     CONF_REPEATER_SUBSCRIPTIONS,
     CONF_TRACKED_CLIENTS,
     DOMAIN,
+    SENSOR_AVAILABILITY_TIMEOUT_MULTIPLIER,
 )
 from .utils import (
     build_device_id,
@@ -542,9 +543,9 @@ class MeshCoreTelemetrySensor(CoordinatorEntity, SensorEntity):
         """Return if the sensor is available."""
         if self._last_updated is None:
             return False
-        # Use dynamic timeout based on configured update interval with 1.5x buffer
+        # Use dynamic timeout based on configured update interval
         update_interval = self.coordinator.get_device_update_interval(self.pubkey_prefix)
-        timeout = update_interval * 1.5
+        timeout = update_interval * SENSOR_AVAILABILITY_TIMEOUT_MULTIPLIER
         return time.time() - self._last_updated < timeout
 
     @property

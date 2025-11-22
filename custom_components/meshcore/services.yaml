@@ -119,3 +119,61 @@ execute_command_ui:
       example: "abc123def456"
       selector:
         text:
+
+add_selected_contact:
+  name: Add Selected Contact
+  description: Add the contact selected in the discovered contact select entity to your node's contact list.
+  fields:
+    entry_id:
+      name: Config Entry ID
+      description: The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device.
+      required: false
+      example: "abc123def456"
+      selector:
+        text:
+
+remove_selected_contact:
+  name: Remove Selected Contact
+  description: Remove the contact selected in the added contact select entity from your node's contact list.
+  fields:
+    entry_id:
+      name: Config Entry ID
+      description: The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device.
+      required: false
+      example: "abc123def456"
+      selector:
+        text:
+
+remove_discovered_contact:
+  name: Remove Discovered Contact
+  description: >-
+    Remove a discovered contact from the discovered contacts list.
+    This will remove the contact from Home Assistant but does NOT remove it from your node's contact list.
+    You can specify the pubkey_prefix directly, or leave it blank to use the selected contact from the discovered contact select entity.
+  fields:
+    pubkey_prefix:
+      name: Public Key Prefix
+      description: The public key prefix (at least 6 characters) of the contact to remove. Leave empty to use the selected contact from the discovered contact select entity.
+      required: false
+      example: "f293ac"
+      selector:
+        text:
+    entry_id:
+      name: Config Entry ID
+      description: The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device.
+      required: false
+      example: "abc123def456"
+      selector:
+        text:
+
+cleanup_unavailable_contacts:
+  name: Cleanup Unavailable Contacts
+  description: Remove all unavailable MeshCore contact binary sensors from Home Assistant.
+  fields:
+    entry_id:
+      name: Config Entry ID
+      description: The config entry ID if you have multiple MeshCore devices. Leave empty to clean all devices.
+      required: false
+      example: "abc123def456"
+      selector:
+        text:

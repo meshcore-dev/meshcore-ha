@@ -19,6 +19,7 @@ from homeassistant.helpers.update_coordinator import (
 )
 
 from .const import (
+    CONF_DISABLE_CONTACT_DISCOVERY,
     DOMAIN,
     ENTITY_DOMAIN_BINARY_SENSOR,
     MESSAGES_SUFFIX,
@@ -60,6 +61,10 @@ def create_contact_sensor(coordinator, contact: dict):
 def handle_contacts_update(event, coordinator, async_add_entities):
     """Process contacts update from mesh_core."""
     if not event or not hasattr(event, "payload") or not event.payload:
+        return
+
+    # Skip contact discovery if disabled in settings
+    if coordinator.config_entry.data.get(CONF_DISABLE_CONTACT_DISCOVERY, False):
         return
 
     # Initialize tracking sets if needed
@@ -425,12 +430,19 @@ class MeshCoreContactDiagnosticBinarySensor(CoordinatorEntity, BinarySensorEntit
 
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
+        # Only update if this contact is marked as dirty (performance optimization)
+        if not self.coordinator.is_contact_dirty(self.public_key):
+            return
+
         contact_data = self._get_contact_data()
         if contact_data:
             self._update_from_contact_data(contact_data)
         else:
             # Contact no longer exists, clear data
             self._contact_data = {}
+
+        # Clear dirty flag after updating
+        self.coordinator.clear_contact_dirty(self.public_key)
         self.async_write_ha_state()
 
     @property

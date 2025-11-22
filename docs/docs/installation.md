@@ -65,7 +65,6 @@ This guide will help you install and configure the Meshcore integration for Home
 
 During setup, you can configure:
 
-- **Contact Refresh Interval** (30-3600 seconds): How often to refresh the mesh network contact list
 - **Self Telemetry Enabled**: Whether to collect telemetry from this node
 - **Self Telemetry Interval** (60-3600 seconds): How often to collect telemetry data from this node
 
@@ -79,7 +78,7 @@ After initial setup, you can configure additional monitoring through the integra
    - **Add Repeater Station**: Monitor repeater nodes in your network
    - **Add Tracked Client**: Track specific client devices
    - **Manage Monitored Devices**: Edit or remove configured devices
-   - **Global Settings**: Adjust refresh intervals
+   - **Global Settings**: Adjust refresh intervals and discovery settings
 
 ### Repeater Configuration
 - Select repeater from your contacts
@@ -90,6 +89,16 @@ After initial setup, you can configure additional monitoring through the integra
 ### Client Tracking
 - Select client device from your contacts
 - Set update interval (minimum 300 seconds)
+
+### Global Settings
+
+Configure integration-wide settings:
+
+- **Disable Contact Discovery**: Stop automatically creating contact sensors (useful for large networks)
+- **Enable Self Telemetry**: Collect telemetry from this node
+- **Self Telemetry Interval** (60-3600 seconds): How often to collect self telemetry data
+
+**Note:** Disabling contact discovery is recommended if you have 50+ contacts and only need to monitor specific tracked repeaters/clients.
 
 ## Verification
 

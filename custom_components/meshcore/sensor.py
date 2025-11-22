@@ -28,7 +28,8 @@ from .const import (
     DOMAIN,
     ENTITY_DOMAIN_SENSOR,
     CONF_REPEATER_SUBSCRIPTIONS,
-    CONF_TRACKED_CLIENTS
+    CONF_TRACKED_CLIENTS,
+    SENSOR_AVAILABILITY_TIMEOUT_MULTIPLIER,
 )
 from .utils import (
     format_entity_id,
@@ -1048,7 +1049,7 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
             last_updated = self._cached_stats.get("last_updated", 0)
             # Use dynamic timeout based on configured update interval
             update_interval = self.coordinator.get_device_update_interval(self.public_key)
-            timeout = update_interval * 3
+            timeout = update_interval * SENSOR_AVAILABILITY_TIMEOUT_MULTIPLIER
             if time.time() - last_updated < timeout:
                 return True
         

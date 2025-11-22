@@ -36,8 +36,6 @@ from .const import (
     REPEATER_BACKOFF_BASE,
     MAX_FAILURES_BEFORE_PATH_RESET,
     MAX_RANDOM_DELAY,
-    CONF_CONTACT_REFRESH_INTERVAL,
-    DEFAULT_CONTACT_REFRESH_INTERVAL,
     CONF_REPEATER_TELEMETRY_ENABLED,
     CONF_SELF_TELEMETRY_ENABLED,
     CONF_SELF_TELEMETRY_INTERVAL,
@@ -167,6 +165,23 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
 
         # Initialize reliability stats tracking
         self._reliability_stats = {}
+
+        # Dirty contacts tracking for performance optimization
+        # Set of pubkey prefixes that have been updated and need sensor refresh
+        self._dirty_contacts = set()
+
+    def mark_contact_dirty(self, pubkey_prefix: str):
+        """Mark a contact as needing update (for performance optimization)."""
+        if pubkey_prefix:
+            self._dirty_contacts.add(pubkey_prefix)
+
+    def is_contact_dirty(self, pubkey_prefix: str) -> bool:
+        """Check if a contact needs update."""
+        return pubkey_prefix in self._dirty_contacts
+
+    def clear_contact_dirty(self, pubkey_prefix: str):
+        """Clear dirty flag after updating contact sensor."""
+        self._dirty_contacts.discard(pubkey_prefix)
 
     def get_all_contacts(self) -> list:
         """Get deduplicated list of all contacts (added + discovered).

@@ -27,16 +27,14 @@
       "usb": {
         "data": {
           "usb_path": "USB Device Path",
-          "baudrate": "Connection Speed",
-          "contact_refresh_interval": "Contact List Refresh (seconds)"
+          "baudrate": "Connection Speed"
         },
         "description": "Connect to your MeshCore node via USB",
         "title": "Configure USB Connection"
       },
       "ble": {
         "data": {
-          "ble_address": "Bluetooth Device",
-          "contact_refresh_interval": "Contact List Refresh (seconds)"
+          "ble_address": "Bluetooth Device"
         },
         "description": "Connect to your MeshCore node via Bluetooth",
         "title": "Configure Bluetooth Connection"
@@ -44,8 +42,7 @@
       "tcp": {
         "data": {
           "tcp_host": "Host Address",
-          "tcp_port": "Port",
-          "contact_refresh_interval": "Contact List Refresh (seconds)"
+          "tcp_port": "Port"
         },
         "description": "Connect to your MeshCore node over the network",
         "title": "Configure Network Connection"
@@ -101,9 +98,11 @@
       },
       "global_settings": {
         "data": {
-          "contact_refresh_interval": "Contact Discovery (seconds)"
+          "disable_contact_discovery": "Disable Contact Discovery",
+          "self_telemetry_enabled": "Enable Self Telemetry",
+          "self_telemetry_interval": "Self Telemetry Interval (seconds)"
         },
-        "description": "Configure default values for all devices",
+        "description": "Configure global integration settings",
         "title": "Global Settings"
       }
     }
@@ -173,6 +172,50 @@
         "entry_id": {
           "name": "Config Entry ID",
           "description": "The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device."
+        }
+      }
+    },
+    "add_selected_contact": {
+      "name": "Add Selected Contact",
+      "description": "Add the contact selected in the discovered contact select entity to your node's contact list.",
+      "fields": {
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device."
+        }
+      }
+    },
+    "remove_selected_contact": {
+      "name": "Remove Selected Contact",
+      "description": "Remove the contact selected in the added contact select entity from your node's contact list.",
+      "fields": {
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device."
+        }
+      }
+    },
+    "remove_discovered_contact": {
+      "name": "Remove Discovered Contact",
+      "description": "Remove a discovered contact from the discovered contacts list. This will remove the contact from Home Assistant but does NOT remove it from your node's contact list. You can specify the pubkey_prefix directly, or leave it blank to use the selected contact from the discovered contact select entity.",
+      "fields": {
+        "pubkey_prefix": {
+          "name": "Public Key Prefix",
+          "description": "The public key prefix (at least 6 characters) of the contact to remove. Leave empty to use the selected contact from the discovered contact select entity."
+        },
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device."
+        }
+      }
+    },
+    "cleanup_unavailable_contacts": {
+      "name": "Cleanup Unavailable Contacts",
+      "description": "Remove all unavailable MeshCore contact binary sensors from Home Assistant.",
+      "fields": {
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "The config entry ID if you have multiple MeshCore devices. Leave empty to clean all devices."
         }
       }
     }

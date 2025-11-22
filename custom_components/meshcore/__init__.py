@@ -11,8 +11,6 @@ from meshcore.events import EventType
 from .const import (
     CONF_REPEATER_TELEMETRY_ENABLED,
     CONF_TRACKED_CLIENTS,
-    CONF_CONTACT_REFRESH_INTERVAL,
-    DEFAULT_CONTACT_REFRESH_INTERVAL,
 )
 
 from homeassistant.config_entries import ConfigEntry
@@ -62,9 +60,6 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         new_data = dict(config_entry.data)
         
         # Add new fields if they don't exist
-        if CONF_CONTACT_REFRESH_INTERVAL not in new_data:
-            new_data[CONF_CONTACT_REFRESH_INTERVAL] = DEFAULT_CONTACT_REFRESH_INTERVAL
-        
         if CONF_TRACKED_CLIENTS not in new_data:
             new_data[CONF_TRACKED_CLIENTS] = []
         
@@ -280,6 +275,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if public_key:
                 _LOGGER.info(f"Discovered new contact: {contact.get('adv_name', 'Unknown')} ({public_key[:12]})")
                 coordinator._discovered_contacts[public_key] = contact
+
+                # Mark contact as dirty for binary sensor updates
+                coordinator.mark_contact_dirty(public_key[:12])
 
                 # Save to storage
                 try:
