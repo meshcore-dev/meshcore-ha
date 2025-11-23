@@ -31,6 +31,17 @@ Fired when any message is received. Ideal for notifications and message logging.
 - `timestamp` - When received
 - `message_type` - "channel"
 - `pubkey_prefix` - Sender's public key prefix
+- `rx_log_data` - (Optional) Array of radio reception details when message was received via multiple mesh paths:
+  - `channel_idx` - Channel number
+  - `channel_name` - Channel name
+  - `timestamp` - Message timestamp
+  - `text` - Decrypted message text
+  - `snr` - Signal-to-noise ratio in dB
+  - `rssi` - Received signal strength indicator
+  - `path_len` - Number of hops
+  - `path` - Hex-encoded path (node pubkey prefixes)
+  - `channel_hash` - Channel identifier hash
+  - `decrypted` - Whether decryption succeeded
 
 **Direct Message Fields:**
 - `message` - Message text
@@ -119,6 +130,32 @@ Every raw event contains:
 - `sender_timestamp` - When sent
 
 **EventType.MSG_SENT** - Message transmission confirmed
+
+**EventType.RX_LOG_DATA** - Raw radio reception log
+- `raw_hex` - Complete raw LoRa packet
+- `snr` - Signal-to-noise ratio in dB
+- `rssi` - Received signal strength indicator
+- `payload` - Packet payload hex string
+- `payload_length` - Length of payload
+- `parsed` - Parsed packet structure:
+  - `header` - Packet header byte
+  - `path_len` - Number of hops
+  - `path` - Routing path hex
+  - `path_nodes` - Array of node pubkey prefixes
+  - `channel_hash` - Channel identifier
+- `decrypted` - (Optional) Decrypted GroupText payload:
+  - `channel_idx` - Channel number
+  - `channel_name` - Channel name
+  - `timestamp` - Message timestamp
+  - `text` - Decrypted message text
+  - `decrypted` - Whether decryption succeeded
+  - `path_len` - Number of hops
+  - `path` - Routing path
+  - `channel_hash` - Channel hash
+
+:::info
+RX_LOG events are automatically correlated with `meshcore_message` events. The integration decrypts GroupText payloads and attaches radio metrics (SNR, RSSI, path) to the corresponding message event as `rx_log_data`. This allows you to see which mesh routes your messages took and signal quality for each reception.
+:::
 
 #### Device Events
 **EventType.BATTERY** - Battery status
@@ -224,17 +261,45 @@ action:
 alias: Poor Signal Alert
 trigger:
   - platform: event
-    event_type: meshcore_raw_event
+    event_type: meshcore_message
     event_data:
-      event_type: "EventType.CONTACT_MSG_RECV"
+      message_type: "channel"
 condition:
   - condition: template
-    value_template: "{{ trigger.event.data.payload.SNR < 5 }}"
+    value_template: >
+      {{ trigger.event.data.rx_log_data is defined and
+         trigger.event.data.rx_log_data | selectattr('snr', 'lt', 5) | list | length > 0 }}
 action:
   - service: notify.notify
     data:
-      title: "Poor Signal"
-      message: "SNR: {{ trigger.event.data.payload.SNR }}dB"
+      title: "Poor Signal Quality"
+      message: >
+        Message from {{ trigger.event.data.sender_name }} had poor signal:
+        {% for rx in trigger.event.data.rx_log_data %}
+        Path {{ rx.path_len }} hops: SNR {{ rx.snr }}dB, RSSI {{ rx.rssi }}
+        {% endfor %}
+```
+
+### Mesh Path Monitoring
+```yaml
+alias: Multi-Path Message Detection
+trigger:
+  - platform: event
+    event_type: meshcore_message
+    event_data:
+      message_type: "channel"
+condition:
+  - condition: template
+    value_template: "{{ trigger.event.data.rx_log_data | length > 1 }}"
+action:
+  - service: logbook.log
+    data:
+      name: "Mesh Routing"
+      message: >
+        Message received via {{ trigger.event.data.rx_log_data | length }} paths:
+        {% for rx in trigger.event.data.rx_log_data %}
+        - {{ rx.path_len }} hops ({{ rx.path }}): SNR {{ rx.snr }}dB
+        {% endfor %}
 ```
 
 ### Contact Discovery
@@ -268,6 +333,27 @@ data:
   timestamp: "2025-09-11T18:08:47.722967"
   message_type: "channel"
   pubkey_prefix: "f293ac8c4a71"
+  rx_log_data:
+    - channel_idx: 0
+      channel_name: "public"
+      timestamp: 1762838456
+      text: "🦄: Testing channel 0"
+      snr: 12.0
+      rssi: -70
+      path_len: 0
+      path: ""
+      channel_hash: "11"
+      decrypted: true
+    - channel_idx: 0
+      channel_name: "public"
+      timestamp: 1762838456
+      text: "🦄: Testing channel 0"
+      snr: 5.5
+      rssi: -50
+      path_len: 1
+      path: "cf"
+      channel_hash: "11"
+      decrypted: true
 ```
 
 #### Received Direct Message
@@ -311,6 +397,36 @@ data:
     sender_timestamp: 1757613902
     text: "Test message"
   timestamp: 1757613903.7221627
+```
+
+#### Radio Reception Log
+```yaml
+event_type: meshcore_raw_event
+data:
+  event_type: EventType.RX_LOG_DATA
+  payload:
+    raw_hex: 32ce1501cf11e351c12442cbb78bab821ae4ab935d741e58
+    snr: 12.5
+    rssi: -50
+    payload: 1501cf11e351c12442cbb78bab821ae4ab935d741e58
+    payload_length: 22
+    parsed:
+      header: "15"
+      path_len: 1
+      path: cf
+      path_nodes:
+        - cf
+      channel_hash: "11"
+    decrypted:
+      channel_idx: 0
+      channel_name: Public
+      timestamp: 1762838525
+      text: "🦄: Test message"
+      decrypted: true
+      path_len: 1
+      path: cf
+      channel_hash: "11"
+  timestamp: 1762838527.1688693
 ```
 
 #### Contacts Update

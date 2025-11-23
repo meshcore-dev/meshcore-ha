@@ -1,4 +1,5 @@
 """Logbook integration for MeshCore."""
+import asyncio
 from calendar import c
 import logging
 from typing import  Callable
@@ -12,6 +13,7 @@ from .const import (
     DEFAULT_DEVICE_NAME,
 )
 from .utils import (
+    create_message_correlation_key,
     get_channel_entity_id,
     get_contact_entity_id
 )
@@ -117,6 +119,22 @@ async def handle_channel_message(event, coordinator) -> None:
         # Add sender pubkey if available
         if sender_pubkey:
             event_data["pubkey_prefix"] = sender_pubkey
+
+        # Correlate with RX_LOG data - delay 500ms to collect multiple receptions
+        try:
+            timestamp = payload.get("sender_timestamp")
+            original_text = payload.get("text", "")
+
+            if channel_idx is not None and timestamp and original_text:
+                await asyncio.sleep(0.5)
+                hash_key = create_message_correlation_key(channel_idx, timestamp, original_text)
+                rx_logs = coordinator._pending_rx_logs.pop(hash_key, None)
+
+                if rx_logs:
+                    _LOGGER.debug(f"Correlated channel message with {len(rx_logs)} RX_LOG reception(s)")
+                    event_data["rx_log_data"] = rx_logs
+        except Exception as ex:
+            _LOGGER.debug(f"Error correlating channel message with RX_LOG: {ex}")
 
         # Fire event
         hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, event_data)

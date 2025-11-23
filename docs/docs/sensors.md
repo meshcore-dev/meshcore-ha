@@ -268,8 +268,7 @@ Consistent naming patterns for easy identification:
 ## Data Freshness
 
 Sensors implement freshness tracking:
-- **Telemetry sensors**: Mark unavailable after 1 hour without updates
-- **Repeater sensors**: Mark unavailable after 1 hour without data
+- **Tracked device sensors** (repeaters/clients/telemetry): Mark unavailable after 3x the configured update interval without data
 - **Contact binary sensors**: Show stale after 12 hours without advertisement
 - **GPS trackers**: Update on each telemetry reception
 

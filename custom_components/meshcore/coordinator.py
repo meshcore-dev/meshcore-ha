@@ -8,6 +8,8 @@ import time
 from datetime import timedelta
 from typing import Any, Dict
 
+from cachetools import TTLCache
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -34,13 +36,16 @@ from .const import (
     REPEATER_BACKOFF_BASE,
     MAX_FAILURES_BEFORE_PATH_RESET,
     MAX_RANDOM_DELAY,
-    CONF_CONTACT_REFRESH_INTERVAL,
-    DEFAULT_CONTACT_REFRESH_INTERVAL,
     CONF_REPEATER_TELEMETRY_ENABLED,
     CONF_SELF_TELEMETRY_ENABLED,
     CONF_SELF_TELEMETRY_INTERVAL,
     DEFAULT_SELF_TELEMETRY_INTERVAL,
     CONF_DEVICE_DISABLED,
+    AUTO_DISABLE_HOURS,
+    RATE_LIMITER_CAPACITY,
+    RATE_LIMITER_REFILL_RATE_SECONDS,
+    RX_LOG_CACHE_MAX_SIZE,
+    RX_LOG_CACHE_TTL_SECONDS,
 )
 from .meshcore_api import MeshCoreAPI
 
@@ -99,8 +104,11 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         # Keys can be channel indices (int) or public key prefixes (str)
         self.message_timestamps = {}
 
-        # Rate limiter for mesh requests (20 burst capacity, 1 req per 5 minutes average)
-        self._rate_limiter = TokenBucket(capacity=20, refill_rate_seconds=180)
+        # Rate limiter for mesh requests
+        self._rate_limiter = TokenBucket(
+            capacity=RATE_LIMITER_CAPACITY,
+            refill_rate_seconds=RATE_LIMITER_REFILL_RATE_SECONDS
+        )
 
         # Repeater subscription tracking
         self._tracked_repeaters = self.config_entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, [])
@@ -109,6 +117,8 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self._next_repeater_update_times = {}  # Track when each repeater should next be updated
         self._active_repeater_tasks = {}  # Track active update tasks by pubkey_prefix
         self._repeater_consecutive_failures = {}  # Track consecutive failed updates by pubkey_prefix
+        self._last_successful_request = {}  # Track last successful request timestamp by pubkey_prefix
+        self._auto_disabled_devices = set()  # Track devices auto-disabled due to inactivity (resets on restart)
         
         # Tracked clients tracking (no login needed, uses ACLs)
         self._tracked_clients = self.config_entry.data.get(CONF_TRACKED_CLIENTS, [])
@@ -136,15 +146,42 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         
         # Initialization tracking flags
         self._device_info_initialized = False
-        
+
         # Telemetry sensor manager - will be initialized when sensors are set up
         self.telemetry_manager = None
-        
+
+        # Track coordinator start time for auto-disable logic
+        self._coordinator_start_time = time.time()
+
+        # RX_LOG correlation cache: auto-evicts after TTL expires
+        # Key: correlation hash, Value: list of RX_LOG data (multiple receptions possible)
+        self._pending_rx_logs = TTLCache(
+            maxsize=RX_LOG_CACHE_MAX_SIZE,
+            ttl=RX_LOG_CACHE_TTL_SECONDS
+        )
+
         if not hasattr(self, "last_update_success_time"):
             self.last_update_success_time = self._current_time()
-            
+
         # Initialize reliability stats tracking
         self._reliability_stats = {}
+
+        # Dirty contacts tracking for performance optimization
+        # Set of pubkey prefixes that have been updated and need sensor refresh
+        self._dirty_contacts = set()
+
+    def mark_contact_dirty(self, pubkey_prefix: str):
+        """Mark a contact as needing update (for performance optimization)."""
+        if pubkey_prefix:
+            self._dirty_contacts.add(pubkey_prefix)
+
+    def is_contact_dirty(self, pubkey_prefix: str) -> bool:
+        """Check if a contact needs update."""
+        return pubkey_prefix in self._dirty_contacts
+
+    def clear_contact_dirty(self, pubkey_prefix: str):
+        """Clear dirty flag after updating contact sensor."""
+        self._dirty_contacts.discard(pubkey_prefix)
 
     def get_all_contacts(self) -> list:
         """Get deduplicated list of all contacts (added + discovered).
@@ -186,6 +223,8 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         """Increment success counter for a node."""
         stats_key = f"{pubkey_prefix}_request_successes"
         self._reliability_stats[stats_key] = self._reliability_stats.get(stats_key, 0) + 1
+        # Track last successful request time
+        self._last_successful_request[pubkey_prefix] = time.time()
         
     def _increment_failure(self, pubkey_prefix: str) -> None:
         """Increment failure counter for a node."""
@@ -704,12 +743,27 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 _LOGGER.warning(f"Repeater config missing name or pubkey_prefix: {repeater_config}")
                 continue
 
-            if repeater_config.get(CONF_DEVICE_DISABLED, False):
-                continue
-
             pubkey_prefix = repeater_config.get("pubkey_prefix")
             repeater_name = repeater_config.get("name")
-            
+
+            # Check if device is disabled (either in config or auto-disabled)
+            if repeater_config.get(CONF_DEVICE_DISABLED, False) or pubkey_prefix in self._auto_disabled_devices:
+                continue
+
+            # Check if repeater has had no successful requests in AUTO_DISABLE_HOURS
+            # Use last success time, or coordinator start time if never succeeded
+            last_success_time = self._last_successful_request.get(pubkey_prefix, self._coordinator_start_time)
+            hours_since_success = (current_time - last_success_time) / 3600  # Convert to hours
+
+            if hours_since_success >= AUTO_DISABLE_HOURS:
+                _LOGGER.warning(
+                    f"Repeater {repeater_name} has had no successful requests in {hours_since_success:.1f} hours. "
+                    f"Automatically disabling to reduce network traffic. This will reset on restart."
+                )
+                # Add to auto-disabled set (will reset on restart)
+                self._auto_disabled_devices.add(pubkey_prefix)
+                continue
+
             # Clean c completed or failed tasks
             if pubkey_prefix in self._active_repeater_tasks:
                 task = self._active_repeater_tasks[pubkey_prefix]
@@ -790,11 +844,12 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 _LOGGER.warning(f"Client config missing name or pubkey_prefix: {client_config}")
                 continue
 
-            if client_config.get(CONF_DEVICE_DISABLED, False):
-                continue
-
             pubkey_prefix = client_config.get("pubkey_prefix")
             client_name = client_config.get("name")
+
+            # Check if device is disabled (either in config or auto-disabled)
+            if client_config.get(CONF_DEVICE_DISABLED, False) or pubkey_prefix in self._auto_disabled_devices:
+                continue
             
             if pubkey_prefix in self._active_telemetry_tasks:
                 task = self._active_telemetry_tasks[pubkey_prefix]

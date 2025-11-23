@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import entity_registry as er
 from homeassistant.const import MAJOR_VERSION
 from meshcore.events import EventType
 
@@ -20,6 +21,7 @@ from .const import (
     SERVICE_MESSAGE_SCRIPT,
     SERVICE_ADD_SELECTED_CONTACT,
     SERVICE_REMOVE_SELECTED_CONTACT,
+    SERVICE_REMOVE_DISCOVERED_CONTACT,
     SERVICE_CLEANUP_UNAVAILABLE_CONTACTS,
     SELECT_NO_CONTACTS,
     SELECT_NO_DISCOVERED,
@@ -362,8 +364,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                         "import_contact": ["bytes"],
                         "update_contact": ["contact", "str", "str"],  # contact, path, flags
                         "add_contact": ["contact"],
-                        "change_contact_path": ["contact", "str"],
-                        "change_contact_flags": ["contact", "str"],
+                        "change_contact_path": ["contact", "int"],
+                        "change_contact_flags": ["contact", "int"],
                         
                         # Messaging commands
                         "get_msg": ["float"],  # timeout (optional)
@@ -737,6 +739,98 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         )
         await async_execute_command_service(command_call)
 
+    async def async_remove_discovered_contact_service(call: ServiceCall) -> None:
+        """Remove a discovered contact from the discovered contacts list."""
+        entry_id = call.data.get(ATTR_ENTRY_ID)
+        pubkey_prefix = call.data.get(ATTR_PUBKEY_PREFIX)
+
+        # If pubkey_prefix not provided, get from discovered contact select entity
+        if not pubkey_prefix:
+            select_entity_id = None
+            if entry_id:
+                registry = hass.helpers.entity_registry.async_get()
+                for entity in registry.entities.values():
+                    if entity.unique_id == f"{entry_id}_discovered_contact_select":
+                        select_entity_id = entity.entity_id
+                        break
+            else:
+                for state in hass.states.async_all():
+                    if state.entity_id.startswith("select.") and "discovered_contact" in state.entity_id:
+                        select_entity_id = state.entity_id
+                        break
+
+            if not select_entity_id:
+                _LOGGER.error("Discovered contact select entity not found and no pubkey_prefix provided")
+                return
+
+            select_entity = hass.states.get(select_entity_id)
+            if not select_entity:
+                _LOGGER.error(f"Could not get state for {select_entity_id}")
+                return
+
+            selected_option = select_entity.state
+            if not selected_option or selected_option in [SELECT_NO_CONTACTS, SELECT_NO_DISCOVERED]:
+                _LOGGER.error("No contact selected")
+                return
+
+            pubkey_prefix = extract_pubkey_from_selection(selected_option)
+            if not pubkey_prefix:
+                _LOGGER.error(f"Could not parse pubkey from selection: {selected_option}")
+                return
+
+        # Find coordinator for this entry_id or use first available
+        coordinator = None
+        if entry_id:
+            coordinator = hass.data[DOMAIN].get(entry_id)
+        else:
+            for config_entry_id, coord in hass.data[DOMAIN].items():
+                if hasattr(coord, 'api'):
+                    coordinator = coord
+                    break
+
+        if not coordinator:
+            _LOGGER.error("Could not find coordinator")
+            return
+
+        # Find the full public key from discovered contacts
+        full_pubkey = None
+        for pubkey, contact in coordinator._discovered_contacts.items():
+            if pubkey.startswith(pubkey_prefix):
+                full_pubkey = pubkey
+                break
+
+        if not full_pubkey:
+            _LOGGER.error(f"Discovered contact not found with prefix: {pubkey_prefix}")
+            return
+
+        # Remove from discovered contacts
+        contact_name = coordinator._discovered_contacts[full_pubkey].get("adv_name", "Unknown")
+        del coordinator._discovered_contacts[full_pubkey]
+        _LOGGER.info(f"Removed discovered contact: {contact_name} ({pubkey_prefix})")
+
+        # Save to storage
+        try:
+            await coordinator._store.async_save(coordinator._discovered_contacts)
+        except Exception as ex:
+            _LOGGER.error(f"Error saving discovered contacts: {ex}")
+
+        # Clear dirty flag
+        coordinator.clear_contact_dirty(pubkey_prefix)
+
+        # Trigger coordinator update
+        updated_data = dict(coordinator.data) if coordinator.data else {}
+        updated_data["contacts"] = coordinator.get_all_contacts()
+        coordinator.async_set_updated_data(updated_data)
+
+        # Remove the binary sensor entity for this contact
+        entity_registry = er.async_get(hass)
+        for entity in list(entity_registry.entities.values()):
+            if entity.platform == DOMAIN and entity.domain == "binary_sensor":
+                if entity.unique_id == pubkey_prefix:
+                    _LOGGER.info(f"Removing binary sensor entity: {entity.entity_id}")
+                    entity_registry.async_remove(entity.entity_id)
+                    break
+
     # Register the contact management services
     hass.services.async_register(
         DOMAIN,
@@ -752,11 +846,21 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         schema=UI_MESSAGE_SCHEMA,
     )
 
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_REMOVE_DISCOVERED_CONTACT,
+        async_remove_discovered_contact_service,
+        schema=vol.Schema({
+            vol.Optional(ATTR_ENTRY_ID): cv.string,
+            vol.Optional(ATTR_PUBKEY_PREFIX): cv.string,
+        }),
+    )
+
     async def async_cleanup_unavailable_contacts_service(call: ServiceCall) -> None:
         """Remove all unavailable MeshCore contact binary sensors."""
         entry_id = call.data.get(ATTR_ENTRY_ID)
 
-        entity_registry = hass.helpers.entity_registry.async_get()
+        entity_registry = er.async_get(hass)
         removed_count = 0
 
         for entity in list(entity_registry.entities.values()):
@@ -852,6 +956,9 @@ async def async_unload_services(hass: HomeAssistant) -> None:
 
     if hass.services.has_service(DOMAIN, SERVICE_REMOVE_SELECTED_CONTACT):
         hass.services.async_remove(DOMAIN, SERVICE_REMOVE_SELECTED_CONTACT)
+
+    if hass.services.has_service(DOMAIN, SERVICE_REMOVE_DISCOVERED_CONTACT):
+        hass.services.async_remove(DOMAIN, SERVICE_REMOVE_DISCOVERED_CONTACT)
 
     if hass.services.has_service(DOMAIN, SERVICE_CLEANUP_UNAVAILABLE_CONTACTS):
         hass.services.async_remove(DOMAIN, SERVICE_CLEANUP_UNAVAILABLE_CONTACTS)

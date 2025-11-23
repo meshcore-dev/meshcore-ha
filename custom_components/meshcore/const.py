@@ -33,6 +33,7 @@ SERVICE_EXECUTE_COMMAND_UI: Final = "execute_command_ui"
 SERVICE_MESSAGE_SCRIPT: Final = "send_ui_message"
 SERVICE_ADD_SELECTED_CONTACT: Final = "add_selected_contact"
 SERVICE_REMOVE_SELECTED_CONTACT: Final = "remove_selected_contact"
+SERVICE_REMOVE_DISCOVERED_CONTACT: Final = "remove_discovered_contact"
 SERVICE_CLEANUP_UNAVAILABLE_CONTACTS: Final = "cleanup_unavailable_contacts"
 
 # Select entity placeholders
@@ -77,10 +78,10 @@ DEFAULT_CLIENT_UPDATE_INTERVAL: Final = 7200  # 2 hours in seconds
 
 # Device monitoring
 CONF_DEVICE_DISABLED: Final = "disabled"
+AUTO_DISABLE_HOURS: Final = 120  # Auto-disable devices after this many hours without success
 
-# Contact refresh interval
-CONF_CONTACT_REFRESH_INTERVAL: Final = "contact_refresh_interval"
-DEFAULT_CONTACT_REFRESH_INTERVAL: Final = 60  # 1 minute in seconds
+# Contact discovery settings
+CONF_DISABLE_CONTACT_DISCOVERY: Final = "disable_contact_discovery"
 
 # Self telemetry settings
 CONF_SELF_TELEMETRY_ENABLED: Final = "self_telemetry_enabled"
@@ -108,6 +109,17 @@ DEFAULT_UPDATE_TICK: Final = 5  # base polling interval
 
 # Other constants
 CONNECTION_TIMEOUT: Final = 10  # seconds
+
+# Rate limiter settings
+RATE_LIMITER_CAPACITY: Final = 20
+RATE_LIMITER_REFILL_RATE_SECONDS: Final = 120
+
+# RX_LOG correlation cache settings
+RX_LOG_CACHE_MAX_SIZE: Final = 100
+RX_LOG_CACHE_TTL_SECONDS: Final = 5.0
+
+# Sensor availability timeout multiplier
+SENSOR_AVAILABILITY_TIMEOUT_MULTIPLIER: Final = 3
 
 
 class NodeType(IntEnum):

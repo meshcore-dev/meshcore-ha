@@ -27,16 +27,14 @@
       "usb": {
         "data": {
           "usb_path": "Cesta k zariadeniu USB",
-          "baudrate": "Rýchlosť pripojenia",
-          "contact_refresh_interval": "Obnovovanie zoznamu kontaktov (v sekundách)"
+          "baudrate": "Rýchlosť pripojenia"
         },
         "description": "Pripojte sa k vášmu uzlu MeshCore prostredníctvom USB",
         "title": "Nastaviť USB pripojenie"
       },
       "ble": {
         "data": {
-          "ble_address": "Bluetooth zariadenie",
-          "contact_refresh_interval": "Obnovovanie zoznamu kontaktov (v sekundách)"
+          "ble_address": "Bluetooth zariadenie"
         },
         "description": "Pripojte sa k vášmu uzlu MeshCore prostredníctvom Bluetooth",
         "title": "Nastaviť pripojenie Bluetooth"
@@ -44,8 +42,7 @@
       "tcp": {
         "data": {
           "tcp_host": "Adresa hostiteľa",
-          "tcp_port": "Port",
-          "contact_refresh_interval": "Obnovovanie zoznamu kontaktov (v sekundách)"
+          "tcp_port": "Port"
         },
         "description": "Pripojte sa k vášmu uzlu MeshCore prostredníctvom siete",
         "title": "Nastaviť sieťové pripojenie"
@@ -101,9 +98,11 @@
       },
       "global_settings": {
         "data": {
-          "contact_refresh_interval": "Zisťovanie kontaktov (v sekundách)"
+          "disable_contact_discovery": "Zakázať zisťovanie kontaktov",
+          "self_telemetry_enabled": "Povoliť vlastnú telemetriu",
+          "self_telemetry_interval": "Interval vlastnej telemetrie (v sekundách)"
         },
-        "description": "Nastavte predvolené hodnoty pre všetky zariadenia",
+        "description": "Konfigurácia globálnych nastavení integrácie",
         "title": "Globálne nastavenia"
       }
     }
@@ -181,6 +180,50 @@
         "entry_id": {
           "name": "ID konfigurácie",
           "description": "ID konfigurácie, ak máte viac zariadení MeshCore. Nevyplňujte, ak chcete použiť prvé dostupné zariadenie."
+        }
+      }
+    },
+    "add_selected_contact": {
+      "name": "Pridať vybraný kontakt",
+      "description": "Pridať kontakt vybraný v entite výberu objavených kontaktov do zoznamu kontaktov vášho uzla.",
+      "fields": {
+        "entry_id": {
+          "name": "ID konfigurácie",
+          "description": "ID konfigurácie, ak máte viac zariadení MeshCore. Nevyplňujte, ak chcete použiť prvé dostupné zariadenie."
+        }
+      }
+    },
+    "remove_selected_contact": {
+      "name": "Odstrániť vybraný kontakt",
+      "description": "Odstrániť kontakt vybraný v entite výberu pridaných kontaktov zo zoznamu kontaktov vášho uzla.",
+      "fields": {
+        "entry_id": {
+          "name": "ID konfigurácie",
+          "description": "ID konfigurácie, ak máte viac zariadení MeshCore. Nevyplňujte, ak chcete použiť prvé dostupné zariadenie."
+        }
+      }
+    },
+    "remove_discovered_contact": {
+      "name": "Odstrániť objavený kontakt",
+      "description": "Odstrániť objavený kontakt zo zoznamu objavených kontaktov. Toto odstráni kontakt z Home Asistenta, ale NEODSTRÁNI ho zo zoznamu kontaktov vášho uzla. Môžete priamo zadať pubkey_prefix alebo ho nechať prázdny a použije sa vybraný kontakt z entity výberu objavených kontaktov.",
+      "fields": {
+        "pubkey_prefix": {
+          "name": "Prefix verejného kľúča",
+          "description": "Prefix verejného kľúča (aspoň 6 znakov) kontaktu na odstránenie. Nechajte prázdne, aby sa použil vybraný kontakt z entity výberu objavených kontaktov."
+        },
+        "entry_id": {
+          "name": "ID konfigurácie",
+          "description": "ID konfigurácie, ak máte viac zariadení MeshCore. Nevyplňujte, ak chcete použiť prvé dostupné zariadenie."
+        }
+      }
+    },
+    "cleanup_unavailable_contacts": {
+      "name": "Vyčistiť nedostupné kontakty",
+      "description": "Odstrániť všetky nedostupné binárne senzory kontaktov MeshCore z Home Asistenta.",
+      "fields": {
+        "entry_id": {
+          "name": "ID konfigurácie",
+          "description": "ID konfigurácie, ak máte viac zariadení MeshCore. Nechajte prázdne, aby sa vyčistili všetky zariadenia."
         }
       }
     }
