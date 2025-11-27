@@ -206,7 +206,7 @@ REPEATER_SENSORS = [
         key="airtime",
         native_unit_of_measurement="min",
         suggested_display_precision="1",
-        state_class=SensorStateClass.MEASUREMENT,
+        state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:radio",
     ),
     SensorEntityDescription(
@@ -292,7 +292,7 @@ REPEATER_SENSORS = [
         key="rx_airtime",
         native_unit_of_measurement="min",
         suggested_display_precision="1",
-        state_class=SensorStateClass.MEASUREMENT,
+        state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:radio",
     ),
     SensorEntityDescription(
