@@ -400,7 +400,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         if not hasattr(coordinator, "_contacts"):
             return []
 
-        for contact in coordinator._contacts: # type: ignore
+        for contact in coordinator._contacts.values(): # type: ignore
             if not isinstance(contact, dict):
                 continue
 
@@ -767,7 +767,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         if not hasattr(coordinator, "_contacts"):
             return []
 
-        for contact in coordinator._contacts: # type: ignore
+        for contact in coordinator._contacts.values(): # type: ignore
             if not isinstance(contact, dict):
                 continue
 

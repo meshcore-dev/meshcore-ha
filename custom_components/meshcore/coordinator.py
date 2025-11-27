@@ -75,7 +75,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self.config_entry = config_entry
         self.data: Dict[str, Any] = {}
         self._current_node_info = {}
-        self._contacts = []
+        self._contacts = {}  # Dict keyed by 12-char public_key prefix
         self._discovered_contacts = {}  # Dict keyed by public_key
         self._manual_mode_initialized = False
 
@@ -131,7 +131,6 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         
         # Track last update times for different data types
         self._last_repeater_updates = {}  # Dictionary to track per-repeater updates
-        self._contacts = []
         self._last_contact_refresh = 0  # Track when contacts were last refreshed
         
         # Self telemetry tracking
@@ -171,17 +170,32 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self._dirty_contacts = set()
 
     def mark_contact_dirty(self, pubkey_prefix: str):
-        """Mark a contact as needing update (for performance optimization)."""
+        """Mark a contact as needing update (for performance optimization).
+
+        Accepts either full public key or 12-char prefix, normalizes to 12-char prefix.
+        """
         if pubkey_prefix:
-            self._dirty_contacts.add(pubkey_prefix)
+            normalized = pubkey_prefix[:12]
+            self._dirty_contacts.add(normalized)
 
     def is_contact_dirty(self, pubkey_prefix: str) -> bool:
-        """Check if a contact needs update."""
-        return pubkey_prefix in self._dirty_contacts
+        """Check if a contact needs update.
+
+        Accepts either full public key or 12-char prefix, normalizes to 12-char prefix.
+        """
+        if not pubkey_prefix:
+            return False
+        normalized = pubkey_prefix[:12]
+        return normalized in self._dirty_contacts
 
     def clear_contact_dirty(self, pubkey_prefix: str):
-        """Clear dirty flag after updating contact sensor."""
-        self._dirty_contacts.discard(pubkey_prefix)
+        """Clear dirty flag after updating contact sensor.
+
+        Accepts either full public key or 12-char prefix, normalizes to 12-char prefix.
+        """
+        if pubkey_prefix:
+            normalized = pubkey_prefix[:12]
+            self._dirty_contacts.discard(normalized)
 
     def get_all_contacts(self) -> list:
         """Get deduplicated list of all contacts (added + discovered).
@@ -192,10 +206,10 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         contacts_dict = {}
 
         # Build set of public keys that are in added contacts
-        added_pubkeys = set(c.get("public_key") for c in self._contacts if c.get("public_key"))
+        added_pubkeys = set(c.get("public_key") for c in self._contacts.values() if c.get("public_key"))
 
         # Process all contacts (discovered + added)
-        all_contacts = list(self._discovered_contacts.values()) + self._contacts
+        all_contacts = list(self._discovered_contacts.values()) + list(self._contacts.values())
 
         for contact in all_contacts:
             public_key = contact.get("public_key")
@@ -218,6 +232,14 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 contacts_dict[public_key] = contact_copy
 
         return list(contacts_dict.values())
+
+    def get_contact_by_prefix(self, prefix: str) -> Dict[str, Any]:
+        """Get a contact by its 12-character public key prefix.
+
+        This is an O(1) lookup operation. Returns the contact dict if found,
+        otherwise returns an empty dict.
+        """
+        return self._contacts.get(prefix, {})
 
     def _increment_success(self, pubkey_prefix: str) -> None:
         """Increment success counter for a node."""
@@ -697,8 +719,13 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             contacts_changed = await self.api.mesh_core.ensure_contacts(follow=True)
             if contacts_changed:
                 self.logger.info("Contacts synced from node")
-            # Always read from meshcore's in-memory list
-            self._contacts = list(self.api.mesh_core.contacts.values())
+            # Always read from meshcore's in-memory list and index by 12-char prefix
+            self._contacts = {}
+            for contact in self.api.mesh_core.contacts.values():
+                public_key = contact.get("public_key")
+                if public_key:
+                    prefix = public_key[:12]
+                    self._contacts[prefix] = contact
         except Exception as ex:
             self.logger.error(f"Error syncing contacts: {ex}")
 

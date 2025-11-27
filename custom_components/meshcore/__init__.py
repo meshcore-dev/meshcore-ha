@@ -164,6 +164,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except Exception as ex:
         _LOGGER.error(f"Error loading discovered contacts: {ex}")
 
+    # Load contacts from device on initialization
+    if connected and api.mesh_core:
+        try:
+            _LOGGER.info("Loading contacts from device on initialization...")
+            contacts_changed = await api.mesh_core.ensure_contacts(follow=False)
+
+            # Index contacts by 12-char prefix
+            coordinator._contacts = {}
+            for contact in api.mesh_core.contacts.values():
+                public_key = contact.get("public_key")
+                if public_key:
+                    prefix = public_key[:12]
+                    coordinator._contacts[prefix] = contact
+                    # Mark each contact as dirty so binary sensors update
+                    coordinator.mark_contact_dirty(prefix)
+
+            _LOGGER.info(f"Loaded {len(coordinator._contacts)} contacts from device")
+        except Exception as ex:
+            _LOGGER.error(f"Error loading contacts from device: {ex}")
+
     # Store coordinator for this entry
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
