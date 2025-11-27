@@ -508,8 +508,12 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                                 contact_to_add["added_to_node"] = True
 
                                 # Add to coordinator if not already present
-                                if not any(c.get("public_key") == pubkey for c in coordinator._contacts):
-                                    coordinator._contacts.append(contact_to_add)
+                                prefix = pubkey[:12]
+                                if prefix not in coordinator._contacts:
+                                    coordinator._contacts[prefix] = contact_to_add
+
+                                # Mark contact as dirty so binary sensors update
+                                coordinator.mark_contact_dirty(prefix)
 
                                 # Trigger immediate update
                                 updated_data = dict(coordinator.data) if coordinator.data else {}
@@ -527,7 +531,13 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                                     del api.mesh_core._contacts[pubkey]
 
                                 # Remove from coordinator and trigger immediate update
-                                coordinator._contacts = [c for c in coordinator._contacts if c.get("public_key") != pubkey]
+                                prefix = pubkey[:12]
+                                if prefix in coordinator._contacts:
+                                    del coordinator._contacts[prefix]
+
+                                # Mark contact as dirty so binary sensors update
+                                coordinator.mark_contact_dirty(prefix)
+
                                 updated_data = dict(coordinator.data) if coordinator.data else {}
                                 updated_data["contacts"] = coordinator.get_all_contacts()
                                 coordinator.async_set_updated_data(updated_data)
@@ -814,8 +824,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         except Exception as ex:
             _LOGGER.error(f"Error saving discovered contacts: {ex}")
 
-        # Clear dirty flag
-        coordinator.clear_contact_dirty(pubkey_prefix)
+        # Mark contact as dirty so binary sensors update
+        coordinator.mark_contact_dirty(pubkey_prefix)
 
         # Trigger coordinator update
         updated_data = dict(coordinator.data) if coordinator.data else {}

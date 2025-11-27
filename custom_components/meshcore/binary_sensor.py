@@ -400,6 +400,7 @@ class MeshCoreContactDiagnosticBinarySensor(CoordinatorEntity, BinarySensorEntit
         self.pubkey_prefix = public_key[:12] if public_key else ""
         self._contact_data = {}
         self._remove_contacts_listener = None
+        self._last_sync_time = time.time()  # Track last update for periodic sync
         
         # Set unique ID
         self._attr_unique_id = contact_id
@@ -430,13 +431,18 @@ class MeshCoreContactDiagnosticBinarySensor(CoordinatorEntity, BinarySensorEntit
 
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        # Only update if this contact is marked as dirty (performance optimization)
-        if not self.coordinator.is_contact_dirty(self.public_key):
+        current_time = time.time()
+        time_since_last_sync = current_time - self._last_sync_time
+        force_sync = time_since_last_sync >= 3600  # Force sync every hour (3600 seconds)
+
+        # Only update if this contact is marked as dirty or if an hour has passed
+        if not force_sync and not self.coordinator.is_contact_dirty(self.public_key):
             return
 
         contact_data = self._get_contact_data()
         if contact_data:
             self._update_from_contact_data(contact_data)
+            self._last_sync_time = current_time
         else:
             # Contact no longer exists, clear data
             self._contact_data = {}
@@ -456,22 +462,18 @@ class MeshCoreContactDiagnosticBinarySensor(CoordinatorEntity, BinarySensorEntit
         
     def _get_contact_data(self) -> Dict[str, Any]:
         """Get the data for this contact from the coordinator."""
-        contacts = self.coordinator.get_all_contacts()
-        if not contacts:
-            return {}
-
-        # Find this contact by name or by public key
-        for contact in contacts:
-            if not isinstance(contact, dict):
-                continue
-
-            # Match by public key prefix
-            if contact.get("public_key", "").startswith(self.public_key):
+        # Use O(1) lookup by prefix if we have it
+        if self.pubkey_prefix:
+            contact = self.coordinator.get_contact_by_prefix(self.pubkey_prefix)
+            if contact:
                 return contact
 
-            # Match by name
-            if contact.get("adv_name") == self.contact_name:
-                return contact
+        # Fallback: search by name if no prefix match (shouldn't normally happen)
+        if self.contact_name:
+            contacts = self.coordinator.get_all_contacts()
+            for contact in contacts:
+                if isinstance(contact, dict) and contact.get("adv_name") == self.contact_name:
+                    return contact
 
         return {}
     
