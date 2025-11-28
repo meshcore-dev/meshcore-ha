@@ -234,12 +234,22 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         return list(contacts_dict.values())
 
     def get_contact_by_prefix(self, prefix: str) -> Dict[str, Any]:
-        """Get a contact by its 12-character public key prefix.
+        """Get a contact by its public key prefix.
 
-        This is an O(1) lookup operation. Returns the contact dict if found,
-        otherwise returns an empty dict.
+        Searches all contacts (both added and discovered).
+        Returns the contact dict if found, otherwise returns an empty dict.
         """
-        return self._contacts.get(prefix, {})
+        if not prefix:
+            return {}
+
+        all_contacts = self.get_all_contacts()
+
+        for contact in all_contacts:
+            pubkey = contact.get("public_key", "")
+            if pubkey.startswith(prefix):
+                return contact
+
+        return {}
 
     def _increment_success(self, pubkey_prefix: str) -> None:
         """Increment success counter for a node."""
@@ -719,13 +729,12 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             contacts_changed = await self.api.mesh_core.ensure_contacts(follow=True)
             if contacts_changed:
                 self.logger.info("Contacts synced from node")
-            # Always read from meshcore's in-memory list and index by 12-char prefix
-            self._contacts = {}
-            for contact in self.api.mesh_core.contacts.values():
-                public_key = contact.get("public_key")
-                if public_key:
-                    prefix = public_key[:12]
-                    self._contacts[prefix] = contact
+                self._contacts = {}
+                for contact in self.api.mesh_core.contacts.values():
+                    public_key = contact.get("public_key")
+                    if public_key:
+                        prefix = public_key[:12]
+                        self._contacts[prefix] = contact
         except Exception as ex:
             self.logger.error(f"Error syncing contacts: {ex}")
 
