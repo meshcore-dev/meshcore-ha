@@ -143,37 +143,36 @@ class MeshCoreContactSelect(CoordinatorEntity, SelectEntity):
         self._attr_entity_registry_visible_default = False
     
     def _get_contact_options(self) -> List[str]:
-        """Get the list of contact options directly from the API."""
-        # Check if we have access to the API and mesh_core
-        if not hasattr(self.coordinator, "api") or not self.coordinator.api or not self.coordinator.api.mesh_core:
-            return ["cts"]
-            
+        """Get the list of contact options from the coordinator."""
         try:
-            # Access contacts directly from the mesh_core API
-            contacts = self.coordinator.api.mesh_core.contacts.values()
-            if not contacts:
-                return ["cts"]
-                
-            # Include only client type contacts, not repeaters
+            # Use coordinator's cached and managed contacts for consistency
+            all_contacts = self.coordinator.get_all_contacts()
+            if not all_contacts:
+                return ["No contacts"]
+
             contact_options = []
-            
-            for contact in contacts:
+
+            for contact in all_contacts:
                 if not isinstance(contact, dict):
                     continue
-                    
+
+                # Only show contacts that have been added to the node
+                if not contact.get("added_to_node", False):
+                    continue
+
                 # Skip repeaters, only include clients
                 if contact.get("type") == NodeType.REPEATER:
                     continue
-                    
-                # Get contact name
+
+                # Get contact name and pubkey_prefix
                 name = contact.get("adv_name", "Unknown")
-                public_key = contact.get("public_key", "")
-                
-                if not public_key:
+                pubkey_prefix = contact.get("pubkey_prefix", "")
+
+                if not pubkey_prefix:
                     continue
-                    
-                # Format as "Name (pubkey12345)"
-                option = f"{name} ({public_key[:12]})"
+
+                # Format as "Name (pubkey_prefix)"
+                option = f"{name} ({pubkey_prefix})"
                 contact_options.append(option)
 
             # Add a default option if no contacts found
@@ -185,7 +184,7 @@ class MeshCoreContactSelect(CoordinatorEntity, SelectEntity):
 
             return contact_options
         except Exception as ex:
-            _LOGGER.error(f"Error getting contacts from API: {ex}")
+            _LOGGER.error(f"Error getting contacts from coordinator: {ex}")
             return ["No contacts"]
     
     @callback
@@ -217,12 +216,11 @@ class MeshCoreContactSelect(CoordinatorEntity, SelectEntity):
             if pubkey_part:
                 attributes["public_key_prefix"] = pubkey_part
 
-                # Find the full contact details from the API
-                if hasattr(self.coordinator, "api") and self.coordinator.api and self.coordinator.api.mesh_core:
-                    contact = self.coordinator.api.mesh_core.get_contact_by_key_prefix(pubkey_part)
-                    if contact:
-                        attributes["public_key"] = contact.get("public_key")
-                        attributes["contact_name"] = contact.get("adv_name")
+                # Find the full contact details from the coordinator
+                contact = self.coordinator.get_contact_by_prefix(pubkey_part)
+                if contact:
+                    attributes["public_key"] = contact.get("public_key")
+                    attributes["contact_name"] = contact.get("adv_name")
 
         return attributes
 
@@ -323,12 +321,10 @@ class MeshCoreDiscoveredContactSelect(CoordinatorEntity, SelectEntity):
             if pubkey_prefix:
                 attributes["pubkey_prefix"] = pubkey_prefix
 
-                all_contacts = self.coordinator.get_all_contacts()
-                for contact in all_contacts:
-                    if contact.get("pubkey_prefix") == pubkey_prefix:
-                        attributes["public_key"] = contact.get("public_key")
-                        attributes["contact_name"] = contact.get("adv_name")
-                        break
+                contact = self.coordinator.get_contact_by_prefix(pubkey_prefix)
+                if contact:
+                    attributes["public_key"] = contact.get("public_key")
+                    attributes["contact_name"] = contact.get("adv_name")
 
         return attributes
 
@@ -395,11 +391,9 @@ class MeshCoreAddedContactSelect(CoordinatorEntity, SelectEntity):
             if pubkey_prefix:
                 attributes["pubkey_prefix"] = pubkey_prefix
 
-                all_contacts = self.coordinator.get_all_contacts()
-                for contact in all_contacts:
-                    if contact.get("pubkey_prefix") == pubkey_prefix:
-                        attributes["public_key"] = contact.get("public_key")
-                        attributes["contact_name"] = contact.get("adv_name")
-                        break
+                contact = self.coordinator.get_contact_by_prefix(pubkey_prefix)
+                if contact:
+                    attributes["public_key"] = contact.get("public_key")
+                    attributes["contact_name"] = contact.get("adv_name")
 
         return attributes
