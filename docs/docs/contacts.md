@@ -260,7 +260,7 @@ Each contact sensor includes detailed attributes:
 - `pubkey_prefix` - First 12 characters
 - `adv_name` - Advertised name
 - `added_to_node` - Whether contact is added (true/false)
-- `type` - Node type (0=Client, 1=Repeater, 2=Room Server)
+- `type` - Node type (1=Client, 2=Repeater, 3=Room Server, 4=Sensor)
 - `last_advert` - Unix timestamp of last advertisement
 - `last_advert_formatted` - ISO formatted timestamp
 - Location data (if available): `latitude`, `longitude`
@@ -271,6 +271,7 @@ Sensors show different icons based on node type and state:
 - **Client**: `mdi:account` (fresh) / `mdi:account-off` (stale)
 - **Repeater**: `mdi:radio-tower` (fresh) / `mdi:radio-tower-off` (stale)
 - **Room Server**: `mdi:forum` (fresh) / `mdi:forum-outline` (stale)
+- **Sensor**: `mdi:smoke-detector-variant` (fresh) / `mdi:smoke-detector-variant-off` (stale)
 - **Unknown**: `mdi:help-network`
 
 ### Entity Pictures

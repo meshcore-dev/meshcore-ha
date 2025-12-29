@@ -499,6 +499,9 @@ class MeshCoreContactDiagnosticBinarySensor(CoordinatorEntity, BinarySensorEntit
         elif node_type == NodeType.ROOM_SERVER:  # Room Server
             self._attr_icon = "mdi:forum" if is_fresh else "mdi:forum-outline"
             self._attr_name = f"{self.contact_name} (Room Server)"
+        elif node_type == NodeType.SENSOR:  # Sensor
+            self._attr_icon = "mdi:smoke-detector-variant" if is_fresh else "mdi:smoke-detector-variant-off"
+            self._attr_name = f"{self.contact_name} (Sensor)"
         else:
             # Default icon if type is unknown
             self._attr_icon = "mdi:help-network"
@@ -556,6 +559,9 @@ class MeshCoreContactDiagnosticBinarySensor(CoordinatorEntity, BinarySensorEntit
         elif node_type == NodeType.ROOM_SERVER:
             attributes["node_type_str"] = "Room Server"
             icon_file = "room_server-green.svg" if self.is_on else "room_server.svg"
+        elif node_type == NodeType.SENSOR:
+            attributes["node_type_str"] = "Sensor"
+            icon_file = "sensor-green.svg" if self.is_on else "sensor.svg"
         else:
             attributes["node_type_str"] = "Unknown"
             icon_file = None
