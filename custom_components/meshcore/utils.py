@@ -49,6 +49,7 @@ def sanitize_name(name: str) -> str:
     return slugify(name.lower() if name else "")
 
 
+
 def format_entity_id(
     domain: str, device_name: str, entity_key: str, suffix: str = ""
 ) -> str:
