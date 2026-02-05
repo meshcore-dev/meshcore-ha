@@ -34,6 +34,7 @@ from .const import (
 from .utils import (
     format_entity_id,
     calculate_battery_percentage,
+    sanitize_name,
 )
 from .telemetry_sensor import TelemetrySensorManager
 
@@ -513,7 +514,7 @@ class RateLimiterSensor(CoordinatorEntity, SensorEntity):
             ENTITY_DOMAIN_SENSOR,
             public_key_short,
             "rate_limiter_tokens",
-            raw_device_name
+            sanitize_name(raw_device_name)
         )
 
         self._attr_native_unit_of_measurement = "tokens"
@@ -577,7 +578,7 @@ class MeshCoreSensor(CoordinatorEntity, SensorEntity):
             ENTITY_DOMAIN_SENSOR,
             public_key_short,
             description.key,
-            raw_device_name
+            sanitize_name(raw_device_name)
         )
 
         # Store cached values
@@ -726,7 +727,7 @@ class MeshCoreReliabilitySensor(CoordinatorEntity, SensorEntity):
             ENTITY_DOMAIN_SENSOR,
             self.pubkey_prefix[:10],
             description.key,
-            self.node_name
+            sanitize_name(self.node_name)
         )
 
         device_info = {
@@ -794,7 +795,7 @@ class MeshCorePathSensor(CoordinatorEntity, SensorEntity):
             ENTITY_DOMAIN_SENSOR,
             self.pubkey_prefix[:10],
             description.key,
-            self.node_name
+            sanitize_name(self.node_name)
         )
 
         # Set device info to create a separate device for this node
@@ -893,7 +894,7 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
             ENTITY_DOMAIN_SENSOR,
             self.public_key[:10],
             description.key,
-            self.repeater_name
+            sanitize_name(self.repeater_name)
         )
 
         # Set device info to create a separate device for this repeater

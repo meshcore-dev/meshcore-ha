@@ -30,6 +30,7 @@ from .const import (
 from .utils import (
     format_entity_id,
     extract_channel_idx,
+    sanitize_name,
 )
 from .logbook import (
     handle_channel_message as log_channel_message, 
@@ -407,7 +408,7 @@ class MeshCoreContactDiagnosticBinarySensor(CoordinatorEntity, BinarySensorEntit
         
         self.entity_id = format_entity_id(
             ENTITY_DOMAIN_BINARY_SENSOR,
-            contact_name,
+            sanitize_name(contact_name),
             self.pubkey_prefix,
             CONTACT_SUFFIX
         )
