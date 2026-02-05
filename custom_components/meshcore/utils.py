@@ -9,6 +9,7 @@ import re
 from typing import Any
 
 from Crypto.Cipher import AES
+from homeassistant.util import slugify
 
 from .const import BAT_VMAX, BAT_VMIN, CHANNEL_PREFIX, DOMAIN, MESSAGES_SUFFIX, NodeType
 
@@ -39,19 +40,13 @@ def get_node_type_str(node_type: str | None) -> str:
         return "Unknown"
 
 
-def sanitize_name(name: str, replace_hyphens: bool = True) -> str:
+def sanitize_name(name: str) -> str:
     """Convert a name to a format safe for entity IDs.
 
     Converts to lowercase, replaces spaces with underscores,
     optionally replaces hyphens with underscores, and removes double underscores.
     """
-    if not name:
-        return ""
-
-    safe_name = name.lower().replace(" ", "_")
-    if replace_hyphens:
-        safe_name = safe_name.replace("-", "_")
-    return safe_name.replace("__", "_")
+    return slugify(name.lower() if name else "")
 
 
 def format_entity_id(
@@ -80,7 +75,7 @@ def format_entity_id(
     entity_name = "_".join(name_parts).replace("__", "_")
 
     # Format as domain.entity_name
-    return f"{domain}.{entity_name}"
+    return f"{domain}.{sanitize_name(entity_name)}"
 
 
 def get_channel_entity_id(
