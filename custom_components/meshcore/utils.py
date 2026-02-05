@@ -48,7 +48,7 @@ def sanitize_name(name: str, replace_hyphens: bool = True) -> str:
     if not name:
         return ""
 
-    safe_name = name.lower().replace(" ", "_")
+    safe_name = name.lower().replace(" ", "_").replace(".", "_")
     if replace_hyphens:
         safe_name = safe_name.replace("-", "_")
     return safe_name.replace("__", "_")
