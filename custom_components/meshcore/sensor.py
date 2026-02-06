@@ -406,6 +406,10 @@ async def async_setup_entry(
         for identifier in device.identifiers:
             if identifier[0] == DOMAIN:
                 device_id = identifier[1]
+
+                # Only consider devices belonging to this config entry
+                if not device_id.startswith(entry.entry_id):
+                    continue
                 
                 # If this device is a repeater but not in our active list, remove it
                 if "_repeater_" in device_id and device_id not in active_repeater_device_ids:
