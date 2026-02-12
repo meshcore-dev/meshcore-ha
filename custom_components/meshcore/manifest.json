@@ -7,6 +7,6 @@
   "loggers": ["custom_components.meshcore"],
   "requirements": ["meshcore>=2.1.16", "meshcore-cli>=0.0.0", "pycryptodome>=3.20.0", "cachetools>=5.3.0"],
   "iot_class": "local_polling",
-  "version": "2.2.5",
+  "version": "2.3.0",
   "config_flow": true
 }
