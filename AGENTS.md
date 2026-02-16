@@ -30,7 +30,7 @@ Update this file in every change set that alters runtime behavior, configuration
   - `mqtt_private_key`
   - `mqtt_token_ttl_seconds`
   - `mqtt_publish_all_events`
-  - `mqtt_client_agent` (LetsMesh "By Client" label)
+  - `mqtt_client_agent` (LetsMesh "By Client" label, default `meshcore-dev/meshcore-ha:version`)
 - Per broker:
   - `enabled`, `server`, `port`, `transport`
   - `use_tls`, `tls_verify`

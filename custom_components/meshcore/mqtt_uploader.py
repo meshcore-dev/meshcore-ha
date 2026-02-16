@@ -119,7 +119,7 @@ class MeshCoreMqttUploader:
             str(entry.data.get(CONF_MQTT_PRIVATE_KEY) or os.getenv("MESHCORE_HA_PRIVATE_KEY", "")).strip()
         )
         self.client_agent = str(
-            entry.data.get(CONF_MQTT_CLIENT_AGENT) or os.getenv("MESHCORE_HA_MQTT_CLIENT_AGENT", "meshcore-ha")
+            entry.data.get(CONF_MQTT_CLIENT_AGENT) or os.getenv("MESHCORE_HA_MQTT_CLIENT_AGENT", "meshcore-dev/meshcore-ha:version")
         ).strip()
         self.publish_all_events = _as_bool(
             entry.data.get(CONF_MQTT_PUBLISH_ALL_EVENTS) or os.getenv("MESHCORE_HA_MQTT_PUBLISH_ALL_EVENTS"),

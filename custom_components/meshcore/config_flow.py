@@ -787,7 +787,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             new_data[CONF_MQTT_PRIVATE_KEY] = user_input.get(CONF_MQTT_PRIVATE_KEY, "")
             new_data[CONF_MQTT_TOKEN_TTL_SECONDS] = user_input.get(CONF_MQTT_TOKEN_TTL_SECONDS, 3600)
             new_data[CONF_MQTT_PUBLISH_ALL_EVENTS] = user_input.get(CONF_MQTT_PUBLISH_ALL_EVENTS, False)
-            new_data[CONF_MQTT_CLIENT_AGENT] = user_input.get(CONF_MQTT_CLIENT_AGENT, "meshcore-ha")
+            new_data[CONF_MQTT_CLIENT_AGENT] = user_input.get(CONF_MQTT_CLIENT_AGENT, "meshcore-dev/meshcore-ha:version")
             self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
             return await self.async_step_init()
 
@@ -796,7 +796,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         current_private_key = self.config_entry.data.get(CONF_MQTT_PRIVATE_KEY, "")
         current_ttl = self.config_entry.data.get(CONF_MQTT_TOKEN_TTL_SECONDS, 3600)
         current_publish_all = self.config_entry.data.get(CONF_MQTT_PUBLISH_ALL_EVENTS, False)
-        current_client_agent = self.config_entry.data.get(CONF_MQTT_CLIENT_AGENT, "meshcore-ha")
+        current_client_agent = self.config_entry.data.get(CONF_MQTT_CLIENT_AGENT, "meshcore-dev/meshcore-ha:version")
 
         return self.async_show_form(
             step_id="mqtt_global",
