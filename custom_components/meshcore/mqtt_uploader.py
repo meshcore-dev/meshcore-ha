@@ -192,8 +192,8 @@ class MeshCoreMqttUploader:
                     True,
                 ),
                 keepalive=_as_int(broker_settings.get("keepalive", os.getenv(f"{prefix}KEEPALIVE")), 60),
-                qos=_as_int(broker_settings.get("qos", os.getenv(f"{prefix}QOS")), 0),
-                retain=_as_bool(broker_settings.get("retain", os.getenv(f"{prefix}RETAIN")), True),
+                qos=0,
+                retain=True,
                 username=str(
                     broker_settings.get("username", os.getenv(f"{prefix}USERNAME", "")) or ""
                 ).strip(),

@@ -132,8 +132,6 @@
           "use_tls": "Use TLS",
           "tls_verify": "Verify TLS Certificate",
           "keepalive": "Keepalive (seconds)",
-          "qos": "QoS",
-          "retain": "Retain Messages",
           "username": "Username",
           "password": "Password",
           "use_auth_token": "Use MeshCore Auth Token",
