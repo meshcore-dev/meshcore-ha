@@ -58,3 +58,4 @@ Update this file in every change set that alters runtime behavior, configuration
 - 2026-02-16: Added explicit `options.step` translation labels so HA Options UI shows friendly field names instead of raw keys.
 - 2026-02-16: Removed `QoS`/`Retain` controls from MQTT broker settings and fixed uploader defaults for parity/simplicity.
 - 2026-02-16: Simplified MQTT global options UI by removing internal decoder command control and improving auth private key labeling.
+- 2026-02-16: Improved options-menu contact discovery by using merged contact sources (`get_all_contacts`) and normalized type/name parsing so repeaters/clients appear reliably.

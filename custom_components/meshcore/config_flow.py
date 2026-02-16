@@ -401,39 +401,20 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         
     def _get_repeater_contacts(self):
         """Get repeater contacts from coordinator's cached data."""
-        # Get the coordinator
-        if not self.hass or DOMAIN not in self.hass.data:
-            return []
-
-        coordinator = self.hass.data[DOMAIN].get(self.config_entry.entry_id) # type: ignore
-        if not coordinator:
-            return []
-
-        # Get contacts from the _contacts attribute
         repeater_contacts = []
+        for contact in self._iter_known_contacts():
+            contact_type = self._normalize_contact_type(contact)
+            contact_name = self._contact_name(contact)
+            public_key = contact.get("public_key", "")
+            pubkey_prefix = public_key[:12] if public_key else ""
 
-        # Only proceed if _contacts attribute exists
-        if not hasattr(coordinator, "_contacts"):
-            return []
+            is_repeater_like = contact_type in {NodeType.REPEATER, NodeType.ROOM_SERVER, NodeType.SENSOR}
+            if not is_repeater_like and isinstance(contact_name, str):
+                name_lower = contact_name.lower()
+                is_repeater_like = any(tag in name_lower for tag in ("repeater", "roomserver", "room server", "sensor"))
 
-        for contact in coordinator._contacts.values(): # type: ignore
-            if not isinstance(contact, dict):
-                continue
-
-            contact_name = contact.get("adv_name", "")
-            if not contact_name:
-                continue
-
-            contact_type = contact.get("type")
-
-            # Check for repeater (2), room server (3), or sensor (4) node types
-            if contact_type == NodeType.REPEATER or contact_type == NodeType.ROOM_SERVER or contact_type == NodeType.SENSOR:
-                public_key = contact.get("public_key", "")
-                pubkey_prefix = public_key[:12] if public_key else ""
-
-                # Add tuple of (pubkey_prefix, name)
-                if pubkey_prefix:
-                    repeater_contacts.append((pubkey_prefix, contact_name))
+            if is_repeater_like and pubkey_prefix and contact_name:
+                repeater_contacts.append((pubkey_prefix, contact_name))
 
         return repeater_contacts
         
@@ -877,34 +858,70 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         
     def _get_client_contacts(self):
         """Get client contacts from coordinator's cached data."""
+        client_contacts = []
+        for contact in self._iter_known_contacts():
+            contact_type = self._normalize_contact_type(contact)
+            if contact_type != NodeType.CLIENT:
+                continue
+
+            contact_name = self._contact_name(contact)
+            public_key = contact.get("public_key", "")
+            pubkey_prefix = public_key[:12] if public_key else ""
+
+            if pubkey_prefix and contact_name:
+                client_contacts.append((pubkey_prefix, contact_name))
+
+        return client_contacts
+
+    def _iter_known_contacts(self) -> list[Dict[str, Any]]:
+        """Return merged contacts from coordinator (added + discovered)."""
         if not self.hass or DOMAIN not in self.hass.data:
             return []
-
         coordinator = self.hass.data[DOMAIN].get(self.config_entry.entry_id) # type: ignore
         if not coordinator:
             return []
+        if hasattr(coordinator, "get_all_contacts"):
+            try:
+                contacts = coordinator.get_all_contacts()
+                if isinstance(contacts, list):
+                    return [c for c in contacts if isinstance(c, dict)]
+            except Exception:
+                pass
+        if hasattr(coordinator, "_contacts"):
+            return [c for c in coordinator._contacts.values() if isinstance(c, dict)] # type: ignore
+        return []
 
-        client_contacts = []
-        if not hasattr(coordinator, "_contacts"):
-            return []
+    @staticmethod
+    def _contact_name(contact: Dict[str, Any]) -> str:
+        """Get best available contact display name."""
+        return (
+            contact.get("adv_name")
+            or contact.get("name")
+            or contact.get("display_name")
+            or ""
+        )
 
-        for contact in coordinator._contacts.values(): # type: ignore
-            if not isinstance(contact, dict):
-                continue
-
-            contact_name = contact.get("adv_name", "")
-            if not contact_name:
-                continue
-
-            contact_type = contact.get("type")
-            if contact_type == NodeType.CLIENT:
-                public_key = contact.get("public_key", "")
-                pubkey_prefix = public_key[:12] if public_key else ""
-
-                if pubkey_prefix:
-                    client_contacts.append((pubkey_prefix, contact_name))
-
-        return client_contacts
+    @staticmethod
+    def _normalize_contact_type(contact: Dict[str, Any]):
+        """Normalize contact type from various formats to NodeType/int when possible."""
+        raw = contact.get("type", contact.get("node_type"))
+        if isinstance(raw, NodeType):
+            return raw
+        if isinstance(raw, int):
+            return raw
+        if isinstance(raw, str):
+            value = raw.strip().lower()
+            if value.isdigit():
+                return int(value)
+            mapping = {
+                "client": NodeType.CLIENT,
+                "repeater": NodeType.REPEATER,
+                "room_server": NodeType.ROOM_SERVER,
+                "roomserver": NodeType.ROOM_SERVER,
+                "sensor": NodeType.SENSOR,
+            }
+            return mapping.get(value, raw)
+        return raw
         
     async def async_step_edit_repeater(self, user_input=None):
         """Handle editing a repeater."""
