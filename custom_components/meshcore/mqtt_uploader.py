@@ -654,8 +654,9 @@ class MeshCoreMqttUploader:
             return
         if not self.publish_all_events and not self._is_relevant_event(event_type, payload):
             return
-        packet_payload = json.dumps(
-            {
+        normalized_packet = self._normalize_packet_event(event_type, payload)
+        if normalized_packet is None:
+            normalized_packet = {
                 "timestamp": datetime.now().isoformat(),
                 "origin": self.node_name,
                 "origin_id": self.public_key or "DEVICE",
@@ -663,7 +664,7 @@ class MeshCoreMqttUploader:
                 "payload": payload,
                 "source": "meshcore-ha",
             }
-        )
+        packet_payload = json.dumps(normalized_packet)
         for info in self._clients:
             if not info.get("connected"):
                 continue
@@ -684,6 +685,75 @@ class MeshCoreMqttUploader:
                     self.logger.debug("[%s] Packet published topic=%s event=%s", broker.name, broker.topic_packets, event_type)
             except Exception as ex:
                 self.logger.error("[%s] Event publish error: %s", broker.name, ex)
+
+    def _normalize_packet_event(self, event_type: str, payload: Any) -> dict[str, Any] | None:
+        """Normalize RX/RF log events to legacy packet schema used by uploader tools."""
+        if not isinstance(payload, dict):
+            return None
+
+        et = (event_type or "").upper()
+        if "RX_LOG" not in et and "RF_LOG" not in et and "PACKET" not in et:
+            return None
+
+        now = datetime.now()
+        raw_hex = str(payload.get("payload") or payload.get("raw_hex") or "").strip()
+        parsed = payload.get("parsed") if isinstance(payload.get("parsed"), dict) else {}
+        decrypted = payload.get("decrypted") if isinstance(payload.get("decrypted"), dict) else {}
+
+        payload_len_total = _as_int(payload.get("payload_length"), 0)
+        if payload_len_total <= 0 and raw_hex:
+            payload_len_total = len(raw_hex) // 2
+
+        path_len = _as_int(parsed.get("path_len"), 0) if parsed else 0
+        payload_len = payload_len_total
+        if payload_len_total > 0:
+            # Legacy packet schema reports payload_len without header/path bytes.
+            payload_len = max(0, payload_len_total - (2 + max(0, path_len)))
+
+        packet_type = None
+        if decrypted:
+            packet_type = decrypted.get("payload_type")
+        if packet_type is None and parsed:
+            packet_type = parsed.get("payload_type")
+        if packet_type is None and raw_hex:
+            try:
+                packet_type = str(int(raw_hex[4:6], 16))
+            except Exception:
+                packet_type = ""
+
+        route = str(payload.get("route") or "").strip().upper()
+        if not route:
+            route = "F"
+
+        hash_value = str(payload.get("hash") or "").strip().upper()
+        if not hash_value and raw_hex:
+            hash_value = hashlib.sha256(raw_hex.encode("utf-8")).hexdigest()[:16].upper()
+
+        packet = {
+            "timestamp": now.isoformat(),
+            "origin": self.node_name,
+            "origin_id": self.public_key or "DEVICE",
+            "type": "PACKET",
+            "direction": "rx",
+            "time": now.strftime("%H:%M:%S"),
+            "date": f"{now.day}/{now.month}/{now.year}",
+            "len": str(payload_len_total),
+            "packet_type": str(packet_type or ""),
+            "route": route,
+            "payload_len": str(payload_len),
+            "raw": raw_hex,
+            "SNR": str(payload.get("snr", "")),
+            "RSSI": str(payload.get("rssi", "")),
+            "score": str(payload.get("score", "1000")),
+            "duration": str(payload.get("duration", "0")),
+            "hash": hash_value,
+        }
+
+        path = str(parsed.get("path", "")).strip() if parsed else ""
+        if path and route == "D":
+            packet["path"] = path
+
+        return packet
 
     @staticmethod
     def _is_relevant_event(event_type: str, payload: Any) -> bool:
