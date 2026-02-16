@@ -94,6 +94,7 @@ CONF_MQTT_DECODER_CMD: Final = "mqtt_decoder_cmd"
 CONF_MQTT_PRIVATE_KEY: Final = "mqtt_private_key"
 CONF_MQTT_TOKEN_TTL_SECONDS: Final = "mqtt_token_ttl_seconds"
 CONF_MQTT_PUBLISH_ALL_EVENTS: Final = "mqtt_publish_all_events"
+CONF_MQTT_CLIENT_AGENT: Final = "mqtt_client_agent"
 CONF_MQTT_BROKERS: Final = "mqtt_brokers"
 
 # Backoff constants for repeater failures

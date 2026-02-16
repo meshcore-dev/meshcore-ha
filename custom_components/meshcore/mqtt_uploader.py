@@ -24,6 +24,7 @@ from .const import (
     CONF_MQTT_IATA,
     CONF_MQTT_PRIVATE_KEY,
     CONF_MQTT_PUBLISH_ALL_EVENTS,
+    CONF_MQTT_CLIENT_AGENT,
     CONF_MQTT_TOKEN_TTL_SECONDS,
     CONF_NAME,
     CONF_PUBKEY,
@@ -117,6 +118,9 @@ class MeshCoreMqttUploader:
         self.private_key = (
             str(entry.data.get(CONF_MQTT_PRIVATE_KEY) or os.getenv("MESHCORE_HA_PRIVATE_KEY", "")).strip()
         )
+        self.client_agent = str(
+            entry.data.get(CONF_MQTT_CLIENT_AGENT) or os.getenv("MESHCORE_HA_MQTT_CLIENT_AGENT", "meshcore-ha")
+        ).strip()
         self.publish_all_events = _as_bool(
             entry.data.get(CONF_MQTT_PUBLISH_ALL_EVENTS) or os.getenv("MESHCORE_HA_MQTT_PUBLISH_ALL_EVENTS"),
             False,
@@ -408,6 +412,8 @@ class MeshCoreMqttUploader:
         claims = {}
         if broker.token_audience:
             claims["aud"] = broker.token_audience
+        if self.client_agent:
+            claims["client"] = self.client_agent
 
         args = shlex.split(self.decoder_cmd)
         args.extend(
@@ -582,6 +588,8 @@ class MeshCoreMqttUploader:
             }
             if audience:
                 payload["aud"] = audience
+            if self.client_agent:
+                payload["client"] = self.client_agent
 
             header_json = json.dumps(header, separators=(",", ":")).encode("utf-8")
             payload_json = json.dumps(payload, separators=(",", ":")).encode("utf-8")
