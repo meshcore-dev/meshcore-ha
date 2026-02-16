@@ -703,13 +703,14 @@ class MeshCoreMqttUploader:
             return None
 
         now = datetime.now()
-        raw_hex = str(payload.get("payload") or payload.get("raw_hex") or "").strip()
+        payload_hex = str(payload.get("payload") or "").strip()
+        raw_hex_fallback = str(payload.get("raw_hex") or "").strip()
+        # Match packet-capture behavior: prefer payload, fallback to raw_hex without first 2 bytes.
+        raw_hex = payload_hex or (raw_hex_fallback[4:] if len(raw_hex_fallback) > 4 else raw_hex_fallback)
         parsed = payload.get("parsed") if isinstance(payload.get("parsed"), dict) else {}
         decrypted = payload.get("decrypted") if isinstance(payload.get("decrypted"), dict) else {}
 
-        payload_len_total = _as_int(payload.get("payload_length"), 0)
-        if payload_len_total <= 0 and raw_hex:
-            payload_len_total = len(raw_hex) // 2
+        payload_len_total = len(raw_hex) // 2 if raw_hex else _as_int(payload.get("payload_length"), 0)
 
         path_len = _as_int(parsed.get("path_len"), 0) if parsed else 0
         payload_len = payload_len_total
@@ -717,42 +718,49 @@ class MeshCoreMqttUploader:
             # Legacy packet schema reports payload_len without header/path bytes.
             payload_len = max(0, payload_len_total - (2 + max(0, path_len)))
 
-        packet_type = None
-        if decrypted:
-            packet_type = decrypted.get("payload_type")
-        if packet_type is None and parsed:
-            packet_type = parsed.get("payload_type")
-        if packet_type is None and raw_hex:
-            try:
-                packet_type = str(int(raw_hex[4:6], 16))
-            except Exception:
-                packet_type = ""
-
-        route = str(payload.get("route") or "").strip().upper()
-        if not route:
-            route = "F"
-
+        packet_type = ""
+        route = "U"
+        route_type = None
         hash_value = str(payload.get("hash") or "").strip().upper()
-        if not hash_value and isinstance(decrypted, dict):
-            # GroupText packets can be correlated across repeats using decrypted content.
-            channel_idx = decrypted.get("channel_idx")
-            timestamp = decrypted.get("timestamp")
-            text = decrypted.get("text")
-            if channel_idx is not None and timestamp is not None and isinstance(text, str) and text:
-                key = f"{channel_idx}:{timestamp}:{text}"
-                hash_value = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16].upper()
-        if not hash_value and raw_hex:
-            # Fallback: hash packet bytes without mutable header/path bytes so repeats dedupe.
+        if raw_hex:
             try:
                 packet_bytes = bytes.fromhex(raw_hex)
-                path_len_from_payload = _as_int(parsed.get("path_len"), -1) if parsed else -1
-                if path_len_from_payload < 0 and len(packet_bytes) >= 2:
-                    path_len_from_payload = packet_bytes[1]
-                start_idx = 2 + max(0, path_len_from_payload)
-                stable_bytes = packet_bytes[start_idx:] if len(packet_bytes) > start_idx else packet_bytes
-                hash_value = hashlib.sha256(stable_bytes).hexdigest()[:16].upper()
+                header = packet_bytes[0]
+                payload_type_value = (header >> 2) & 0x0F
+                route_type = header & 0x03
+                packet_type = str(payload_type_value)
+
+                route_map = {
+                    0x00: "F",  # TRANSPORT_FLOOD
+                    0x01: "D",  # DIRECT
+                    0x03: "T",  # TRANSPORT_DIRECT
+                }
+                route = route_map.get(route_type, "U")
+
+                # Match meshcore-packet-capture hash logic from packet.cpp.
+                if not hash_value:
+                    has_transport = route_type in (0x00, 0x03)
+                    offset = 1 + (4 if has_transport else 0)
+                    path_len_value = packet_bytes[offset] if len(packet_bytes) > offset else 0
+                    payload_start = offset + 1 + path_len_value
+                    payload_data = packet_bytes[payload_start:] if len(packet_bytes) > payload_start else b""
+
+                    hash_obj = hashlib.sha256()
+                    hash_obj.update(bytes([payload_type_value]))
+                    if payload_type_value == 9:  # TRACE
+                        hash_obj.update(path_len_value.to_bytes(2, byteorder="little"))
+                    hash_obj.update(payload_data)
+                    hash_value = hash_obj.hexdigest()[:16].upper()
             except Exception:
-                hash_value = hashlib.sha256(raw_hex.encode("utf-8")).hexdigest()[:16].upper()
+                if not hash_value:
+                    hash_value = "0000000000000000"
+
+        if not packet_type and decrypted:
+            packet_type = str(decrypted.get("payload_type", ""))
+        if not packet_type and parsed:
+            packet_type = str(parsed.get("payload_type", ""))
+        if route == "U":
+            route = str(payload.get("route") or "").strip().upper() or "F"
 
         packet = {
             "timestamp": now.isoformat(),
@@ -763,7 +771,7 @@ class MeshCoreMqttUploader:
             "time": now.strftime("%H:%M:%S"),
             "date": f"{now.day}/{now.month}/{now.year}",
             "len": str(payload_len_total),
-            "packet_type": str(packet_type or ""),
+            "packet_type": packet_type,
             "route": route,
             "payload_len": str(payload_len),
             "raw": raw_hex,
