@@ -23,22 +23,22 @@ Update this file in every change set that alters runtime behavior, configuration
 - MQTT uploader defaults to relevant-event filtering (packet/message/radio-log style), not full event firehose.
 - Global option `mqtt_publish_all_events` can disable filtering and publish all forwarded events.
 - Broker `QoS`/`Retain` are no longer user-configurable in UI; uploader uses fixed behavior (`QoS=0`, retained status state).
+- Options menu device pickers now tolerate partial contact metadata (missing name/type), dedupe by pubkey prefix, and use `Node <prefix>` fallback naming so eligible repeaters still show.
 
 ## UI Configuration Keys
 - Global:
   - `mqtt_iata`
-  - `mqtt_decoder_cmd`
   - `mqtt_private_key`
   - `mqtt_token_ttl_seconds`
   - `mqtt_publish_all_events`
 - Per broker:
   - `enabled`, `server`, `port`, `transport`
   - `use_tls`, `tls_verify`
-  - `keepalive`, `qos`, `retain`
+  - `keepalive`
   - `username`, `password`
   - `use_auth_token`, `token_audience`
   - `topic_status`, `topic_events` (currently used as packets topic)
-  - `iata`, `client_id_prefix`
+  - `iata`
 
 ## Known Notes
 - If firmware does not allow private key export (`ENABLE_PRIVATE_KEY_EXPORT=1` missing), auth-token mode requires manual private key entry.
@@ -59,3 +59,4 @@ Update this file in every change set that alters runtime behavior, configuration
 - 2026-02-16: Removed `QoS`/`Retain` controls from MQTT broker settings and fixed uploader defaults for parity/simplicity.
 - 2026-02-16: Simplified MQTT global options UI by removing internal decoder command control and improving auth private key labeling.
 - 2026-02-16: Improved options-menu contact discovery by using merged contact sources (`get_all_contacts`) and normalized type/name parsing so repeaters/clients appear reliably.
+- 2026-02-16: Relaxed repeater/client picker filtering to handle incomplete contact metadata after add/sync; fallback naming now keeps valid pubkeys selectable in tracked-device menus.

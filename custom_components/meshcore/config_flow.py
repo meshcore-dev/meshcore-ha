@@ -402,18 +402,28 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     def _get_repeater_contacts(self):
         """Get repeater contacts from coordinator's cached data."""
         repeater_contacts = []
+        seen_prefixes = set()
         for contact in self._iter_known_contacts():
             contact_type = self._normalize_contact_type(contact)
-            contact_name = self._contact_name(contact)
-            public_key = contact.get("public_key", "")
-            pubkey_prefix = public_key[:12] if public_key else ""
+            pubkey_prefix = self._contact_pubkey_prefix(contact)
+            if not pubkey_prefix or pubkey_prefix in seen_prefixes:
+                continue
+            contact_name = self._contact_name(contact, pubkey_prefix)
+            is_client = contact_type == NodeType.CLIENT or str(contact_type).strip().lower() == "client"
 
             is_repeater_like = contact_type in {NodeType.REPEATER, NodeType.ROOM_SERVER, NodeType.SENSOR}
             if not is_repeater_like and isinstance(contact_name, str):
                 name_lower = contact_name.lower()
-                is_repeater_like = any(tag in name_lower for tag in ("repeater", "roomserver", "room server", "sensor"))
+                is_repeater_like = any(
+                    tag in name_lower
+                    for tag in ("repeater", "roomserver", "room server", "sensor", "relay", "base")
+                )
+            if not is_repeater_like and contact.get("added_to_node", False) and not is_client:
+                # Some nodes report incomplete type metadata after contact add.
+                is_repeater_like = True
 
             if is_repeater_like and pubkey_prefix and contact_name:
+                seen_prefixes.add(pubkey_prefix)
                 repeater_contacts.append((pubkey_prefix, contact_name))
 
         return repeater_contacts
@@ -859,16 +869,19 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     def _get_client_contacts(self):
         """Get client contacts from coordinator's cached data."""
         client_contacts = []
+        seen_prefixes = set()
         for contact in self._iter_known_contacts():
             contact_type = self._normalize_contact_type(contact)
             if contact_type != NodeType.CLIENT:
                 continue
 
-            contact_name = self._contact_name(contact)
-            public_key = contact.get("public_key", "")
-            pubkey_prefix = public_key[:12] if public_key else ""
+            pubkey_prefix = self._contact_pubkey_prefix(contact)
+            if not pubkey_prefix or pubkey_prefix in seen_prefixes:
+                continue
+            contact_name = self._contact_name(contact, pubkey_prefix)
 
             if pubkey_prefix and contact_name:
+                seen_prefixes.add(pubkey_prefix)
                 client_contacts.append((pubkey_prefix, contact_name))
 
         return client_contacts
@@ -892,14 +905,28 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         return []
 
     @staticmethod
-    def _contact_name(contact: Dict[str, Any]) -> str:
+    def _contact_name(contact: Dict[str, Any], pubkey_prefix: str = "") -> str:
         """Get best available contact display name."""
-        return (
+        name = (
             contact.get("adv_name")
             or contact.get("name")
             or contact.get("display_name")
             or ""
         )
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+        return f"Node {pubkey_prefix}" if pubkey_prefix else ""
+
+    @staticmethod
+    def _contact_pubkey_prefix(contact: Dict[str, Any]) -> str:
+        """Extract 12-char pubkey prefix from contact payload."""
+        public_key = contact.get("public_key", "")
+        if isinstance(public_key, str) and public_key:
+            return public_key[:12]
+        pubkey_prefix = contact.get("pubkey_prefix", "")
+        if isinstance(pubkey_prefix, str):
+            return pubkey_prefix[:12]
+        return ""
 
     @staticmethod
     def _normalize_contact_type(contact: Dict[str, Any]):
