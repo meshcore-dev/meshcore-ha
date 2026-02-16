@@ -136,7 +136,7 @@
           "use_auth_token": "Use MeshCore Auth Token",
           "token_audience": "Token Audience",
           "topic_status": "Status Topic",
-          "topic_events": "Events Topic",
+          "topic_events": "Packets Topic",
           "iata": "Broker IATA Override"
         },
         "description": "Configure MQTT broker {broker_number}",

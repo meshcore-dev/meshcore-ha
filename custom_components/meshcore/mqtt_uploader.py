@@ -236,6 +236,13 @@ class MeshCoreMqttUploader:
                     broker.name,
                 )
                 continue
+            if broker.is_letsmesh and broker.topic_packets.endswith("/events"):
+                broker.topic_packets = f"{broker.topic_packets[:-7]}/packets"
+                self.logger.info(
+                    "[%s] Adjusted packets topic to LetsMesh-compatible path: %s",
+                    broker.name,
+                    broker.topic_packets,
+                )
 
             brokers.append(broker)
         return brokers

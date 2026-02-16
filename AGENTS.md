@@ -23,6 +23,8 @@ Update this file in every change set that alters runtime behavior, configuration
 - MQTT uploader defaults to relevant-event filtering (packet/message/radio-log style), not full event firehose.
 - Global option `mqtt_publish_all_events` can disable filtering and publish all forwarded events.
 - Broker `QoS`/`Retain` are no longer user-configurable in UI; uploader uses fixed behavior (`QoS=0`, retained status state).
+- MQTT broker packet topic default is `meshcore/{IATA}/{PUBLIC_KEY}/packets` in options flow.
+- LetsMesh brokers are auto-corrected from `/events` to `/packets` packet topic path for analyzer compatibility.
 - MQTT uploader now normalizes RX/RF log events into legacy packet schema (`type=PACKET`, `direction`, `len`, `packet_type`, `payload_len`, `raw`, `SNR`, `RSSI`, etc.) for broker payload compatibility.
 
 ## UI Configuration Keys
@@ -61,3 +63,4 @@ Update this file in every change set that alters runtime behavior, configuration
 - 2026-02-16: Simplified MQTT global options UI by removing internal decoder command control and improving auth private key labeling.
 - 2026-02-16: Improved options-menu contact discovery by using merged contact sources (`get_all_contacts`) and normalized type/name parsing so repeaters/clients appear reliably.
 - 2026-02-16: Normalized MQTT packet publishes for RX/RF log events to legacy packet JSON format expected by existing MeshCore MQTT consumers.
+- 2026-02-16: Fixed packet topic defaults/pathing for LetsMesh compatibility (`/packets` instead of `/events`) and aligned UI label/docs to "Packets Topic".

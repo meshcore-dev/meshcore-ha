@@ -64,7 +64,7 @@ class CannotConnect(HomeAssistantError):
 
 
 DEFAULT_MQTT_TOPIC_STATUS = "meshcore/{IATA}/{PUBLIC_KEY}/status"
-DEFAULT_MQTT_TOPIC_EVENTS = "meshcore/{IATA}/{PUBLIC_KEY}/events"
+DEFAULT_MQTT_TOPIC_EVENTS = "meshcore/{IATA}/{PUBLIC_KEY}/packets"
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {

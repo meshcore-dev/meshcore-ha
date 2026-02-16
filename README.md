@@ -79,7 +79,7 @@ Use `MESHCORE_HA_MQTT1_*`, `MESHCORE_HA_MQTT2_*`, `MESHCORE_HA_MQTT3_*`, `MESHCO
 - `USE_AUTH_TOKEN` (`true`/`false`)
 - `TOKEN_AUDIENCE` (required for most token-based broker setups)
 - `TOPIC_STATUS` (default: `meshcore/{IATA}/{PUBLIC_KEY}/status`)
-- `TOPIC_EVENTS` (default: `meshcore/{IATA}/{PUBLIC_KEY}/events`)
+- `TOPIC_EVENTS` (default: `meshcore/{IATA}/{PUBLIC_KEY}/packets`)
 - `IATA` (optional per broker override)
 
 Global variables:
