@@ -6,10 +6,12 @@ import base64
 import hashlib
 import json
 import os
+import re
 import shlex
 import ssl
 import subprocess
 import time
+from datetime import datetime
 from dataclasses import dataclass
 from typing import Any
 
@@ -22,6 +24,7 @@ from .const import (
     CONF_MQTT_IATA,
     CONF_MQTT_PRIVATE_KEY,
     CONF_MQTT_TOKEN_TTL_SECONDS,
+    CONF_NAME,
     CONF_PUBKEY,
 )
 
@@ -76,8 +79,9 @@ class BrokerConfig:
     password: str
     use_auth_token: bool
     token_audience: str
+    client_id_prefix: str
     topic_status: str
-    topic_events: str
+    topic_packets: str
 
     @property
     def name(self) -> str:
@@ -99,6 +103,7 @@ class MeshCoreMqttUploader:
         self.entry = entry
         self.api = api
         self.settings = entry.data.get(CONF_MQTT_BROKERS, {}) or {}
+        self.node_name = str(entry.data.get(CONF_NAME, "meshcore") or "meshcore").strip()
         self.public_key = (entry.data.get(CONF_PUBKEY, "") or "").upper()
         self.global_iata = (
             str(entry.data.get(CONF_MQTT_IATA) or os.getenv("MESHCORE_HA_MQTT_IATA", "LOC"))
@@ -175,6 +180,9 @@ class MeshCoreMqttUploader:
                 token_audience=str(
                     broker_settings.get("token_audience", os.getenv(f"{prefix}TOKEN_AUDIENCE", "")) or ""
                 ).strip(),
+                client_id_prefix=str(
+                    broker_settings.get("client_id_prefix", os.getenv(f"{prefix}CLIENT_ID_PREFIX", "meshcore_")) or "meshcore_"
+                ).strip(),
                 topic_status=self._resolve_topic(
                     str(
                         broker_settings.get(
@@ -184,11 +192,11 @@ class MeshCoreMqttUploader:
                     ),
                     iata,
                 ),
-                topic_events=self._resolve_topic(
+                topic_packets=self._resolve_topic(
                     str(
                         broker_settings.get(
                             "topic_events",
-                            os.getenv(f"{prefix}TOPIC_EVENTS", "meshcore/{IATA}/{PUBLIC_KEY}/events"),
+                            os.getenv(f"{prefix}TOPIC_EVENTS", "meshcore/{IATA}/{PUBLIC_KEY}/packets"),
                         )
                     ),
                     iata,
@@ -214,6 +222,13 @@ class MeshCoreMqttUploader:
             .replace("{IATA_lower}", iata.lower())
             .replace("{PUBLIC_KEY}", self.public_key or "DEVICE")
         )
+
+    @staticmethod
+    def _sanitize_client_id(raw: str, prefix: str) -> str:
+        """Build MQTT client id with same style as other uploaders."""
+        client_id = f"{prefix}{raw.replace(' ', '_')}"
+        client_id = re.sub(r"[^a-zA-Z0-9_-]", "", client_id)
+        return client_id[:23]
 
     async def async_start(self) -> None:
         """Initialize configured MQTT clients and publish online status."""
@@ -246,7 +261,9 @@ class MeshCoreMqttUploader:
 
     async def _async_create_client(self, broker: BrokerConfig):
         """Create an MQTT client for one broker."""
-        client_id = f"meshcore_ha_{(self.public_key or self.entry.entry_id)[:16]}_{broker.number}"
+        client_id = self._sanitize_client_id(self.node_name or self.public_key or self.entry.entry_id, broker.client_id_prefix)
+        if broker.number > 1:
+            client_id = f"{client_id[:20]}_{broker.number}"[:23]
         try:
             client = mqtt.Client(
                 mqtt.CallbackAPIVersion.VERSION2,
@@ -272,6 +289,15 @@ class MeshCoreMqttUploader:
             client.username_pw_set(broker.username, broker.password)
 
         await self.hass.async_add_executor_job(self._configure_tls, client, broker)
+
+        # Mirror other uploaders: set LWT offline status message.
+        lwt_payload = json.dumps(self._build_status_payload("offline"))
+        client.will_set(
+            broker.topic_status,
+            lwt_payload,
+            qos=broker.qos,
+            retain=broker.retain,
+        )
 
         if broker.transport == "websockets":
             client.ws_set_options(path="/", headers=None)
@@ -550,12 +576,7 @@ class MeshCoreMqttUploader:
         """Publish status for one broker/client pair."""
         if not broker.topic_status:
             return
-        payload = {
-            "status": state,
-            "timestamp": int(time.time()),
-            "source": "meshcore-ha",
-            "public_key": self.public_key,
-        }
+        payload = self._build_status_payload(state)
         try:
             result = client.publish(
                 broker.topic_status,
@@ -568,17 +589,28 @@ class MeshCoreMqttUploader:
         except Exception as ex:
             self.logger.error("[%s] Status publish error: %s", broker.name, ex)
 
+    def _build_status_payload(self, state: str) -> dict[str, Any]:
+        """Build status payload compatible with other uploaders."""
+        return {
+            "status": state,
+            "timestamp": datetime.now().isoformat(),
+            "origin": self.node_name,
+            "origin_id": self.public_key or "DEVICE",
+            "source": "meshcore-ha",
+        }
+
     def publish_raw_event(self, event_type: str, payload: Any) -> None:
-        """Publish one raw event to all connected brokers."""
+        """Publish one event as packet-like payload to all connected brokers."""
         if not self._clients:
             return
-        event_payload = json.dumps(
+        packet_payload = json.dumps(
             {
+                "timestamp": datetime.now().isoformat(),
+                "origin": self.node_name,
+                "origin_id": self.public_key or "DEVICE",
                 "event_type": event_type,
                 "payload": payload,
-                "timestamp": time.time(),
                 "source": "meshcore-ha",
-                "public_key": self.public_key,
             }
         )
         for info in self._clients:
@@ -586,12 +618,12 @@ class MeshCoreMqttUploader:
                 continue
             broker: BrokerConfig = info["broker"]
             client = info["client"]
-            if not broker.topic_events:
+            if not broker.topic_packets:
                 continue
             try:
                 result = client.publish(
-                    broker.topic_events,
-                    event_payload,
+                    broker.topic_packets,
+                    packet_payload,
                     qos=broker.qos,
                     retain=False,
                 )
