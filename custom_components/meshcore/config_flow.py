@@ -51,6 +51,7 @@ from .const import (
     CONF_MQTT_DECODER_CMD,
     CONF_MQTT_PRIVATE_KEY,
     CONF_MQTT_TOKEN_TTL_SECONDS,
+    CONF_MQTT_PUBLISH_ALL_EVENTS,
     CONF_MQTT_BROKERS,
     NodeType,
 )
@@ -784,6 +785,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             new_data[CONF_MQTT_DECODER_CMD] = user_input.get(CONF_MQTT_DECODER_CMD, "meshcore-decoder")
             new_data[CONF_MQTT_PRIVATE_KEY] = user_input.get(CONF_MQTT_PRIVATE_KEY, "")
             new_data[CONF_MQTT_TOKEN_TTL_SECONDS] = user_input.get(CONF_MQTT_TOKEN_TTL_SECONDS, 3600)
+            new_data[CONF_MQTT_PUBLISH_ALL_EVENTS] = user_input.get(CONF_MQTT_PUBLISH_ALL_EVENTS, False)
             self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
             return await self.async_step_init()
 
@@ -791,6 +793,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         current_decoder_cmd = self.config_entry.data.get(CONF_MQTT_DECODER_CMD, "meshcore-decoder")
         current_private_key = self.config_entry.data.get(CONF_MQTT_PRIVATE_KEY, "")
         current_ttl = self.config_entry.data.get(CONF_MQTT_TOKEN_TTL_SECONDS, 3600)
+        current_publish_all = self.config_entry.data.get(CONF_MQTT_PUBLISH_ALL_EVENTS, False)
 
         return self.async_show_form(
             step_id="mqtt_global",
@@ -799,6 +802,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_MQTT_DECODER_CMD, default=current_decoder_cmd): str,
                 vol.Optional(CONF_MQTT_PRIVATE_KEY, default=current_private_key): str,
                 vol.Optional(CONF_MQTT_TOKEN_TTL_SECONDS, default=current_ttl): vol.All(cv.positive_int, vol.Range(min=60, max=86400)),
+                vol.Optional(CONF_MQTT_PUBLISH_ALL_EVENTS, default=current_publish_all): cv.boolean,
             }),
         )
 

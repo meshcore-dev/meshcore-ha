@@ -23,6 +23,7 @@ from .const import (
     CONF_MQTT_DECODER_CMD,
     CONF_MQTT_IATA,
     CONF_MQTT_PRIVATE_KEY,
+    CONF_MQTT_PUBLISH_ALL_EVENTS,
     CONF_MQTT_TOKEN_TTL_SECONDS,
     CONF_NAME,
     CONF_PUBKEY,
@@ -115,6 +116,10 @@ class MeshCoreMqttUploader:
         ).strip()
         self.private_key = (
             str(entry.data.get(CONF_MQTT_PRIVATE_KEY) or os.getenv("MESHCORE_HA_PRIVATE_KEY", "")).strip()
+        )
+        self.publish_all_events = _as_bool(
+            entry.data.get(CONF_MQTT_PUBLISH_ALL_EVENTS) or os.getenv("MESHCORE_HA_MQTT_PUBLISH_ALL_EVENTS"),
+            False,
         )
         self.token_ttl_seconds = _as_int(
             entry.data.get(CONF_MQTT_TOKEN_TTL_SECONDS) or os.getenv("MESHCORE_HA_TOKEN_TTL_SECONDS"),
@@ -620,6 +625,8 @@ class MeshCoreMqttUploader:
         """Publish one event as packet-like payload to all connected brokers."""
         if not self._clients:
             return
+        if not self.publish_all_events and not self._is_relevant_event(event_type, payload):
+            return
         packet_payload = json.dumps(
             {
                 "timestamp": datetime.now().isoformat(),
@@ -650,6 +657,34 @@ class MeshCoreMqttUploader:
                     self.logger.debug("[%s] Packet published topic=%s event=%s", broker.name, broker.topic_packets, event_type)
             except Exception as ex:
                 self.logger.error("[%s] Event publish error: %s", broker.name, ex)
+
+    @staticmethod
+    def _is_relevant_event(event_type: str, payload: Any) -> bool:
+        """Filter to packet/message/radio-log style events by default."""
+        et = (event_type or "").upper()
+        relevant_exact = {
+            "RF_LOG_DATA",
+            "RX_LOG_DATA",
+            "CONTACT_MSG_RECV",
+            "CONTACT_MSG_SENT",
+            "CHANNEL_MSG_RECV",
+            "CHAN_MSG_RECV",
+            "MESSAGE_RECV",
+            "MESSAGE_SENT",
+        }
+        if et in relevant_exact:
+            return True
+
+        relevant_fragments = ("PACKET", "RX_LOG", "RF_LOG", "MSG_RECV", "MSG_SENT", "RAW")
+        if any(fragment in et for fragment in relevant_fragments):
+            return True
+
+        if isinstance(payload, dict):
+            packetish_keys = {"hash", "payload_type", "route", "rssi", "snr", "raw", "packet"}
+            if any(key in payload for key in packetish_keys):
+                return True
+
+        return False
 
     async def async_stop(self) -> None:
         """Stop all MQTT clients after publishing offline status."""

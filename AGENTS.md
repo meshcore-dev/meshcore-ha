@@ -20,6 +20,8 @@ Update this file in every change set that alters runtime behavior, configuration
 - MQTT client IDs are node-name based and sanitized, with broker suffix for brokers >1.
 - Packet publishing defaults to topic template shape compatible with other MeshCore uploaders (`.../packets`), and status payloads include `origin`/`origin_id`.
 - MQTT uploader emits startup INFO logs per broker and DEBUG logs for successful status/packet publishes.
+- MQTT uploader defaults to relevant-event filtering (packet/message/radio-log style), not full event firehose.
+- Global option `mqtt_publish_all_events` can disable filtering and publish all forwarded events.
 
 ## UI Configuration Keys
 - Global:
@@ -27,6 +29,7 @@ Update this file in every change set that alters runtime behavior, configuration
   - `mqtt_decoder_cmd`
   - `mqtt_private_key`
   - `mqtt_token_ttl_seconds`
+  - `mqtt_publish_all_events`
 - Per broker:
   - `enabled`, `server`, `port`, `transport`
   - `use_tls`, `tls_verify`
@@ -48,3 +51,4 @@ Update this file in every change set that alters runtime behavior, configuration
 - 2026-02-16: Fixed paho ReasonCode handling and moved blocking TLS setup off HA event loop.
 - 2026-02-16: Aligned MQTT client ID and packet/status payload shape with existing MeshCore uploader conventions.
 - 2026-02-16: Added clearer MQTT runtime logs (broker init INFO + publish success DEBUG).
+- 2026-02-16: Added default relevant-event filtering for MQTT uploads with UI toggle (`mqtt_publish_all_events`) for full event stream.
