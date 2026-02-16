@@ -13,6 +13,7 @@ import subprocess
 import time
 from datetime import datetime
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -24,7 +25,6 @@ from .const import (
     CONF_MQTT_IATA,
     CONF_MQTT_PRIVATE_KEY,
     CONF_MQTT_PUBLISH_ALL_EVENTS,
-    CONF_MQTT_CLIENT_AGENT,
     CONF_MQTT_TOKEN_TTL_SECONDS,
     CONF_NAME,
     CONF_PUBKEY,
@@ -118,9 +118,7 @@ class MeshCoreMqttUploader:
         self.private_key = (
             str(entry.data.get(CONF_MQTT_PRIVATE_KEY) or os.getenv("MESHCORE_HA_PRIVATE_KEY", "")).strip()
         )
-        self.client_agent = str(
-            entry.data.get(CONF_MQTT_CLIENT_AGENT) or os.getenv("MESHCORE_HA_MQTT_CLIENT_AGENT", "meshcore-dev/meshcore-ha:version")
-        ).strip()
+        self.client_agent = self._build_client_agent()
         self.publish_all_events = _as_bool(
             entry.data.get(CONF_MQTT_PUBLISH_ALL_EVENTS) or os.getenv("MESHCORE_HA_MQTT_PUBLISH_ALL_EVENTS"),
             False,
@@ -132,6 +130,21 @@ class MeshCoreMqttUploader:
         self._brokers = self._load_brokers()
         self._clients: list[dict[str, Any]] = []
         self._tokens: dict[int, dict[str, Any]] = {}
+
+    @staticmethod
+    def _integration_version() -> str:
+        """Read integration version from manifest."""
+        try:
+            manifest_path = Path(__file__).with_name("manifest.json")
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            version = str(manifest.get("version", "")).strip()
+            return version or "unknown"
+        except Exception:
+            return "unknown"
+
+    def _build_client_agent(self) -> str:
+        """Build fixed LetsMesh client agent label."""
+        return f"meshcore-dev/meshcore-ha:{self._integration_version()}"
 
     @property
     def enabled(self) -> bool:

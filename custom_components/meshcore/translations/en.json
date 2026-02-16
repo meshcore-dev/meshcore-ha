@@ -111,8 +111,7 @@
           "mqtt_decoder_cmd": "meshcore-decoder Command",
           "mqtt_private_key": "Private Key (Hex)",
           "mqtt_token_ttl_seconds": "Auth Token TTL (seconds)",
-          "mqtt_publish_all_events": "Publish All Events (disable filtering)",
-          "mqtt_client_agent": "Client Upload Name (LetsMesh)"
+          "mqtt_publish_all_events": "Publish All Events (disable filtering)"
         },
         "description": "Configure global MQTT upload and auth-token settings",
         "title": "MQTT Global Settings"

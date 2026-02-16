@@ -52,7 +52,6 @@ from .const import (
     CONF_MQTT_PRIVATE_KEY,
     CONF_MQTT_TOKEN_TTL_SECONDS,
     CONF_MQTT_PUBLISH_ALL_EVENTS,
-    CONF_MQTT_CLIENT_AGENT,
     CONF_MQTT_BROKERS,
     NodeType,
 )
@@ -787,7 +786,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             new_data[CONF_MQTT_PRIVATE_KEY] = user_input.get(CONF_MQTT_PRIVATE_KEY, "")
             new_data[CONF_MQTT_TOKEN_TTL_SECONDS] = user_input.get(CONF_MQTT_TOKEN_TTL_SECONDS, 3600)
             new_data[CONF_MQTT_PUBLISH_ALL_EVENTS] = user_input.get(CONF_MQTT_PUBLISH_ALL_EVENTS, False)
-            new_data[CONF_MQTT_CLIENT_AGENT] = user_input.get(CONF_MQTT_CLIENT_AGENT, "meshcore-dev/meshcore-ha:version")
             self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
             return await self.async_step_init()
 
@@ -796,7 +794,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         current_private_key = self.config_entry.data.get(CONF_MQTT_PRIVATE_KEY, "")
         current_ttl = self.config_entry.data.get(CONF_MQTT_TOKEN_TTL_SECONDS, 3600)
         current_publish_all = self.config_entry.data.get(CONF_MQTT_PUBLISH_ALL_EVENTS, False)
-        current_client_agent = self.config_entry.data.get(CONF_MQTT_CLIENT_AGENT, "meshcore-dev/meshcore-ha:version")
 
         return self.async_show_form(
             step_id="mqtt_global",
@@ -806,7 +803,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_MQTT_PRIVATE_KEY, default=current_private_key): str,
                 vol.Optional(CONF_MQTT_TOKEN_TTL_SECONDS, default=current_ttl): vol.All(cv.positive_int, vol.Range(min=60, max=86400)),
                 vol.Optional(CONF_MQTT_PUBLISH_ALL_EVENTS, default=current_publish_all): cv.boolean,
-                vol.Optional(CONF_MQTT_CLIENT_AGENT, default=current_client_agent): str,
             }),
         )
 

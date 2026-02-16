@@ -30,7 +30,6 @@ Update this file in every change set that alters runtime behavior, configuration
   - `mqtt_private_key`
   - `mqtt_token_ttl_seconds`
   - `mqtt_publish_all_events`
-  - `mqtt_client_agent` (LetsMesh "By Client" label, default `meshcore-dev/meshcore-ha:version`)
 - Per broker:
   - `enabled`, `server`, `port`, `transport`
   - `use_tls`, `tls_verify`
@@ -54,4 +53,4 @@ Update this file in every change set that alters runtime behavior, configuration
 - 2026-02-16: Added clearer MQTT runtime logs (broker init INFO + publish success DEBUG).
 - 2026-02-16: Added default relevant-event filtering for MQTT uploads with UI toggle (`mqtt_publish_all_events`) for full event stream.
 - 2026-02-16: Added explicit per-broker startup diagnostics (disabled/missing server/init failure) to simplify MQTT broker troubleshooting.
-- 2026-02-16: Added configurable auth-token client claim (`mqtt_client_agent`) so LetsMesh "By Client" attribution does not appear as unknown.
+- 2026-02-16: LetsMesh auth-token `client` claim is now fixed (not user-configurable) as `meshcore-dev/meshcore-ha:<manifest version>`.
