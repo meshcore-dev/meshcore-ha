@@ -189,7 +189,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
-    mqtt_uploader = MeshCoreMqttUploader(hass, _LOGGER, entry)
+    mqtt_uploader = MeshCoreMqttUploader(hass, _LOGGER, entry, api=coordinator.api)
     await mqtt_uploader.async_start()
     coordinator.mqtt_uploader = mqtt_uploader
     

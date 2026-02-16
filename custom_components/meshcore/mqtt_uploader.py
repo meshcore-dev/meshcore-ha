@@ -28,6 +28,11 @@ try:
 except ImportError:
     mqtt = None
 
+try:
+    from meshcore.events import EventType
+except ImportError:
+    EventType = None
+
 
 def _as_bool(value: str | bool | None, default: bool = False) -> bool:
     """Convert string-ish value to bool."""
@@ -81,10 +86,11 @@ class BrokerConfig:
 class MeshCoreMqttUploader:
     """Publish MeshCore raw events and status to MQTT brokers."""
 
-    def __init__(self, hass: HomeAssistant, logger, entry: ConfigEntry) -> None:
+    def __init__(self, hass: HomeAssistant, logger, entry: ConfigEntry, api=None) -> None:
         self.hass = hass
         self.logger = logger
         self.entry = entry
+        self.api = api
         self.settings = entry.data.get(CONF_MQTT_BROKERS, {}) or {}
         self.public_key = (entry.data.get(CONF_PUBKEY, "") or "").upper()
         self.global_iata = (
@@ -301,8 +307,15 @@ class MeshCoreMqttUploader:
             self.logger.error("[%s] Missing device public key; cannot generate auth token", broker.name)
             return None
         if not self.private_key:
-            self.logger.error("[%s] Missing private key (MESHCORE_HA_PRIVATE_KEY)", broker.name)
-            return None
+            fetched_private_key = await self._async_fetch_private_key_from_device(broker)
+            if fetched_private_key:
+                self.private_key = fetched_private_key
+            else:
+                self.logger.error(
+                    "[%s] Missing private key (configure in MQTT global settings or enable device private key export)",
+                    broker.name,
+                )
+                return None
 
         cached = self._tokens.get(broker.number)
         now = time.time()
@@ -335,6 +348,54 @@ class MeshCoreMqttUploader:
             "expires_at": now + self.token_ttl_seconds,
         }
         return token
+
+    async def _async_fetch_private_key_from_device(self, broker: BrokerConfig) -> str | None:
+        """Try to fetch private key from connected MeshCore device."""
+        if not self.api:
+            self.logger.debug("[%s] No API instance available for private key export", broker.name)
+            return None
+        try:
+            mesh_core = self.api.mesh_core
+        except Exception as ex:
+            self.logger.debug("[%s] MeshCore instance not ready for private key export: %s", broker.name, ex)
+            return None
+
+        try:
+            self.logger.info("[%s] Attempting to fetch private key from device (export_private_key)", broker.name)
+            result = await mesh_core.commands.export_private_key()
+        except Exception as ex:
+            self.logger.warning("[%s] Private key export command failed: %s", broker.name, ex)
+            return None
+
+        if not result:
+            self.logger.warning("[%s] Private key export returned no result", broker.name)
+            return None
+
+        if EventType is not None and getattr(result, "type", None) == EventType.PRIVATE_KEY:
+            payload = getattr(result, "payload", {}) or {}
+            private_key = payload.get("private_key")
+            if isinstance(private_key, (bytes, bytearray)):
+                private_key = private_key.hex()
+            private_key = str(private_key or "").strip()
+            if len(private_key) == 128 and all(c in "0123456789abcdefABCDEF" for c in private_key):
+                self.logger.info("[%s] Private key fetched from device", broker.name)
+                return private_key
+            self.logger.warning("[%s] Device returned invalid private key format", broker.name)
+            return None
+
+        if EventType is not None and getattr(result, "type", None) == EventType.DISABLED:
+            self.logger.warning(
+                "[%s] Private key export disabled on firmware (needs ENABLE_PRIVATE_KEY_EXPORT=1)",
+                broker.name,
+            )
+            return None
+
+        if EventType is not None and getattr(result, "type", None) == EventType.ERROR:
+            self.logger.warning("[%s] Device refused private key export: %s", broker.name, getattr(result, "payload", ""))
+            return None
+
+        self.logger.warning("[%s] Unexpected response for private key export: %s", broker.name, getattr(result, "type", None))
+        return None
 
     def _run_decoder_command(self, args: list[str]) -> str | None:
         """Run meshcore-decoder CLI command to generate an auth token."""
