@@ -237,7 +237,9 @@ class MeshCoreMqttUploader:
             broker: BrokerConfig = info["broker"]
             client = info["client"]
             try:
-                client.connect(broker.server, broker.port, keepalive=broker.keepalive)
+                await self.hass.async_add_executor_job(
+                    client.connect, broker.server, broker.port, broker.keepalive
+                )
                 client.loop_start()
             except Exception as ex:
                 self.logger.error("[%s] Connection error: %s", broker.name, ex)
@@ -269,14 +271,7 @@ class MeshCoreMqttUploader:
         elif broker.username:
             client.username_pw_set(broker.username, broker.password)
 
-        if broker.use_tls:
-            if broker.tls_verify:
-                client.tls_set()
-                client.tls_insecure_set(False)
-            else:
-                client.tls_set(cert_reqs=ssl.CERT_NONE)
-                client.tls_insecure_set(True)
-                self.logger.warning("[%s] TLS verification disabled", broker.name)
+        await self.hass.async_add_executor_job(self._configure_tls, client, broker)
 
         if broker.transport == "websockets":
             client.ws_set_options(path="/", headers=None)
@@ -286,10 +281,11 @@ class MeshCoreMqttUploader:
     def _on_connect(self, client, userdata, flags, reason_code, properties=None):
         """MQTT connect callback."""
         broker_num = userdata.get("broker_num")
+        rc = self._reason_code_to_int(reason_code)
         for info in self._clients:
             broker: BrokerConfig = info["broker"]
             if broker.number == broker_num:
-                if int(reason_code) == 0:
+                if rc == 0:
                     info["connected"] = True
                     self.logger.info("[%s] Connected", broker.name)
                     self._publish_status_for_client(client, broker, "online")
@@ -300,13 +296,41 @@ class MeshCoreMqttUploader:
     def _on_disconnect(self, client, userdata, flags, reason_code, properties=None):
         """MQTT disconnect callback."""
         broker_num = userdata.get("broker_num")
+        rc = self._reason_code_to_int(reason_code)
         for info in self._clients:
             broker: BrokerConfig = info["broker"]
             if broker.number == broker_num:
                 info["connected"] = False
-                if int(reason_code) != 0:
+                if rc != 0:
                     self.logger.warning("[%s] Disconnected: %s", broker.name, reason_code)
                 return
+
+    @staticmethod
+    def _reason_code_to_int(reason_code) -> int:
+        """Normalize paho reason code types to int."""
+        try:
+            return int(reason_code)
+        except Exception:
+            pass
+        value = getattr(reason_code, "value", None)
+        if value is not None:
+            try:
+                return int(value)
+            except Exception:
+                pass
+        return -1
+
+    def _configure_tls(self, client, broker: BrokerConfig) -> None:
+        """Configure client TLS options (runs in executor)."""
+        if not broker.use_tls:
+            return
+        if broker.tls_verify:
+            client.tls_set()
+            client.tls_insecure_set(False)
+        else:
+            client.tls_set(cert_reqs=ssl.CERT_NONE)
+            client.tls_insecure_set(True)
+            self.logger.warning("[%s] TLS verification disabled", broker.name)
 
     async def _async_get_token(self, broker: BrokerConfig) -> str | None:
         """Create or reuse cached JWT token using meshcore-decoder CLI."""
@@ -421,6 +445,11 @@ class MeshCoreMqttUploader:
                 check=False,
                 timeout=15,
             )
+        except FileNotFoundError:
+            self.logger.warning(
+                "meshcore-decoder not found in runtime PATH, will try Python fallback signer"
+            )
+            return None
         except Exception as ex:
             self.logger.error("Failed to execute decoder command: %s", ex)
             return None
