@@ -47,6 +47,11 @@ from .const import (
     CONF_SELF_TELEMETRY_ENABLED,
     CONF_SELF_TELEMETRY_INTERVAL,
     DEFAULT_SELF_TELEMETRY_INTERVAL,
+    CONF_MQTT_IATA,
+    CONF_MQTT_DECODER_CMD,
+    CONF_MQTT_PRIVATE_KEY,
+    CONF_MQTT_TOKEN_TTL_SECONDS,
+    CONF_MQTT_BROKERS,
     NodeType,
 )
 from .meshcore_api import MeshCoreAPI
@@ -55,6 +60,10 @@ _LOGGER = logging.getLogger(__name__)
 
 class CannotConnect(HomeAssistantError):
     """Error to indicate we cannot connect."""
+
+
+DEFAULT_MQTT_TOPIC_STATUS = "meshcore/{IATA}/{PUBLIC_KEY}/status"
+DEFAULT_MQTT_TOPIC_EVENTS = "meshcore/{IATA}/{PUBLIC_KEY}/events"
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
@@ -343,6 +352,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 return await self.async_step_manage_devices()
             elif action == "global_settings":
                 return await self.async_step_global_settings()
+            elif action == "mqtt_global":
+                return await self.async_step_mqtt_global()
+            elif action == "mqtt_brokers":
+                return await self.async_step_mqtt_brokers()
             else:
                 return self.async_create_entry(title="", data={})
 
@@ -371,6 +384,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 "add_client": "Add Tracked Client", 
                 "manage_devices": "Manage Monitored Devices",
                 "global_settings": "Global Settings",
+                "mqtt_global": "MQTT Global Settings",
+                "mqtt_brokers": "MQTT Broker Settings",
             })
         })
 
@@ -752,6 +767,115 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_SELF_TELEMETRY_ENABLED, default=current_telemetry_enabled): cv.boolean,
                 vol.Optional(CONF_SELF_TELEMETRY_INTERVAL, default=current_telemetry_interval): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
             }),
+        )
+
+    def _get_mqtt_brokers_data(self) -> Dict[str, Dict[str, Any]]:
+        """Get MQTT broker settings from config entry data."""
+        brokers = self.config_entry.data.get(CONF_MQTT_BROKERS, {})
+        if isinstance(brokers, dict):
+            return copy.deepcopy(brokers)
+        return {}
+
+    async def async_step_mqtt_global(self, user_input=None):
+        """Handle MQTT global settings."""
+        if user_input is not None:
+            new_data = copy.deepcopy(dict(self.config_entry.data))
+            new_data[CONF_MQTT_IATA] = user_input.get(CONF_MQTT_IATA, "LOC").upper()
+            new_data[CONF_MQTT_DECODER_CMD] = user_input.get(CONF_MQTT_DECODER_CMD, "meshcore-decoder")
+            new_data[CONF_MQTT_PRIVATE_KEY] = user_input.get(CONF_MQTT_PRIVATE_KEY, "")
+            new_data[CONF_MQTT_TOKEN_TTL_SECONDS] = user_input.get(CONF_MQTT_TOKEN_TTL_SECONDS, 3600)
+            self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
+            return await self.async_step_init()
+
+        current_iata = self.config_entry.data.get(CONF_MQTT_IATA, "LOC")
+        current_decoder_cmd = self.config_entry.data.get(CONF_MQTT_DECODER_CMD, "meshcore-decoder")
+        current_private_key = self.config_entry.data.get(CONF_MQTT_PRIVATE_KEY, "")
+        current_ttl = self.config_entry.data.get(CONF_MQTT_TOKEN_TTL_SECONDS, 3600)
+
+        return self.async_show_form(
+            step_id="mqtt_global",
+            data_schema=vol.Schema({
+                vol.Optional(CONF_MQTT_IATA, default=current_iata): str,
+                vol.Optional(CONF_MQTT_DECODER_CMD, default=current_decoder_cmd): str,
+                vol.Optional(CONF_MQTT_PRIVATE_KEY, default=current_private_key): str,
+                vol.Optional(CONF_MQTT_TOKEN_TTL_SECONDS, default=current_ttl): vol.All(cv.positive_int, vol.Range(min=60, max=86400)),
+            }),
+        )
+
+    async def async_step_mqtt_brokers(self, user_input=None):
+        """Select which MQTT broker to configure."""
+        if user_input is not None:
+            broker_id = user_input.get("broker_id")
+            self._editing_mqtt_broker = int(broker_id)
+            return await self.async_step_mqtt_broker()
+
+        options = {
+            "1": "Broker 1",
+            "2": "Broker 2",
+            "3": "Broker 3",
+            "4": "Broker 4",
+        }
+        return self.async_show_form(
+            step_id="mqtt_brokers",
+            data_schema=vol.Schema({
+                vol.Required("broker_id"): vol.In(options),
+            }),
+        )
+
+    async def async_step_mqtt_broker(self, user_input=None):
+        """Edit one MQTT broker settings."""
+        broker_num = getattr(self, "_editing_mqtt_broker", 1)
+        broker_key = str(broker_num)
+        brokers = self._get_mqtt_brokers_data()
+        broker = brokers.get(broker_key, {})
+
+        if user_input is not None:
+            brokers[broker_key] = {
+                "enabled": user_input.get("enabled", False),
+                "server": user_input.get("server", ""),
+                "port": user_input.get("port", 1883),
+                "transport": user_input.get("transport", "tcp"),
+                "use_tls": user_input.get("use_tls", False),
+                "tls_verify": user_input.get("tls_verify", True),
+                "keepalive": user_input.get("keepalive", 60),
+                "qos": user_input.get("qos", 0),
+                "retain": user_input.get("retain", True),
+                "username": user_input.get("username", ""),
+                "password": user_input.get("password", ""),
+                "use_auth_token": user_input.get("use_auth_token", False),
+                "token_audience": user_input.get("token_audience", ""),
+                "topic_status": user_input.get("topic_status", DEFAULT_MQTT_TOPIC_STATUS),
+                "topic_events": user_input.get("topic_events", DEFAULT_MQTT_TOPIC_EVENTS),
+                "iata": user_input.get("iata", ""),
+            }
+            new_data = copy.deepcopy(dict(self.config_entry.data))
+            new_data[CONF_MQTT_BROKERS] = brokers
+            self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
+            return await self.async_step_mqtt_brokers()
+
+        schema = vol.Schema({
+            vol.Optional("enabled", default=broker.get("enabled", False)): cv.boolean,
+            vol.Optional("server", default=broker.get("server", "")): str,
+            vol.Optional("port", default=broker.get("port", 1883)): cv.port,
+            vol.Optional("transport", default=broker.get("transport", "tcp")): vol.In(["tcp", "websockets"]),
+            vol.Optional("use_tls", default=broker.get("use_tls", False)): cv.boolean,
+            vol.Optional("tls_verify", default=broker.get("tls_verify", True)): cv.boolean,
+            vol.Optional("keepalive", default=broker.get("keepalive", 60)): vol.All(cv.positive_int, vol.Range(min=15, max=300)),
+            vol.Optional("qos", default=broker.get("qos", 0)): vol.In([0, 1, 2]),
+            vol.Optional("retain", default=broker.get("retain", True)): cv.boolean,
+            vol.Optional("username", default=broker.get("username", "")): str,
+            vol.Optional("password", default=broker.get("password", "")): str,
+            vol.Optional("use_auth_token", default=broker.get("use_auth_token", False)): cv.boolean,
+            vol.Optional("token_audience", default=broker.get("token_audience", "")): str,
+            vol.Optional("topic_status", default=broker.get("topic_status", DEFAULT_MQTT_TOPIC_STATUS)): str,
+            vol.Optional("topic_events", default=broker.get("topic_events", DEFAULT_MQTT_TOPIC_EVENTS)): str,
+            vol.Optional("iata", default=broker.get("iata", "")): str,
+        })
+
+        return self.async_show_form(
+            step_id="mqtt_broker",
+            data_schema=schema,
+            description_placeholders={"broker_number": str(broker_num)},
         )
         
     def _get_client_contacts(self):
