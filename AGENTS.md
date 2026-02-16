@@ -52,3 +52,4 @@ Update this file in every change set that alters runtime behavior, configuration
 - 2026-02-16: Aligned MQTT client ID and packet/status payload shape with existing MeshCore uploader conventions.
 - 2026-02-16: Added clearer MQTT runtime logs (broker init INFO + publish success DEBUG).
 - 2026-02-16: Added default relevant-event filtering for MQTT uploads with UI toggle (`mqtt_publish_all_events`) for full event stream.
+- 2026-02-16: Added explicit per-broker startup diagnostics (disabled/missing server/init failure) to simplify MQTT broker troubleshooting.

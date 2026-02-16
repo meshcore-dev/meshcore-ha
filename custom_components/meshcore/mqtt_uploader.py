@@ -138,13 +138,18 @@ class MeshCoreMqttUploader:
         brokers: list[BrokerConfig] = []
         for idx in range(1, 5):
             broker_settings = self.settings.get(str(idx), {}) if isinstance(self.settings, dict) else {}
+            broker_name = f"MQTT{idx}"
             prefix = f"MESHCORE_HA_MQTT{idx}_"
             enabled = _as_bool(
                 broker_settings.get("enabled", os.getenv(f"{prefix}ENABLED")),
                 False,
             )
             server = str(broker_settings.get("server", os.getenv(f"{prefix}SERVER", "")) or "").strip()
-            if not enabled or not server:
+            if not enabled:
+                self.logger.info("[%s] Disabled, skipping", broker_name)
+                continue
+            if not server:
+                self.logger.warning("[%s] Enabled but no server configured, skipping", broker_name)
                 continue
 
             iata = (
@@ -246,6 +251,7 @@ class MeshCoreMqttUploader:
         for broker in self._brokers:
             client = await self._async_create_client(broker)
             if client is None:
+                self.logger.warning("[%s] Client initialization failed; broker disabled for this run", broker.name)
                 continue
             self._clients.append({"broker": broker, "client": client, "connected": False})
 
