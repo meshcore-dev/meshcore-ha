@@ -733,8 +733,26 @@ class MeshCoreMqttUploader:
             route = "F"
 
         hash_value = str(payload.get("hash") or "").strip().upper()
+        if not hash_value and isinstance(decrypted, dict):
+            # GroupText packets can be correlated across repeats using decrypted content.
+            channel_idx = decrypted.get("channel_idx")
+            timestamp = decrypted.get("timestamp")
+            text = decrypted.get("text")
+            if channel_idx is not None and timestamp is not None and isinstance(text, str) and text:
+                key = f"{channel_idx}:{timestamp}:{text}"
+                hash_value = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16].upper()
         if not hash_value and raw_hex:
-            hash_value = hashlib.sha256(raw_hex.encode("utf-8")).hexdigest()[:16].upper()
+            # Fallback: hash packet bytes without mutable header/path bytes so repeats dedupe.
+            try:
+                packet_bytes = bytes.fromhex(raw_hex)
+                path_len_from_payload = _as_int(parsed.get("path_len"), -1) if parsed else -1
+                if path_len_from_payload < 0 and len(packet_bytes) >= 2:
+                    path_len_from_payload = packet_bytes[1]
+                start_idx = 2 + max(0, path_len_from_payload)
+                stable_bytes = packet_bytes[start_idx:] if len(packet_bytes) > start_idx else packet_bytes
+                hash_value = hashlib.sha256(stable_bytes).hexdigest()[:16].upper()
+            except Exception:
+                hash_value = hashlib.sha256(raw_hex.encode("utf-8")).hexdigest()[:16].upper()
 
         packet = {
             "timestamp": now.isoformat(),

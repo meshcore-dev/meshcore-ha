@@ -26,6 +26,7 @@ Update this file in every change set that alters runtime behavior, configuration
 - MQTT broker packet topic default is `meshcore/{IATA}/{PUBLIC_KEY}/packets` in options flow.
 - LetsMesh brokers are auto-corrected from `/events` to `/packets` packet topic path for analyzer compatibility.
 - MQTT uploader now normalizes RX/RF log events into legacy packet schema (`type=PACKET`, `direction`, `len`, `packet_type`, `payload_len`, `raw`, `SNR`, `RSSI`, etc.) for broker payload compatibility.
+- Packet hash normalization now prefers stable correlation (decrypted GroupText tuple or payload bytes excluding mutable header/path) to prevent duplicate rows for repeated receptions of the same packet.
 
 ## UI Configuration Keys
 - Global:
@@ -64,3 +65,4 @@ Update this file in every change set that alters runtime behavior, configuration
 - 2026-02-16: Improved options-menu contact discovery by using merged contact sources (`get_all_contacts`) and normalized type/name parsing so repeaters/clients appear reliably.
 - 2026-02-16: Normalized MQTT packet publishes for RX/RF log events to legacy packet JSON format expected by existing MeshCore MQTT consumers.
 - 2026-02-16: Fixed packet topic defaults/pathing for LetsMesh compatibility (`/packets` instead of `/events`) and aligned UI label/docs to "Packets Topic".
+- 2026-02-16: Improved MQTT packet hash derivation for RX/RF events to stabilize dedupe across repeated observations of the same packet.
