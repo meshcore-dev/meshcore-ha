@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import json
 import os
 import shlex
@@ -27,6 +29,11 @@ try:
     import paho.mqtt.client as mqtt
 except ImportError:
     mqtt = None
+
+try:
+    import nacl.bindings
+except ImportError:
+    nacl = None
 
 try:
     from meshcore.events import EventType
@@ -341,6 +348,13 @@ class MeshCoreMqttUploader:
 
         token = await self.hass.async_add_executor_job(self._run_decoder_command, args)
         if not token:
+            token = await self.hass.async_add_executor_job(
+                self._create_auth_token_python,
+                broker.token_audience,
+            )
+            if token:
+                self.logger.info("[%s] Created auth token using Python fallback signer", broker.name)
+        if not token:
             return None
 
         self._tokens[broker.number] = {
@@ -421,6 +435,87 @@ class MeshCoreMqttUploader:
             self.logger.error("meshcore-decoder returned empty token")
             return None
         return token
+
+    @staticmethod
+    def _base64url_encode(data: bytes) -> str:
+        """Base64url encode without padding."""
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+    @staticmethod
+    def _int_to_bytes_le(value: int, length: int) -> bytes:
+        """Convert int to little-endian bytes."""
+        return value.to_bytes(length, byteorder="little")
+
+    @staticmethod
+    def _bytes_to_int_le(data: bytes) -> int:
+        """Convert little-endian bytes to int."""
+        return int.from_bytes(data, byteorder="little")
+
+    def _ed25519_sign_with_expanded_key(
+        self, message: bytes, scalar: bytes, prefix: bytes
+    ) -> bytes:
+        """Sign message using MeshCore/orlp expanded Ed25519 private key format."""
+        if nacl is None:
+            raise RuntimeError("PyNaCl is required for Python auth token signing")
+        # Ed25519 group order
+        group_order = 2**252 + 27742317777372353535851937790883648493
+
+        # r = H(prefix || message) mod L
+        h_r = hashlib.sha512(prefix + message).digest()
+        r = self._bytes_to_int_le(h_r) % group_order
+        r_bytes = self._int_to_bytes_le(r, 32)
+        r_point = nacl.bindings.crypto_scalarmult_ed25519_base_noclamp(r_bytes)
+
+        # k = H(R || public_key || message) mod L
+        public_key_bytes = bytes.fromhex(self.public_key)
+        h_k = hashlib.sha512(r_point + public_key_bytes + message).digest()
+        k = self._bytes_to_int_le(h_k) % group_order
+
+        # s = (r + k * scalar) mod L
+        scalar_int = self._bytes_to_int_le(scalar)
+        s = (r + k * scalar_int) % group_order
+        s_bytes = self._int_to_bytes_le(s, 32)
+
+        return r_point + s_bytes
+
+    def _create_auth_token_python(self, audience: str | None = None) -> str | None:
+        """Create MeshCore JWT token in-process (no external decoder binary)."""
+        try:
+            if nacl is None:
+                self.logger.error("Python token signing unavailable: PyNaCl not installed")
+                return None
+            private_key_hex = (self.private_key or "").strip()
+            if len(private_key_hex) != 128:
+                self.logger.error("Python token signing failed: invalid private key length")
+                return None
+            if len(self.public_key or "") != 64:
+                self.logger.error("Python token signing failed: invalid public key length")
+                return None
+
+            now = int(time.time())
+            header = {"alg": "Ed25519", "typ": "JWT"}
+            payload = {
+                "publicKey": self.public_key.upper(),
+                "iat": now,
+                "exp": now + self.token_ttl_seconds,
+            }
+            if audience:
+                payload["aud"] = audience
+
+            header_json = json.dumps(header, separators=(",", ":")).encode("utf-8")
+            payload_json = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+            header_encoded = self._base64url_encode(header_json)
+            payload_encoded = self._base64url_encode(payload_json)
+            signing_input = f"{header_encoded}.{payload_encoded}".encode("utf-8")
+
+            private_bytes = bytes.fromhex(private_key_hex)
+            scalar = private_bytes[:32]
+            prefix = private_bytes[32:64]
+            signature = self._ed25519_sign_with_expanded_key(signing_input, scalar, prefix).hex()
+            return f"{header_encoded}.{payload_encoded}.{signature}"
+        except Exception as ex:
+            self.logger.error("Python token signing failed: %s", ex)
+            return None
 
     def _publish_status_for_client(self, client, broker: BrokerConfig, state: str) -> None:
         """Publish status for one broker/client pair."""
