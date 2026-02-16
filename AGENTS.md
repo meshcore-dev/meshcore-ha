@@ -54,3 +54,4 @@ Update this file in every change set that alters runtime behavior, configuration
 - 2026-02-16: Added default relevant-event filtering for MQTT uploads with UI toggle (`mqtt_publish_all_events`) for full event stream.
 - 2026-02-16: Added explicit per-broker startup diagnostics (disabled/missing server/init failure) to simplify MQTT broker troubleshooting.
 - 2026-02-16: LetsMesh auth-token `client` claim is now fixed (not user-configurable) as `meshcore-dev/meshcore-ha:<manifest version>`.
+- 2026-02-16: Added explicit `options.step` translation labels so HA Options UI shows friendly field names instead of raw keys.
