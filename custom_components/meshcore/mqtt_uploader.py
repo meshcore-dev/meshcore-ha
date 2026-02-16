@@ -264,6 +264,14 @@ class MeshCoreMqttUploader:
         client_id = self._sanitize_client_id(self.node_name or self.public_key or self.entry.entry_id, broker.client_id_prefix)
         if broker.number > 1:
             client_id = f"{client_id[:20]}_{broker.number}"[:23]
+        self.logger.info(
+            "[%s] Initializing client_id=%s server=%s:%s transport=%s",
+            broker.name,
+            client_id,
+            broker.server,
+            broker.port,
+            broker.transport,
+        )
         try:
             client = mqtt.Client(
                 mqtt.CallbackAPIVersion.VERSION2,
@@ -302,6 +310,13 @@ class MeshCoreMqttUploader:
         if broker.transport == "websockets":
             client.ws_set_options(path="/", headers=None)
 
+        self.logger.info(
+            "[%s] Ready (status_topic=%s packets_topic=%s auth_token=%s)",
+            broker.name,
+            broker.topic_status,
+            broker.topic_packets,
+            broker.use_auth_token,
+        )
         return client
 
     def _on_connect(self, client, userdata, flags, reason_code, properties=None):
@@ -586,6 +601,8 @@ class MeshCoreMqttUploader:
             )
             if result.rc != mqtt.MQTT_ERR_SUCCESS:
                 self.logger.error("[%s] Status publish failed: rc=%s", broker.name, result.rc)
+            else:
+                self.logger.debug("[%s] Status published state=%s topic=%s", broker.name, state, broker.topic_status)
         except Exception as ex:
             self.logger.error("[%s] Status publish error: %s", broker.name, ex)
 
@@ -629,6 +646,8 @@ class MeshCoreMqttUploader:
                 )
                 if result.rc != mqtt.MQTT_ERR_SUCCESS:
                     self.logger.error("[%s] Event publish failed: rc=%s", broker.name, result.rc)
+                else:
+                    self.logger.debug("[%s] Packet published topic=%s event=%s", broker.name, broker.topic_packets, event_type)
             except Exception as ex:
                 self.logger.error("[%s] Event publish error: %s", broker.name, ex)
 

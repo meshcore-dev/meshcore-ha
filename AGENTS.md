@@ -19,6 +19,7 @@ Update this file in every change set that alters runtime behavior, configuration
 - If private key is not configured, uploader attempts `export_private_key()` from connected device.
 - MQTT client IDs are node-name based and sanitized, with broker suffix for brokers >1.
 - Packet publishing defaults to topic template shape compatible with other MeshCore uploaders (`.../packets`), and status payloads include `origin`/`origin_id`.
+- MQTT uploader emits startup INFO logs per broker and DEBUG logs for successful status/packet publishes.
 
 ## UI Configuration Keys
 - Global:
@@ -46,3 +47,4 @@ Update this file in every change set that alters runtime behavior, configuration
 - 2026-02-16: Added Python auth-token fallback signer (PyNaCl) when `meshcore-decoder` is unavailable.
 - 2026-02-16: Fixed paho ReasonCode handling and moved blocking TLS setup off HA event loop.
 - 2026-02-16: Aligned MQTT client ID and packet/status payload shape with existing MeshCore uploader conventions.
+- 2026-02-16: Added clearer MQTT runtime logs (broker init INFO + publish success DEBUG).
