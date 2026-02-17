@@ -56,7 +56,6 @@ For detailed configuration instructions, see the [documentation](https://meshcor
 
 ## MQTT Upload (Addon/Container Env)
 
-This fork can publish `meshcore_raw_event` data to MQTT brokers directly from the integration.
 Configuration can be done in the Home Assistant Web UI:
 
 - Settings -> Devices & Services -> MeshCore -> Configure
