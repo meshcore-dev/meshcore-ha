@@ -353,13 +353,14 @@ class MeshCoreMqttUploader:
 
         await self.hass.async_add_executor_job(self._configure_tls, client, broker)
 
-        # Mirror other uploaders: set LWT offline status message.
+        # Keep status retained so LetsMesh can resolve current connectivity state
+        # even when subscribers come online after this client connects.
         lwt_payload = json.dumps(self._build_status_payload("offline"))
         client.will_set(
             broker.topic_status,
             lwt_payload,
             qos=broker.qos,
-            retain=False,
+            retain=True,
         )
 
         if broker.transport == "websockets":
@@ -719,7 +720,7 @@ class MeshCoreMqttUploader:
                 broker.topic_status,
                 json.dumps(payload),
                 qos=broker.qos,
-                retain=False,
+                retain=True,
             )
             if result.rc != mqtt.MQTT_ERR_SUCCESS:
                 self.logger.error("[%s] Status publish failed: rc=%s", broker.name, result.rc)
@@ -736,6 +737,7 @@ class MeshCoreMqttUploader:
             "origin": self.node_name,
             "origin_id": self.public_key or "DEVICE",
             "source": "meshcore-ha",
+            "client_version": self.client_agent or "meshcore-dev/meshcore-ha:unknown",
         }
 
     def _build_raw_event_payload(self, event_type: str, payload: Any) -> dict[str, Any]:
