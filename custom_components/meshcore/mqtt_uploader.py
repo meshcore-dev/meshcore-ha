@@ -664,20 +664,9 @@ class MeshCoreMqttUploader:
         if normalized_packet is not None and self._is_duplicate_packet(normalized_packet):
             return
 
-        packet_payload = None
-        if normalized_packet is not None:
-            packet_payload = json.dumps(normalized_packet)
-        elif self.publish_all_events:
-            packet_payload = json.dumps({
-                "timestamp": datetime.now().isoformat(),
-                "origin": self.node_name,
-                "origin_id": self.public_key or "DEVICE",
-                "event_type": event_type,
-                "payload": payload,
-                "source": "meshcore-ha",
-            })
-        else:
+        if normalized_packet is None:
             return
+        packet_payload = json.dumps(normalized_packet)
 
         for info in self._clients:
             if not info.get("connected"):
@@ -685,8 +674,6 @@ class MeshCoreMqttUploader:
             broker: BrokerConfig = info["broker"]
             client = info["client"]
             if not broker.topic_packets:
-                continue
-            if normalized_packet is None and broker.is_letsmesh:
                 continue
             try:
                 result = client.publish(
