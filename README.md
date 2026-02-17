@@ -62,65 +62,12 @@ Configuration can be done in the Home Assistant Web UI:
 - MQTT Global Settings
 - MQTT Broker Settings (Broker 1-4)
 
-Environment variables are still supported as fallback defaults (useful for Home Assistant Add-on containers).
+Auth-token mode is easy install by default:
 
-### Broker Variables (up to 4 brokers)
-
-Use `MESHCORE_HA_MQTT1_*`, `MESHCORE_HA_MQTT2_*`, `MESHCORE_HA_MQTT3_*`, `MESHCORE_HA_MQTT4_*`.
-
-- `ENABLED` (`true`/`false`)
-- `SERVER` (hostname)
-- `PORT` (default `1883`)
-- `TRANSPORT` (`tcp` or `websockets`)
-- `USE_TLS` (`true`/`false`)
-- `TLS_VERIFY` (`true`/`false`)
-- `USERNAME`, `PASSWORD` (for username/password auth)
-- `USE_AUTH_TOKEN` (`true`/`false`)
-- `TOKEN_AUDIENCE` (required for most token-based broker setups)
-- `TOPIC_STATUS` (default: `meshcore/{IATA}/{PUBLIC_KEY}/status`)
-- `TOPIC_EVENTS` (default: `meshcore/{IATA}/{PUBLIC_KEY}/packets`)
-- `IATA` (optional per broker override)
-
-Global variables:
-
-- `MESHCORE_HA_MQTT_IATA` (default `LOC`)
-- `MESHCORE_HA_DECODER_CMD` (default `meshcore-decoder`)
-- `MESHCORE_HA_TOKEN_TTL_SECONDS` (default `3600`)
-
-### Custom MQTT Example
-
-```bash
-MESHCORE_HA_MQTT_IATA=SEA
-MESHCORE_HA_MQTT1_ENABLED=true
-MESHCORE_HA_MQTT1_SERVER=mqtt.example.com
-MESHCORE_HA_MQTT1_PORT=1883
-MESHCORE_HA_MQTT1_USERNAME=myuser
-MESHCORE_HA_MQTT1_PASSWORD=mypass
-```
-
-### Let's Mesh Example (Auth Token)
-
-```bash
-MESHCORE_HA_MQTT_IATA=SEA
-
-MESHCORE_HA_MQTT1_ENABLED=true
-MESHCORE_HA_MQTT1_SERVER=mqtt-us-v1.letsmesh.net
-MESHCORE_HA_MQTT1_PORT=443
-MESHCORE_HA_MQTT1_TRANSPORT=websockets
-MESHCORE_HA_MQTT1_USE_TLS=true
-MESHCORE_HA_MQTT1_USE_AUTH_TOKEN=true
-MESHCORE_HA_MQTT1_TOKEN_AUDIENCE=mqtt-us-v1.letsmesh.net
-
-MESHCORE_HA_MQTT2_ENABLED=true
-MESHCORE_HA_MQTT2_SERVER=mqtt-eu-v1.letsmesh.net
-MESHCORE_HA_MQTT2_PORT=443
-MESHCORE_HA_MQTT2_TRANSPORT=websockets
-MESHCORE_HA_MQTT2_USE_TLS=true
-MESHCORE_HA_MQTT2_USE_AUTH_TOKEN=true
-MESHCORE_HA_MQTT2_TOKEN_AUDIENCE=mqtt-eu-v1.letsmesh.net
-```
-
-Auth-token mode uses `meshcore-decoder auth-token` under the hood, so `meshcore-decoder` must be installed and available in `PATH` (or set `MESHCORE_HA_DECODER_CMD`). The signing key is sourced from the connected node via `export_private_key`; if export is disabled/fails, auth-token upload does not start.
+- `meshcore-decoder` is optional.
+- If `meshcore-decoder` is not available, the integration automatically falls back to in-process Python signing (`PyNaCl`).
+- Signing key is pulled from the connected node via `export_private_key()`.
+- If private key export is disabled/blocked on firmware, auth-token upload cannot start.
 
 ## Development
 
