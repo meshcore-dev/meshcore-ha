@@ -128,6 +128,8 @@ class MeshCoreMqttUploader:
         self._brokers = self._load_brokers()
         self._clients: list[dict[str, Any]] = []
         self._tokens: dict[int, dict[str, Any]] = {}
+        self._recent_packet_signatures: dict[str, float] = {}
+        self._packet_dedupe_ttl_seconds = 1.0
 
     @staticmethod
     def _integration_version() -> str:
@@ -294,7 +296,7 @@ class MeshCoreMqttUploader:
 
     async def _async_create_client(self, broker: BrokerConfig):
         """Create an MQTT client for one broker."""
-        client_id = self._sanitize_client_id(self.node_name or self.public_key or self.entry.entry_id, broker.client_id_prefix)
+        client_id = self._sanitize_client_id(self.public_key or self.node_name or self.entry.entry_id, broker.client_id_prefix)
         if broker.number > 1:
             client_id = f"{client_id[:20]}_{broker.number}"[:23]
         self.logger.info(
@@ -634,7 +636,7 @@ class MeshCoreMqttUploader:
                 broker.topic_status,
                 json.dumps(payload),
                 qos=broker.qos,
-                retain=broker.retain,
+                retain=False,
             )
             if result.rc != mqtt.MQTT_ERR_SUCCESS:
                 self.logger.error("[%s] Status publish failed: rc=%s", broker.name, result.rc)
@@ -657,25 +659,34 @@ class MeshCoreMqttUploader:
         """Publish one event as packet-like payload to all connected brokers."""
         if not self._clients:
             return
-        if not self.publish_all_events and not self._is_relevant_event(event_type, payload):
-            return
+
         normalized_packet = self._normalize_packet_event(event_type, payload)
-        if normalized_packet is None:
-            normalized_packet = {
+        if normalized_packet is not None and self._is_duplicate_packet(normalized_packet):
+            return
+
+        packet_payload = None
+        if normalized_packet is not None:
+            packet_payload = json.dumps(normalized_packet)
+        elif self.publish_all_events:
+            packet_payload = json.dumps({
                 "timestamp": datetime.now().isoformat(),
                 "origin": self.node_name,
                 "origin_id": self.public_key or "DEVICE",
                 "event_type": event_type,
                 "payload": payload,
                 "source": "meshcore-ha",
-            }
-        packet_payload = json.dumps(normalized_packet)
+            })
+        else:
+            return
+
         for info in self._clients:
             if not info.get("connected"):
                 continue
             broker: BrokerConfig = info["broker"]
             client = info["client"]
             if not broker.topic_packets:
+                continue
+            if normalized_packet is None and broker.is_letsmesh:
                 continue
             try:
                 result = client.publish(
@@ -690,6 +701,30 @@ class MeshCoreMqttUploader:
                     self.logger.debug("[%s] Packet published topic=%s event=%s", broker.name, broker.topic_packets, event_type)
             except Exception as ex:
                 self.logger.error("[%s] Event publish error: %s", broker.name, ex)
+
+    def _is_duplicate_packet(self, packet: dict[str, Any]) -> bool:
+        """Avoid duplicate publishes from callback double-fires."""
+        now = time.time()
+        cutoff = now - self._packet_dedupe_ttl_seconds
+        stale_keys = [key for key, ts in self._recent_packet_signatures.items() if ts < cutoff]
+        for key in stale_keys:
+            self._recent_packet_signatures.pop(key, None)
+
+        signature = "|".join(
+            [
+                str(packet.get("hash", "")),
+                str(packet.get("raw", "")),
+                str(packet.get("route", "")),
+                str(packet.get("packet_type", "")),
+                str(packet.get("SNR", "")),
+                str(packet.get("RSSI", "")),
+            ]
+        )
+        if signature in self._recent_packet_signatures:
+            self.logger.debug("Skipping duplicate packet publish signature=%s", signature[:32])
+            return True
+        self._recent_packet_signatures[signature] = now
+        return False
 
     def _normalize_packet_event(self, event_type: str, payload: Any) -> dict[str, Any] | None:
         """Normalize RX/RF log events to legacy packet schema used by uploader tools."""
@@ -785,34 +820,6 @@ class MeshCoreMqttUploader:
             packet["path"] = path
 
         return packet
-
-    @staticmethod
-    def _is_relevant_event(event_type: str, payload: Any) -> bool:
-        """Filter to packet/message/radio-log style events by default."""
-        et = (event_type or "").upper()
-        relevant_exact = {
-            "RF_LOG_DATA",
-            "RX_LOG_DATA",
-            "CONTACT_MSG_RECV",
-            "CONTACT_MSG_SENT",
-            "CHANNEL_MSG_RECV",
-            "CHAN_MSG_RECV",
-            "MESSAGE_RECV",
-            "MESSAGE_SENT",
-        }
-        if et in relevant_exact:
-            return True
-
-        relevant_fragments = ("PACKET", "RX_LOG", "RF_LOG", "MSG_RECV", "MSG_SENT", "RAW")
-        if any(fragment in et for fragment in relevant_fragments):
-            return True
-
-        if isinstance(payload, dict):
-            packetish_keys = {"hash", "payload_type", "route", "rssi", "snr", "raw", "packet"}
-            if any(key in payload for key in packetish_keys):
-                return True
-
-        return False
 
     async def async_stop(self) -> None:
         """Stop all MQTT clients after publishing offline status."""
