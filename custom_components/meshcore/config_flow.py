@@ -49,7 +49,6 @@ from .const import (
     DEFAULT_SELF_TELEMETRY_INTERVAL,
     CONF_MQTT_IATA,
     CONF_MQTT_TOKEN_TTL_SECONDS,
-    CONF_MQTT_PUBLISH_ALL_EVENTS,
     CONF_MQTT_BROKERS,
     NodeType,
 )
@@ -63,6 +62,7 @@ class CannotConnect(HomeAssistantError):
 
 DEFAULT_MQTT_TOPIC_STATUS = "meshcore/{IATA}/{PUBLIC_KEY}/status"
 DEFAULT_MQTT_TOPIC_EVENTS = "meshcore/{IATA}/{PUBLIC_KEY}/packets"
+MAX_MQTT_BROKERS = 4
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
@@ -351,8 +351,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 return await self.async_step_manage_devices()
             elif action == "global_settings":
                 return await self.async_step_global_settings()
-            elif action == "mqtt_global":
-                return await self.async_step_mqtt_global()
             elif action == "mqtt_brokers":
                 return await self.async_step_mqtt_brokers()
             else:
@@ -383,8 +381,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 "add_client": "Add Tracked Client", 
                 "manage_devices": "Manage Monitored Devices",
                 "global_settings": "Global Settings",
-                "mqtt_global": "MQTT Global Settings",
-                "mqtt_brokers": "MQTT Broker Settings",
+                "mqtt_brokers": "Manage MQTT Brokers",
             })
         })
 
@@ -756,47 +753,87 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             return copy.deepcopy(brokers)
         return {}
 
-    async def async_step_mqtt_global(self, user_input=None):
-        """Handle MQTT global settings."""
-        if user_input is not None:
-            new_data = copy.deepcopy(dict(self.config_entry.data))
-            new_data[CONF_MQTT_IATA] = user_input.get(CONF_MQTT_IATA, "LOC").upper()
-            new_data[CONF_MQTT_TOKEN_TTL_SECONDS] = user_input.get(CONF_MQTT_TOKEN_TTL_SECONDS, 3600)
-            new_data[CONF_MQTT_PUBLISH_ALL_EVENTS] = user_input.get(CONF_MQTT_PUBLISH_ALL_EVENTS, False)
-            self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
-            return await self.async_step_init()
+    @staticmethod
+    def _sorted_mqtt_broker_keys(brokers: Dict[str, Dict[str, Any]]) -> list[str]:
+        """Return broker keys sorted numerically when possible."""
+        def key_sorter(value: str) -> tuple[int, str]:
+            return (0, f"{int(value):04d}") if value.isdigit() else (1, value)
 
-        current_iata = self.config_entry.data.get(CONF_MQTT_IATA, "LOC")
-        current_ttl = self.config_entry.data.get(CONF_MQTT_TOKEN_TTL_SECONDS, 3600)
-        current_publish_all = self.config_entry.data.get(CONF_MQTT_PUBLISH_ALL_EVENTS, False)
+        return sorted(brokers.keys(), key=key_sorter)
 
-        return self.async_show_form(
-            step_id="mqtt_global",
-            data_schema=vol.Schema({
-                vol.Optional(CONF_MQTT_IATA, default=current_iata): str,
-                vol.Optional(CONF_MQTT_TOKEN_TTL_SECONDS, default=current_ttl): vol.All(cv.positive_int, vol.Range(min=60, max=86400)),
-                vol.Optional(CONF_MQTT_PUBLISH_ALL_EVENTS, default=current_publish_all): cv.boolean,
-            }),
-        )
+    @staticmethod
+    def _format_mqtt_broker_label(broker_key: str, broker: Dict[str, Any]) -> str:
+        """Build display label for a configured broker."""
+        enabled = bool(broker.get("enabled", False))
+        server = str(broker.get("server", "") or "").strip() or "(no server)"
+        status = "Enabled" if enabled else "Disabled"
+        return f"Broker {broker_key}: {server} ({status})"
+
+    @staticmethod
+    def _next_mqtt_broker_key(brokers: Dict[str, Dict[str, Any]]) -> str | None:
+        """Find next available broker key within max supported brokers."""
+        used = set(brokers.keys())
+        for idx in range(1, MAX_MQTT_BROKERS + 1):
+            key = str(idx)
+            if key not in used:
+                return key
+        return None
 
     async def async_step_mqtt_brokers(self, user_input=None):
-        """Select which MQTT broker to configure."""
-        if user_input is not None:
-            broker_id = user_input.get("broker_id")
-            self._editing_mqtt_broker = int(broker_id)
-            return await self.async_step_mqtt_broker()
+        """Manage MQTT brokers with add/edit/remove actions."""
+        brokers = self._get_mqtt_brokers_data()
 
-        options = {
-            "1": "Broker 1",
-            "2": "Broker 2",
-            "3": "Broker 3",
-            "4": "Broker 4",
+        if user_input is not None:
+            action = user_input.get("broker_action")
+            selected = str(user_input.get("selected_broker", "") or "").strip()
+
+            if action == "add":
+                next_key = self._next_mqtt_broker_key(brokers)
+                if next_key is not None:
+                    self._editing_mqtt_broker = int(next_key)
+                    return await self.async_step_mqtt_broker()
+            elif action == "edit" and selected in brokers:
+                self._editing_mqtt_broker = int(selected)
+                return await self.async_step_mqtt_broker()
+            elif action == "remove" and selected in brokers:
+                brokers.pop(selected, None)
+                new_data = copy.deepcopy(dict(self.config_entry.data))
+                new_data[CONF_MQTT_BROKERS] = brokers
+                self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
+            elif action == "back":
+                return await self.async_step_init()
+
+        broker_options = {
+            key: self._format_mqtt_broker_label(key, brokers[key])
+            for key in self._sorted_mqtt_broker_keys(brokers)
         }
+        broker_list = "\n".join([f"• {label}" for label in broker_options.values()]) or "No MQTT brokers configured."
+
+        if broker_options:
+            action_options: Dict[str, str] = {
+                "edit": "Edit Broker",
+                "remove": "Remove Broker",
+                "back": "Back",
+            }
+            if len(brokers) < MAX_MQTT_BROKERS:
+                action_options["add"] = "Add Broker"
+            first_key = next(iter(broker_options))
+            schema = vol.Schema({
+                vol.Optional("selected_broker", default=first_key): vol.In(broker_options),
+                vol.Required("broker_action"): vol.In(action_options),
+            })
+        else:
+            action_options = {"back": "Back"}
+            if len(brokers) < MAX_MQTT_BROKERS:
+                action_options["add"] = "Add Broker"
+            schema = vol.Schema({
+                vol.Required("broker_action"): vol.In(action_options),
+            })
+
         return self.async_show_form(
             step_id="mqtt_brokers",
-            data_schema=vol.Schema({
-                vol.Required("broker_id"): vol.In(options),
-            }),
+            data_schema=schema,
+            description_placeholders={"broker_list": broker_list},
         )
 
     async def async_step_mqtt_broker(self, user_input=None):
@@ -805,6 +842,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         broker_key = str(broker_num)
         brokers = self._get_mqtt_brokers_data()
         broker = brokers.get(broker_key, {})
+        legacy_global_iata = str(self.config_entry.data.get(CONF_MQTT_IATA, "LOC") or "LOC").upper()
+        legacy_global_ttl = self.config_entry.data.get(CONF_MQTT_TOKEN_TTL_SECONDS, 3600)
 
         if user_input is not None:
             brokers[broker_key] = {
@@ -821,7 +860,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 "token_audience": user_input.get("token_audience", ""),
                 "topic_status": user_input.get("topic_status", DEFAULT_MQTT_TOPIC_STATUS),
                 "topic_events": user_input.get("topic_events", DEFAULT_MQTT_TOPIC_EVENTS),
-                "iata": user_input.get("iata", ""),
+                "iata": user_input.get("iata", legacy_global_iata),
+                "token_ttl_seconds": user_input.get("token_ttl_seconds", legacy_global_ttl),
+                "payload_mode": user_input.get("payload_mode", "packet"),
             }
             new_data = copy.deepcopy(dict(self.config_entry.data))
             new_data[CONF_MQTT_BROKERS] = brokers
@@ -840,9 +881,19 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             vol.Optional("password", default=broker.get("password", "")): str,
             vol.Optional("use_auth_token", default=broker.get("use_auth_token", False)): cv.boolean,
             vol.Optional("token_audience", default=broker.get("token_audience", "")): str,
+            vol.Optional("payload_mode", default=broker.get("payload_mode", "packet")): vol.In(
+                {
+                    "packet": "Packet (LetsMesh-compatible)",
+                    "raw": "Raw Event",
+                }
+            ),
+            vol.Optional(
+                "token_ttl_seconds",
+                default=broker.get("token_ttl_seconds", legacy_global_ttl),
+            ): vol.All(cv.positive_int, vol.Range(min=60, max=86400)),
             vol.Optional("topic_status", default=broker.get("topic_status", DEFAULT_MQTT_TOPIC_STATUS)): str,
             vol.Optional("topic_events", default=broker.get("topic_events", DEFAULT_MQTT_TOPIC_EVENTS)): str,
-            vol.Optional("iata", default=broker.get("iata", "")): str,
+            vol.Optional("iata", default=broker.get("iata", legacy_global_iata)): str,
         })
 
         return self.async_show_form(

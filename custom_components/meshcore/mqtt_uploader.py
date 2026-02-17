@@ -5,12 +5,12 @@ import asyncio
 import base64
 import hashlib
 import json
-import os
 import re
 import shlex
 import ssl
 import subprocess
 import time
+from collections.abc import Callable
 from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,26 +23,14 @@ from .const import (
     CONF_MQTT_BROKERS,
     CONF_MQTT_DECODER_CMD,
     CONF_MQTT_IATA,
-    CONF_MQTT_PUBLISH_ALL_EVENTS,
     CONF_MQTT_TOKEN_TTL_SECONDS,
     CONF_NAME,
     CONF_PUBKEY,
 )
 
-try:
-    import paho.mqtt.client as mqtt
-except ImportError:
-    mqtt = None
-
-try:
-    import nacl.bindings
-except ImportError:
-    nacl = None
-
-try:
-    from meshcore.events import EventType
-except ImportError:
-    EventType = None
+import paho.mqtt.client as mqtt
+import nacl.bindings
+from meshcore.events import EventType
 
 
 def _as_bool(value: str | bool | None, default: bool = False) -> bool:
@@ -75,11 +63,12 @@ class BrokerConfig:
     tls_verify: bool
     keepalive: int
     qos: int
-    retain: bool
     username: str
     password: str
     use_auth_token: bool
     token_audience: str
+    token_ttl_seconds: int
+    payload_mode: str
     client_id_prefix: str
     topic_status: str
     topic_packets: str
@@ -106,28 +95,20 @@ class MeshCoreMqttUploader:
         self.settings = entry.data.get(CONF_MQTT_BROKERS, {}) or {}
         self.node_name = str(entry.data.get(CONF_NAME, "meshcore") or "meshcore").strip()
         self.public_key = (entry.data.get(CONF_PUBKEY, "") or "").upper()
-        self.global_iata = (
-            str(entry.data.get(CONF_MQTT_IATA) or os.getenv("MESHCORE_HA_MQTT_IATA", "LOC"))
-            .strip()
-            .upper()
+        self.global_iata = str(entry.data.get(CONF_MQTT_IATA, "LOC") or "LOC").strip().upper()
+        self.decoder_cmd = str(entry.data.get(CONF_MQTT_DECODER_CMD, "meshcore-decoder") or "meshcore-decoder").strip()
+        self.default_token_ttl_seconds = _as_int(
+            entry.data.get(CONF_MQTT_TOKEN_TTL_SECONDS),
+            3600,
         )
-        self.decoder_cmd = str(
-            entry.data.get(CONF_MQTT_DECODER_CMD) or os.getenv("MESHCORE_HA_DECODER_CMD", "meshcore-decoder")
-        ).strip()
         # Auth token signing key is sourced from connected radio only.
         self.private_key = ""
         self.client_agent = self._build_client_agent()
-        self.publish_all_events = _as_bool(
-            entry.data.get(CONF_MQTT_PUBLISH_ALL_EVENTS) or os.getenv("MESHCORE_HA_MQTT_PUBLISH_ALL_EVENTS"),
-            False,
-        )
-        self.token_ttl_seconds = _as_int(
-            entry.data.get(CONF_MQTT_TOKEN_TTL_SECONDS) or os.getenv("MESHCORE_HA_TOKEN_TTL_SECONDS"),
-            3600,
-        )
         self._brokers = self._load_brokers()
         self._clients: list[dict[str, Any]] = []
         self._tokens: dict[int, dict[str, Any]] = {}
+        self._auth_refresh_tasks: dict[int, asyncio.Task[None]] = {}
+        self._connection_state_callbacks: set[Callable[[int, bool], None]] = set()
         self._recent_packet_signatures: dict[str, float] = {}
         self._packet_dedupe_ttl_seconds = 1.0
 
@@ -148,20 +129,58 @@ class MeshCoreMqttUploader:
 
     @property
     def enabled(self) -> bool:
-        return mqtt is not None and len(self._brokers) > 0
+        return len(self._brokers) > 0
+
+    def get_brokers(self) -> list[BrokerConfig]:
+        """Return configured broker definitions."""
+        return list(self._brokers)
+
+    def is_broker_connected(self, broker_num: int) -> bool:
+        """Return current connected state for one broker."""
+        for info in self._clients:
+            broker: BrokerConfig = info["broker"]
+            if broker.number == broker_num:
+                return bool(info.get("connected"))
+        return False
+
+    def register_connection_state_callback(
+        self, callback: Callable[[int, bool], None]
+    ) -> Callable[[], None]:
+        """Register callback for broker connection state changes."""
+        self._connection_state_callbacks.add(callback)
+
+        def _unsub() -> None:
+            self._connection_state_callbacks.discard(callback)
+
+        return _unsub
+
+    def _notify_connection_state(self, broker_num: int, connected: bool) -> None:
+        """Notify subscribers about broker connection state changes."""
+        if not isinstance(broker_num, int):
+            return
+
+        callbacks = tuple(self._connection_state_callbacks)
+
+        def _dispatch() -> None:
+            for callback in callbacks:
+                try:
+                    callback(broker_num, connected)
+                except Exception as ex:
+                    self.logger.debug("MQTT state callback failed for broker %s: %s", broker_num, ex)
+
+        self.hass.loop.call_soon_threadsafe(_dispatch)
 
     def _load_brokers(self) -> list[BrokerConfig]:
-        """Load broker configs from environment variables."""
+        """Load broker configs from config entry data."""
         brokers: list[BrokerConfig] = []
         for idx in range(1, 5):
             broker_settings = self.settings.get(str(idx), {}) if isinstance(self.settings, dict) else {}
             broker_name = f"MQTT{idx}"
-            prefix = f"MESHCORE_HA_MQTT{idx}_"
             enabled = _as_bool(
-                broker_settings.get("enabled", os.getenv(f"{prefix}ENABLED")),
+                broker_settings.get("enabled"),
                 False,
             )
-            server = str(broker_settings.get("server", os.getenv(f"{prefix}SERVER", "")) or "").strip()
+            server = str(broker_settings.get("server", "") or "").strip()
             if not enabled:
                 self.logger.info("[%s] Disabled, skipping", broker_name)
                 continue
@@ -170,7 +189,7 @@ class MeshCoreMqttUploader:
                 continue
 
             iata = (
-                str(broker_settings.get("iata", os.getenv(f"{prefix}IATA", "")) or "")
+                str(broker_settings.get("iata", "") or "")
                 .strip()
                 .upper()
                 or self.global_iata
@@ -182,39 +201,45 @@ class MeshCoreMqttUploader:
                 number=idx,
                 enabled=True,
                 server=server,
-                port=_as_int(broker_settings.get("port", os.getenv(f"{prefix}PORT")), 1883),
+                port=_as_int(broker_settings.get("port"), 1883),
                 transport=str(
-                    broker_settings.get("transport", os.getenv(f"{prefix}TRANSPORT", "tcp")) or "tcp"
+                    broker_settings.get("transport", "tcp") or "tcp"
                 ).strip().lower(),
-                use_tls=_as_bool(broker_settings.get("use_tls", os.getenv(f"{prefix}USE_TLS")), False),
+                use_tls=_as_bool(broker_settings.get("use_tls"), False),
                 tls_verify=_as_bool(
-                    broker_settings.get("tls_verify", os.getenv(f"{prefix}TLS_VERIFY")),
+                    broker_settings.get("tls_verify"),
                     True,
                 ),
-                keepalive=_as_int(broker_settings.get("keepalive", os.getenv(f"{prefix}KEEPALIVE")), 60),
+                keepalive=_as_int(broker_settings.get("keepalive"), 60),
                 qos=0,
-                retain=True,
                 username=str(
-                    broker_settings.get("username", os.getenv(f"{prefix}USERNAME", "")) or ""
+                    broker_settings.get("username", "") or ""
                 ).strip(),
                 password=str(
-                    broker_settings.get("password", os.getenv(f"{prefix}PASSWORD", "")) or ""
+                    broker_settings.get("password", "") or ""
                 ).strip(),
                 use_auth_token=_as_bool(
-                    broker_settings.get("use_auth_token", os.getenv(f"{prefix}USE_AUTH_TOKEN")),
+                    broker_settings.get("use_auth_token"),
                     False,
                 ),
                 token_audience=str(
-                    broker_settings.get("token_audience", os.getenv(f"{prefix}TOKEN_AUDIENCE", "")) or ""
+                    broker_settings.get("token_audience", "") or ""
                 ).strip(),
+                token_ttl_seconds=_as_int(
+                    broker_settings.get("token_ttl_seconds"),
+                    self.default_token_ttl_seconds,
+                ),
+                payload_mode=str(
+                    broker_settings.get("payload_mode", "packet") or "packet"
+                ).strip().lower(),
                 client_id_prefix=str(
-                    broker_settings.get("client_id_prefix", os.getenv(f"{prefix}CLIENT_ID_PREFIX", "meshcore_")) or "meshcore_"
+                    broker_settings.get("client_id_prefix", "meshcore_") or "meshcore_"
                 ).strip(),
                 topic_status=self._resolve_topic(
                     str(
                         broker_settings.get(
                             "topic_status",
-                            os.getenv(f"{prefix}TOPIC_STATUS", "meshcore/{IATA}/{PUBLIC_KEY}/status"),
+                            "meshcore/{IATA}/{PUBLIC_KEY}/status",
                         )
                     ),
                     iata,
@@ -223,7 +248,7 @@ class MeshCoreMqttUploader:
                     str(
                         broker_settings.get(
                             "topic_events",
-                            os.getenv(f"{prefix}TOPIC_EVENTS", "meshcore/{IATA}/{PUBLIC_KEY}/packets"),
+                            "meshcore/{IATA}/{PUBLIC_KEY}/packets",
                         )
                     ),
                     iata,
@@ -236,6 +261,8 @@ class MeshCoreMqttUploader:
                     broker.name,
                 )
                 continue
+            if broker.payload_mode not in {"packet", "raw"}:
+                broker.payload_mode = "packet"
             if broker.is_letsmesh and broker.topic_packets.endswith("/events"):
                 broker.topic_packets = f"{broker.topic_packets[:-7]}/packets"
                 self.logger.info(
@@ -266,9 +293,6 @@ class MeshCoreMqttUploader:
 
     async def async_start(self) -> None:
         """Initialize configured MQTT clients and publish online status."""
-        if mqtt is None:
-            self.logger.warning("MQTT uploader disabled: paho-mqtt is not installed")
-            return
         if not self._brokers:
             return
 
@@ -339,7 +363,7 @@ class MeshCoreMqttUploader:
             broker.topic_status,
             lwt_payload,
             qos=broker.qos,
-            retain=broker.retain,
+            retain=False,
         )
 
         if broker.transport == "websockets":
@@ -363,10 +387,15 @@ class MeshCoreMqttUploader:
             if broker.number == broker_num:
                 if rc == 0:
                     info["connected"] = True
+                    self._notify_connection_state(broker_num, True)
                     self.logger.info("[%s] Connected", broker.name)
                     self._publish_status_for_client(client, broker, "online")
                 else:
+                    info["connected"] = False
+                    self._notify_connection_state(broker_num, False)
                     self.logger.error("[%s] Connect failed: %s", broker.name, reason_code)
+                    if broker.use_auth_token and self._is_auth_error(reason_code, rc):
+                        self._schedule_auth_token_refresh(broker_num)
                 return
 
     def _on_disconnect(self, client, userdata, flags, reason_code, properties=None):
@@ -377,9 +406,67 @@ class MeshCoreMqttUploader:
             broker: BrokerConfig = info["broker"]
             if broker.number == broker_num:
                 info["connected"] = False
+                self._notify_connection_state(broker_num, False)
                 if rc != 0:
                     self.logger.warning("[%s] Disconnected: %s", broker.name, reason_code)
+                    if broker.use_auth_token and self._is_auth_error(reason_code, rc):
+                        self._schedule_auth_token_refresh(broker_num)
                 return
+
+    @staticmethod
+    def _is_auth_error(reason_code, rc: int) -> bool:
+        """Detect broker authorization failures across MQTT v3/v5 reason formats."""
+        if rc in {4, 5, 134, 135}:
+            return True
+        reason_text = str(reason_code or "").strip().lower()
+        return "not authorized" in reason_text or "bad user name or password" in reason_text
+
+    def _schedule_auth_token_refresh(self, broker_num: int) -> None:
+        """Schedule async auth token refresh and reconnect from paho callback thread."""
+        if not isinstance(broker_num, int):
+            return
+
+        def _create_task() -> None:
+            existing = self._auth_refresh_tasks.get(broker_num)
+            if existing and not existing.done():
+                return
+            task = self.hass.async_create_task(self._async_refresh_auth_and_reconnect(broker_num))
+            self._auth_refresh_tasks[broker_num] = task
+
+        self.hass.loop.call_soon_threadsafe(_create_task)
+
+    def _get_client_info(self, broker_num: int) -> dict[str, Any] | None:
+        """Find broker/client info for a broker number."""
+        for info in self._clients:
+            broker: BrokerConfig = info["broker"]
+            if broker.number == broker_num:
+                return info
+        return None
+
+    async def _async_refresh_auth_and_reconnect(self, broker_num: int) -> None:
+        """Refresh auth token credentials and reconnect broker client."""
+        try:
+            info = self._get_client_info(broker_num)
+            if info is None:
+                return
+            broker: BrokerConfig = info["broker"]
+            client = info["client"]
+            if not broker.use_auth_token:
+                return
+
+            token = await self._async_get_token(broker, force_refresh=True)
+            if not token:
+                self.logger.error("[%s] Failed to refresh auth token after authorization error", broker.name)
+                return
+
+            client.username_pw_set(f"v1_{self.public_key}", token)
+            self.logger.info("[%s] Refreshed auth token; attempting reconnect", broker.name)
+            try:
+                await self.hass.async_add_executor_job(client.reconnect)
+            except Exception as ex:
+                self.logger.warning("[%s] Reconnect after token refresh failed: %s", broker.name, ex)
+        finally:
+            self._auth_refresh_tasks.pop(broker_num, None)
 
     @staticmethod
     def _reason_code_to_int(reason_code) -> int:
@@ -408,8 +495,8 @@ class MeshCoreMqttUploader:
             client.tls_insecure_set(True)
             self.logger.warning("[%s] TLS verification disabled", broker.name)
 
-    async def _async_get_token(self, broker: BrokerConfig) -> str | None:
-        """Create or reuse cached JWT token using meshcore-decoder CLI."""
+    async def _async_get_token(self, broker: BrokerConfig, *, force_refresh: bool = False) -> str | None:
+        """Create or reuse cached JWT token for one broker."""
         if not self.public_key:
             self.logger.error("[%s] Missing device public key; cannot generate auth token", broker.name)
             return None
@@ -424,11 +511,15 @@ class MeshCoreMqttUploader:
                 )
                 return None
 
+        if force_refresh:
+            self._tokens.pop(broker.number, None)
+
         cached = self._tokens.get(broker.number)
         now = time.time()
-        if cached and (now < (cached["expires_at"] - 60)):
+        if not force_refresh and cached and (now < (cached["expires_at"] - 60)):
             return cached["token"]
 
+        ttl_seconds = max(60, _as_int(broker.token_ttl_seconds, self.default_token_ttl_seconds))
         claims = {}
         if broker.token_audience:
             claims["aud"] = broker.token_audience
@@ -442,7 +533,7 @@ class MeshCoreMqttUploader:
                 self.public_key,
                 self.private_key,
                 "--exp",
-                str(self.token_ttl_seconds),
+                str(ttl_seconds),
             ]
         )
         if claims:
@@ -453,6 +544,7 @@ class MeshCoreMqttUploader:
             token = await self.hass.async_add_executor_job(
                 self._create_auth_token_python,
                 broker.token_audience,
+                ttl_seconds,
             )
             if token:
                 self.logger.info("[%s] Created auth token using Python fallback signer", broker.name)
@@ -461,7 +553,7 @@ class MeshCoreMqttUploader:
 
         self._tokens[broker.number] = {
             "token": token,
-            "expires_at": now + self.token_ttl_seconds,
+            "expires_at": now + ttl_seconds,
         }
         return token
 
@@ -487,7 +579,7 @@ class MeshCoreMqttUploader:
             self.logger.warning("[%s] Private key export returned no result", broker.name)
             return None
 
-        if EventType is not None and getattr(result, "type", None) == EventType.PRIVATE_KEY:
+        if getattr(result, "type", None) == EventType.PRIVATE_KEY:
             payload = getattr(result, "payload", {}) or {}
             private_key = payload.get("private_key")
             if isinstance(private_key, (bytes, bytearray)):
@@ -499,14 +591,14 @@ class MeshCoreMqttUploader:
             self.logger.warning("[%s] Device returned invalid private key format", broker.name)
             return None
 
-        if EventType is not None and getattr(result, "type", None) == EventType.DISABLED:
+        if getattr(result, "type", None) == EventType.DISABLED:
             self.logger.warning(
                 "[%s] Private key export disabled on firmware (needs ENABLE_PRIVATE_KEY_EXPORT=1)",
                 broker.name,
             )
             return None
 
-        if EventType is not None and getattr(result, "type", None) == EventType.ERROR:
+        if getattr(result, "type", None) == EventType.ERROR:
             self.logger.warning("[%s] Device refused private key export: %s", broker.name, getattr(result, "payload", ""))
             return None
 
@@ -562,8 +654,6 @@ class MeshCoreMqttUploader:
         self, message: bytes, scalar: bytes, prefix: bytes
     ) -> bytes:
         """Sign message using MeshCore/orlp expanded Ed25519 private key format."""
-        if nacl is None:
-            raise RuntimeError("PyNaCl is required for Python auth token signing")
         # Ed25519 group order
         group_order = 2**252 + 27742317777372353535851937790883648493
 
@@ -585,12 +675,9 @@ class MeshCoreMqttUploader:
 
         return r_point + s_bytes
 
-    def _create_auth_token_python(self, audience: str | None = None) -> str | None:
+    def _create_auth_token_python(self, audience: str | None = None, ttl_seconds: int = 3600) -> str | None:
         """Create MeshCore JWT token in-process (no external decoder binary)."""
         try:
-            if nacl is None:
-                self.logger.error("Python token signing unavailable: PyNaCl not installed")
-                return None
             private_key_hex = (self.private_key or "").strip()
             if len(private_key_hex) != 128:
                 self.logger.error("Python token signing failed: invalid private key length")
@@ -604,7 +691,7 @@ class MeshCoreMqttUploader:
             payload = {
                 "publicKey": self.public_key.upper(),
                 "iat": now,
-                "exp": now + self.token_ttl_seconds,
+                "exp": now + max(60, ttl_seconds),
             }
             if audience:
                 payload["aud"] = audience
@@ -655,18 +742,30 @@ class MeshCoreMqttUploader:
             "source": "meshcore-ha",
         }
 
+    def _build_raw_event_payload(self, event_type: str, payload: Any) -> dict[str, Any]:
+        """Build raw event payload for non-normalized broker mode."""
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "origin": self.node_name,
+            "origin_id": self.public_key or "DEVICE",
+            "source": "meshcore-ha",
+            "event_type": (event_type or "").upper(),
+            "payload": payload,
+        }
+
+    async def async_publish_raw_event(self, event_type: str, payload: Any) -> None:
+        """Publish one event without blocking the HA event loop callback path."""
+        await self.hass.async_add_executor_job(self.publish_raw_event, event_type, payload)
+
     def publish_raw_event(self, event_type: str, payload: Any) -> None:
-        """Publish one event as packet-like payload to all connected brokers."""
+        """Publish one event to all connected brokers with per-broker payload mode."""
         if not self._clients:
             return
 
-        normalized_packet = self._normalize_packet_event(event_type, payload)
-        if normalized_packet is not None and self._is_duplicate_packet(normalized_packet):
-            return
-
-        if normalized_packet is None:
-            return
-        packet_payload = json.dumps(normalized_packet)
+        packet_checked = False
+        packet_skip = False
+        packet_payload: str | None = None
+        raw_payload: str | None = None
 
         for info in self._clients:
             if not info.get("connected"):
@@ -675,17 +774,42 @@ class MeshCoreMqttUploader:
             client = info["client"]
             if not broker.topic_packets:
                 continue
+
+            payload_to_publish: str | None = None
+            mode = broker.payload_mode if broker.payload_mode in {"packet", "raw"} else "packet"
+            if mode == "raw":
+                if raw_payload is None:
+                    raw_payload = json.dumps(self._build_raw_event_payload(event_type, payload))
+                payload_to_publish = raw_payload
+            else:
+                if not packet_checked:
+                    packet_checked = True
+                    normalized_packet = self._normalize_packet_event(event_type, payload)
+                    if normalized_packet is None or self._is_duplicate_packet(normalized_packet):
+                        packet_skip = True
+                    else:
+                        packet_payload = json.dumps(normalized_packet)
+                if packet_skip or packet_payload is None:
+                    continue
+                payload_to_publish = packet_payload
+
             try:
                 result = client.publish(
                     broker.topic_packets,
-                    packet_payload,
+                    payload_to_publish,
                     qos=broker.qos,
                     retain=False,
                 )
                 if result.rc != mqtt.MQTT_ERR_SUCCESS:
                     self.logger.error("[%s] Event publish failed: rc=%s", broker.name, result.rc)
                 else:
-                    self.logger.debug("[%s] Packet published topic=%s event=%s", broker.name, broker.topic_packets, event_type)
+                    self.logger.debug(
+                        "[%s] Event published mode=%s topic=%s event=%s",
+                        broker.name,
+                        mode,
+                        broker.topic_packets,
+                        event_type,
+                    )
             except Exception as ex:
                 self.logger.error("[%s] Event publish error: %s", broker.name, ex)
 
@@ -815,7 +939,10 @@ class MeshCoreMqttUploader:
         for info in self._clients:
             broker: BrokerConfig = info["broker"]
             client = info["client"]
-            if info.get("connected"):
+            was_connected = bool(info.get("connected"))
+            info["connected"] = False
+            self._notify_connection_state(broker.number, False)
+            if was_connected:
                 self._publish_status_for_client(client, broker, "offline")
             try:
                 client.loop_stop()

@@ -271,7 +271,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "timestamp": time.time()
             })
             if getattr(coordinator, "mqtt_uploader", None):
-                coordinator.mqtt_uploader.publish_raw_event(event_type_str, sanitized_payload)
+                hass.async_create_task(
+                    coordinator.mqtt_uploader.async_publish_raw_event(event_type_str, sanitized_payload)
+                )
         except Exception as ex:
             _LOGGER.error(f"Error serializing event payload: {ex}")
             # Fire event without payload to ensure delivery

@@ -105,21 +105,13 @@
         "description": "Configure global integration settings",
         "title": "Global Settings"
       },
-      "mqtt_global": {
-        "data": {
-          "mqtt_iata": "Global IATA Code",
-          "mqtt_token_ttl_seconds": "Auth Token TTL (seconds)",
-          "mqtt_publish_all_events": "Publish All Events (disable filtering)"
-        },
-        "description": "Configure global MQTT upload and auth-token settings",
-        "title": "MQTT Global Settings"
-      },
       "mqtt_brokers": {
         "data": {
-          "broker_id": "Broker"
+          "selected_broker": "Broker",
+          "broker_action": "Action"
         },
-        "description": "Select a broker to configure",
-        "title": "MQTT Broker Selection"
+        "description": "Manage configured MQTT brokers:\n\n{broker_list}",
+        "title": "Manage MQTT Brokers"
       },
       "mqtt_broker": {
         "data": {
@@ -134,6 +126,8 @@
           "password": "Password (not needed with Auth Token)",
           "use_auth_token": "Use MeshCore Auth Token",
           "token_audience": "Token Audience",
+          "payload_mode": "Payload Mode",
+          "token_ttl_seconds": "Auth Token TTL (seconds)",
           "topic_status": "Status Topic",
           "topic_events": "Packets Topic",
           "iata": "Broker IATA Override"
@@ -209,22 +203,13 @@
         "description": "Configure global integration settings",
         "title": "Global Settings"
       },
-      "mqtt_global": {
-        "data": {
-          "mqtt_iata": "Global IATA Code",
-          "mqtt_decoder_cmd": "meshcore-decoder Command",
-          "mqtt_token_ttl_seconds": "Auth Token TTL (seconds)",
-          "mqtt_publish_all_events": "Publish All Events (disable filtering)"
-        },
-        "description": "Configure global MQTT upload and auth-token settings",
-        "title": "MQTT Global Settings"
-      },
       "mqtt_brokers": {
         "data": {
-          "broker_id": "Broker"
+          "selected_broker": "Broker",
+          "broker_action": "Action"
         },
-        "description": "Select a broker to configure",
-        "title": "MQTT Broker Selection"
+        "description": "Manage configured MQTT brokers:\n\n{broker_list}",
+        "title": "Manage MQTT Brokers"
       },
       "mqtt_broker": {
         "data": {
@@ -241,6 +226,8 @@
           "password": "Password (not needed with Auth Token)",
           "use_auth_token": "Use MeshCore Auth Token",
           "token_audience": "Token Audience",
+          "payload_mode": "Payload Mode",
+          "token_ttl_seconds": "Auth Token TTL (seconds)",
           "topic_status": "Status Topic",
           "topic_events": "Packets Topic",
           "iata": "Broker IATA Override",
