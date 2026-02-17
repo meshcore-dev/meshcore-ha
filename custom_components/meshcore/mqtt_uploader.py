@@ -13,7 +13,6 @@ import time
 from collections.abc import Callable
 from datetime import datetime
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -87,11 +86,19 @@ class BrokerConfig:
 class MeshCoreMqttUploader:
     """Publish MeshCore raw events and status to MQTT brokers."""
 
-    def __init__(self, hass: HomeAssistant, logger, entry: ConfigEntry, api=None) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        logger,
+        entry: ConfigEntry,
+        api=None,
+        integration_version: str = "unknown",
+    ) -> None:
         self.hass = hass
         self.logger = logger
         self.entry = entry
         self.api = api
+        self.integration_version = (integration_version or "unknown").strip() or "unknown"
         self.settings = entry.data.get(CONF_MQTT_BROKERS, {}) or {}
         self.node_name = str(entry.data.get(CONF_NAME, "meshcore") or "meshcore").strip()
         self.public_key = (entry.data.get(CONF_PUBKEY, "") or "").upper()
@@ -112,20 +119,9 @@ class MeshCoreMqttUploader:
         self._recent_packet_signatures: dict[str, float] = {}
         self._packet_dedupe_ttl_seconds = 1.0
 
-    @staticmethod
-    def _integration_version() -> str:
-        """Read integration version from manifest."""
-        try:
-            manifest_path = Path(__file__).with_name("manifest.json")
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            version = str(manifest.get("version", "")).strip()
-            return version or "unknown"
-        except Exception:
-            return "unknown"
-
     def _build_client_agent(self) -> str:
         """Build fixed LetsMesh client agent label."""
-        return f"meshcore-dev/meshcore-ha:{self._integration_version()}"
+        return f"meshcore-dev/meshcore-ha:{self.integration_version}"
 
     @property
     def enabled(self) -> bool:

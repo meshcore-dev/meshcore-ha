@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from pathlib import Path
@@ -46,6 +47,17 @@ _LOGGER = logging.getLogger(__name__)
 
 # List of platforms to set up
 PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SELECT, Platform.TEXT, Platform.DEVICE_TRACKER]
+
+
+def _read_integration_version() -> str:
+    """Read integration version from manifest."""
+    try:
+        manifest_path = Path(__file__).with_name("manifest.json")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        version = str(manifest.get("version", "")).strip()
+        return version or "unknown"
+    except Exception:
+        return "unknown"
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Migrate old entry."""
@@ -189,7 +201,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
-    mqtt_uploader = MeshCoreMqttUploader(hass, _LOGGER, entry, api=coordinator.api)
+    integration_version = await hass.async_add_executor_job(_read_integration_version)
+    mqtt_uploader = MeshCoreMqttUploader(
+        hass,
+        _LOGGER,
+        entry,
+        api=coordinator.api,
+        integration_version=integration_version,
+    )
     await mqtt_uploader.async_start()
     coordinator.mqtt_uploader = mqtt_uploader
     
