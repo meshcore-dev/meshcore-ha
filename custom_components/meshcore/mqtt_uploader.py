@@ -815,7 +815,7 @@ class MeshCoreMqttUploader:
             "hash": hash_value,
         }
 
-        path = str(parsed.get("path", "")).strip() if parsed else ""
+        path = str(parsed.get("path", "")).strip().upper() if parsed else ""
         if path and route == "D":
             packet["path"] = path
 
