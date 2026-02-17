@@ -399,7 +399,6 @@ class MeshCoreMqttBrokerConnectionBinarySensor(CoordinatorEntity, BinarySensorEn
     _attr_has_entity_name = True
     _attr_should_poll = False
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator: DataUpdateCoordinator, broker_num: int, server: str) -> None:
         """Initialize the MQTT broker connection binary sensor."""
