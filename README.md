@@ -86,7 +86,6 @@ Global variables:
 
 - `MESHCORE_HA_MQTT_IATA` (default `LOC`)
 - `MESHCORE_HA_DECODER_CMD` (default `meshcore-decoder`)
-- `MESHCORE_HA_PRIVATE_KEY` (64-byte private key in hex, used for auth-token signing)
 - `MESHCORE_HA_TOKEN_TTL_SECONDS` (default `3600`)
 
 ### Custom MQTT Example
@@ -104,7 +103,6 @@ MESHCORE_HA_MQTT1_PASSWORD=mypass
 
 ```bash
 MESHCORE_HA_MQTT_IATA=SEA
-MESHCORE_HA_PRIVATE_KEY=<YOUR_128_HEX_PRIVATE_KEY>
 
 MESHCORE_HA_MQTT1_ENABLED=true
 MESHCORE_HA_MQTT1_SERVER=mqtt-us-v1.letsmesh.net
@@ -123,7 +121,7 @@ MESHCORE_HA_MQTT2_USE_AUTH_TOKEN=true
 MESHCORE_HA_MQTT2_TOKEN_AUDIENCE=mqtt-eu-v1.letsmesh.net
 ```
 
-Auth-token mode uses `meshcore-decoder auth-token` under the hood, so `meshcore-decoder` must be installed and available in `PATH` (or set `MESHCORE_HA_DECODER_CMD`).
+Auth-token mode uses `meshcore-decoder auth-token` under the hood, so `meshcore-decoder` must be installed and available in `PATH` (or set `MESHCORE_HA_DECODER_CMD`). The signing key is sourced from the connected node via `export_private_key`; if export is disabled/fails, auth-token upload does not start.
 
 ## Development
 

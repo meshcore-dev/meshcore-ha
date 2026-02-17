@@ -108,7 +108,6 @@
       "mqtt_global": {
         "data": {
           "mqtt_iata": "Global IATA Code",
-          "mqtt_private_key": "Auth Token Private Key (Hex, optional)",
           "mqtt_token_ttl_seconds": "Auth Token TTL (seconds)",
           "mqtt_publish_all_events": "Publish All Events (disable filtering)"
         },
@@ -214,7 +213,6 @@
         "data": {
           "mqtt_iata": "Global IATA Code",
           "mqtt_decoder_cmd": "meshcore-decoder Command",
-          "mqtt_private_key": "Private Key (Hex)",
           "mqtt_token_ttl_seconds": "Auth Token TTL (seconds)",
           "mqtt_publish_all_events": "Publish All Events (disable filtering)"
         },

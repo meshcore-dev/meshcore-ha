@@ -23,7 +23,6 @@ from .const import (
     CONF_MQTT_BROKERS,
     CONF_MQTT_DECODER_CMD,
     CONF_MQTT_IATA,
-    CONF_MQTT_PRIVATE_KEY,
     CONF_MQTT_PUBLISH_ALL_EVENTS,
     CONF_MQTT_TOKEN_TTL_SECONDS,
     CONF_NAME,
@@ -115,9 +114,8 @@ class MeshCoreMqttUploader:
         self.decoder_cmd = str(
             entry.data.get(CONF_MQTT_DECODER_CMD) or os.getenv("MESHCORE_HA_DECODER_CMD", "meshcore-decoder")
         ).strip()
-        self.private_key = (
-            str(entry.data.get(CONF_MQTT_PRIVATE_KEY) or os.getenv("MESHCORE_HA_PRIVATE_KEY", "")).strip()
-        )
+        # Auth token signing key is sourced from connected radio only.
+        self.private_key = ""
         self.client_agent = self._build_client_agent()
         self.publish_all_events = _as_bool(
             entry.data.get(CONF_MQTT_PUBLISH_ALL_EVENTS) or os.getenv("MESHCORE_HA_MQTT_PUBLISH_ALL_EVENTS"),
@@ -419,7 +417,7 @@ class MeshCoreMqttUploader:
                 self.private_key = fetched_private_key
             else:
                 self.logger.error(
-                    "[%s] Missing private key (configure in MQTT global settings or enable device private key export)",
+                    "[%s] Missing private key from device (export_private_key failed/disabled); auth-token upload disabled",
                     broker.name,
                 )
                 return None
