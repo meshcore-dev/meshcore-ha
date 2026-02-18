@@ -130,7 +130,7 @@
           "token_ttl_seconds": "Auth Token TTL (seconds)",
           "topic_status": "Status Topic",
           "topic_events": "Packets Topic",
-          "iata": "Broker IATA Override"
+          "iata": "Broker IATA Code"
         },
         "description": "Configure MQTT broker {broker_number}",
         "title": "MQTT Broker Settings"
@@ -230,7 +230,7 @@
           "token_ttl_seconds": "Auth Token TTL (seconds)",
           "topic_status": "Status Topic",
           "topic_events": "Packets Topic",
-          "iata": "Broker IATA Override",
+          "iata": "Broker IATA Code",
           "client_id_prefix": "Client ID Prefix"
         },
         "description": "Configure MQTT broker {broker_number}",
