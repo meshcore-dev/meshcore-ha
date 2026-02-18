@@ -1,4 +1,0 @@
-# Ignore logs directory
-logs/
-*.pyc
-__pycache__/

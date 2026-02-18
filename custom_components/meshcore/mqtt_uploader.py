@@ -13,7 +13,6 @@ import time
 from collections.abc import Callable
 from datetime import datetime
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -87,11 +86,19 @@ class BrokerConfig:
 class MeshCoreMqttUploader:
     """Publish MeshCore raw events and status to MQTT brokers."""
 
-    def __init__(self, hass: HomeAssistant, logger, entry: ConfigEntry, api=None) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        logger,
+        entry: ConfigEntry,
+        api=None,
+        integration_version: str = "unknown",
+    ) -> None:
         self.hass = hass
         self.logger = logger
         self.entry = entry
         self.api = api
+        self.integration_version = (integration_version or "unknown").strip() or "unknown"
         self.settings = entry.data.get(CONF_MQTT_BROKERS, {}) or {}
         self.node_name = str(entry.data.get(CONF_NAME, "meshcore") or "meshcore").strip()
         self.public_key = (entry.data.get(CONF_PUBKEY, "") or "").upper()
@@ -112,20 +119,9 @@ class MeshCoreMqttUploader:
         self._recent_packet_signatures: dict[str, float] = {}
         self._packet_dedupe_ttl_seconds = 1.0
 
-    @staticmethod
-    def _integration_version() -> str:
-        """Read integration version from manifest."""
-        try:
-            manifest_path = Path(__file__).with_name("manifest.json")
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            version = str(manifest.get("version", "")).strip()
-            return version or "unknown"
-        except Exception:
-            return "unknown"
-
     def _build_client_agent(self) -> str:
         """Build fixed LetsMesh client agent label."""
-        return f"meshcore-dev/meshcore-ha:{self._integration_version()}"
+        return f"meshcore-dev/meshcore-ha:{self.integration_version}"
 
     @property
     def enabled(self) -> bool:
@@ -357,13 +353,14 @@ class MeshCoreMqttUploader:
 
         await self.hass.async_add_executor_job(self._configure_tls, client, broker)
 
-        # Mirror other uploaders: set LWT offline status message.
+        # Keep status retained so LetsMesh can resolve current connectivity state
+        # even when subscribers come online after this client connects.
         lwt_payload = json.dumps(self._build_status_payload("offline"))
         client.will_set(
             broker.topic_status,
             lwt_payload,
             qos=broker.qos,
-            retain=False,
+            retain=True,
         )
 
         if broker.transport == "websockets":
@@ -723,7 +720,7 @@ class MeshCoreMqttUploader:
                 broker.topic_status,
                 json.dumps(payload),
                 qos=broker.qos,
-                retain=False,
+                retain=True,
             )
             if result.rc != mqtt.MQTT_ERR_SUCCESS:
                 self.logger.error("[%s] Status publish failed: rc=%s", broker.name, result.rc)
@@ -740,6 +737,7 @@ class MeshCoreMqttUploader:
             "origin": self.node_name,
             "origin_id": self.public_key or "DEVICE",
             "source": "meshcore-ha",
+            "client_version": self.client_agent or "meshcore-dev/meshcore-ha:unknown",
         }
 
     def _build_raw_event_payload(self, event_type: str, payload: Any) -> dict[str, Any]:

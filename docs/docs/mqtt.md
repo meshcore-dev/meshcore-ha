@@ -17,7 +17,7 @@ MQTT upload supports:
 - LetsMesh brokers using MeshCore auth-token mode
 - Per-broker topic templates and auth settings
 - Per-broker payload mode (`packet` or `raw`)
-- Per-broker connection diagnostic binary sensors under the main node device
+- Per-broker connection binary sensors under the main node device
 
 ## Configure in Home Assistant
 
@@ -101,11 +101,11 @@ MQTT publishing behavior depends on broker `Payload Mode`.
   - `timestamp`
   - `origin` / `origin_id`
 
-Status and message publishes are non-retained.
+Packet publishes are non-retained. Status publishes (`online` / `offline` / LWT) are retained.
 
 ## MQTT Connection Sensors
 
-For each configured broker, the integration exposes a diagnostic connection binary sensor under the main MeshCore device:
+For each configured broker, the integration exposes a connection binary sensor under the main MeshCore device:
 
 - `binary_sensor.meshcore_*_mqtt_broker_1_connection`
 - `binary_sensor.meshcore_*_mqtt_broker_2_connection`
