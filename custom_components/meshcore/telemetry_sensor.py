@@ -155,7 +155,9 @@ for _id, _name in ((116, "voltage"), (117, "current"), (128, "power")):
 #   wrap      = 2^16 / scale   (full unsigned range after scaling)
 _SIGNED_LPP_TYPES: dict[int | str, tuple[float, float]] = {
     "current": (32.767, 65.536),  # 2 bytes, scale 1000
-    "power": (32768, 65536),  # 2 bytes, scale 1
+    117: (32.767, 65.536),  # alias for "current" (LPP type ID 117)
+    "power": (32767, 65536),  # 2 bytes, scale 1
+    128: (32767, 65536),  # alias for "power" (LPP type ID 128)
 }
 
 
