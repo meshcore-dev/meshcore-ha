@@ -116,8 +116,9 @@ LPP_TYPE_MAPPINGS: dict[int | str, dict] = {
         "icon": "mdi:current-dc",
         "device_class": SensorDeviceClass.CURRENT,
         "native_unit_of_measurement": "A",
+        "suggested_unit_of_measurement": "mA",
         "state_class": SensorStateClass.MEASUREMENT,
-        "suggested_display_precision": 2,
+        "suggested_display_precision": 1,
         "create_multi": False,
     },
     128: {
@@ -434,6 +435,9 @@ class TelemetrySensorManager:
                 device_class=type_config.get("device_class"),
                 native_unit_of_measurement=type_config.get(
                     "native_unit_of_measurement"
+                ),
+                suggested_unit_of_measurement=type_config.get(
+                    "suggested_unit_of_measurement"
                 ),
                 state_class=type_config.get("state_class"),
                 suggested_display_precision=type_config.get(
