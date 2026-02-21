@@ -41,7 +41,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # Cayenne LPP Data Type mappings (IPSO Object IDs - 3200)
 # Maps both numeric LPP codes and string type names to sensor configurations
-LPP_TYPE_MAPPINGS = {
+LPP_TYPE_MAPPINGS: dict[int | str, dict] = {
     0: {"name": "Digital Input", "icon": "mdi:toggle-switch", "create_multi": False},
     1: {"name": "Digital Output", "icon": "mdi:toggle-switch", "create_multi": False},
     2: {
@@ -113,11 +113,20 @@ LPP_TYPE_MAPPINGS = {
     },
     117: {
         "name": "Current",
-        "icon": "mdi:current-ac",
+        "icon": "mdi:current-dc",
         "device_class": SensorDeviceClass.CURRENT,
         "native_unit_of_measurement": "A",
         "state_class": SensorStateClass.MEASUREMENT,
         "suggested_display_precision": 2,
+        "create_multi": False,
+    },
+    128: {
+        "name": "Power",
+        "icon": "mdi:flash",
+        "device_class": SensorDeviceClass.POWER,
+        "native_unit_of_measurement": "W",
+        "state_class": SensorStateClass.MEASUREMENT,
+        "suggested_display_precision": 0,
         "create_multi": False,
     },
     135: {
@@ -127,6 +136,25 @@ LPP_TYPE_MAPPINGS = {
         "create_multi": True,  # Create separate sensors for R, G, B
         "multi_fields": ["r", "g", "b"],
     },
+}
+
+# meshcore-py resolves LPP type IDs to string names (e.g. 117 -> "current")
+# via its lpp_json_encoder before the data reaches this addon. Add string
+# aliases so that these types match the proper sensor configurations above
+# instead of falling through to the generic sensor path.
+for _id, _name in ((116, "voltage"), (117, "current"), (128, "power")):
+    LPP_TYPE_MAPPINGS[_name] = LPP_TYPE_MAPPINGS[_id]
+
+# Cayenne LPP types that carry signed data from bidirectional sensors (e.g.
+# INA3221) but are defined as unsigned in the spec.  The cayennelpp library
+# decodes them as unsigned, so values representing negative readings wrap
+# around.  Each entry maps an LPP type (string name as delivered by
+# meshcore-py) to (threshold, wrap) where:
+#   threshold = 2^15 / scale   (midpoint of unsigned range after scaling)
+#   wrap      = 2^16 / scale   (full unsigned range after scaling)
+_SIGNED_LPP_TYPES: dict[int | str, tuple[float, float]] = {
+    "current": (32.767, 65.536),  # 2 bytes, scale 1000
+    "power": (32768, 65536),  # 2 bytes, scale 1
 }
 
 
@@ -522,6 +550,13 @@ class MeshCoreTelemetrySensor(CoordinatorEntity, SensorEntity):
                 self._raw_value = value
                 self._last_updated = time.time()
 
+                # Fix unsigned wrapping for bidirectional sensors (e.g. INA3221)
+                signed_params = _SIGNED_LPP_TYPES.get(self.lpp_type)
+                if signed_params is not None:
+                    threshold, wrap = signed_params
+                    if isinstance(value, (int, float)) and value > threshold:
+                        value = value - wrap
+
                 # Extract the specific field value if this is a multi-value sensor
                 if self.field and isinstance(value, dict):
                     self._native_value = value.get(self.field)
@@ -616,4 +651,3 @@ class MeshCoreBatteryPercentageSensor(MeshCoreTelemetrySensor):
         if self._raw_value is not None:
             attributes["voltage"] = round(self._raw_value, 3)
         return attributes
-
