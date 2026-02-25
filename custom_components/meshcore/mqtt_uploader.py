@@ -102,7 +102,7 @@ class MeshCoreMqttUploader:
         self.settings = entry.data.get(CONF_MQTT_BROKERS, {}) or {}
         self.node_name = str(entry.data.get(CONF_NAME, "meshcore") or "meshcore").strip()
         self.public_key = (entry.data.get(CONF_PUBKEY, "") or "").upper()
-        self.global_iata = str(entry.data.get(CONF_MQTT_IATA, "LOC") or "LOC").strip().upper()
+        self.global_iata = str(entry.data.get(CONF_MQTT_IATA, "XYZ") or "XYZ").strip().upper()
         self.decoder_cmd = str(entry.data.get(CONF_MQTT_DECODER_CMD, "meshcore-decoder") or "meshcore-decoder").strip()
         self.default_token_ttl_seconds = _as_int(
             entry.data.get(CONF_MQTT_TOKEN_TTL_SECONDS),
@@ -168,6 +168,7 @@ class MeshCoreMqttUploader:
 
     def _load_brokers(self) -> list[BrokerConfig]:
         """Load broker configs from config entry data."""
+        placeholder_iata_values = {"", "LOC", "XYZ"}
         brokers: list[BrokerConfig] = []
         for idx in range(1, 5):
             broker_settings = self.settings.get(str(idx), {}) if isinstance(self.settings, dict) else {}
@@ -190,7 +191,7 @@ class MeshCoreMqttUploader:
                 .upper()
                 or self.global_iata
             )
-            if iata == "LOC":
+            if iata in {"LOC", "XYZ"} and self.global_iata not in {"LOC", "XYZ"}:
                 iata = self.global_iata
 
             broker = BrokerConfig(
@@ -251,7 +252,7 @@ class MeshCoreMqttUploader:
                 ),
             )
 
-            if broker.is_letsmesh and iata in {"", "LOC"}:
+            if broker.is_letsmesh and iata in placeholder_iata_values:
                 self.logger.warning(
                     "[%s] Disabled: Let's Mesh broker requires a non-default IATA code",
                     broker.name,

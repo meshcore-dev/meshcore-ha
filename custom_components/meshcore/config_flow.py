@@ -842,7 +842,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         broker_key = str(broker_num)
         brokers = self._get_mqtt_brokers_data()
         broker = brokers.get(broker_key, {})
-        legacy_global_iata = str(self.config_entry.data.get(CONF_MQTT_IATA, "LOC") or "LOC").upper()
+        legacy_global_iata = str(self.config_entry.data.get(CONF_MQTT_IATA, "XYZ") or "XYZ").upper()
         legacy_global_ttl = self.config_entry.data.get(CONF_MQTT_TOKEN_TTL_SECONDS, 3600)
 
         if user_input is not None:
