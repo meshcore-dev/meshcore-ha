@@ -168,7 +168,7 @@ class MeshCoreMqttUploader:
 
     def _load_brokers(self) -> list[BrokerConfig]:
         """Load broker configs from config entry data."""
-        placeholder_iata_values = {"", "LOC", "XYZ"}
+        placeholder_iata_values = {"", "XYZ"}
         brokers: list[BrokerConfig] = []
         for idx in range(1, 5):
             broker_settings = self.settings.get(str(idx), {}) if isinstance(self.settings, dict) else {}
@@ -191,7 +191,7 @@ class MeshCoreMqttUploader:
                 .upper()
                 or self.global_iata
             )
-            if iata in {"LOC", "XYZ"} and self.global_iata not in {"LOC", "XYZ"}:
+            if iata == "XYZ" and self.global_iata != "XYZ":
                 iata = self.global_iata
 
             broker = BrokerConfig(
