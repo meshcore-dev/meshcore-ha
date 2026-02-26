@@ -573,6 +573,8 @@ class MeshCoreMqttUploader:
                 self._create_auth_token_python,
                 broker.token_audience,
                 ttl_seconds,
+                broker.owner_public_key,
+                broker.owner_email,
             )
             if token:
                 self.logger.info("[%s] Created auth token using Python fallback signer", broker.name)
@@ -703,7 +705,13 @@ class MeshCoreMqttUploader:
 
         return r_point + s_bytes
 
-    def _create_auth_token_python(self, audience: str | None = None, ttl_seconds: int = 3600) -> str | None:
+    def _create_auth_token_python(
+        self,
+        audience: str | None = None,
+        ttl_seconds: int = 3600,
+        owner_public_key: str | None = None,
+        owner_email: str | None = None,
+    ) -> str | None:
         """Create MeshCore JWT token in-process (no external decoder binary)."""
         try:
             private_key_hex = (self.private_key or "").strip()
@@ -723,6 +731,10 @@ class MeshCoreMqttUploader:
             }
             if audience:
                 payload["aud"] = audience
+            if owner_public_key:
+                payload["owner"] = owner_public_key
+            if owner_email:
+                payload["email"] = owner_email
             if self.client_agent:
                 payload["client"] = self.client_agent
 
