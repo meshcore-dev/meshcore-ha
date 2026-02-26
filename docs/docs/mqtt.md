@@ -81,6 +81,15 @@ Auth-token mode works as follows:
 3. If `meshcore-decoder` is missing/unavailable, it falls back to in-process Python signing (`PyNaCl`)
 4. If the broker rejects auth (for example after token expiry), the integration refreshes token credentials and attempts reconnect automatically
 
+Optional owner claims for LetsMesh:
+
+- `Owner Public Key` is sent as JWT claim `owner`
+- `Owner Email` is sent as JWT claim `email`
+- `Owner Public Key` must be 64 hex characters
+- `Owner Email` must be a valid email format
+- Invalid owner values are ignored with warning logs
+- Owner claims are included for both `meshcore-decoder` and Python fallback token generation paths
+
 `meshcore-decoder` is optional for normal installs.
 
 :::warning
