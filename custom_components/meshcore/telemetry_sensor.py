@@ -139,27 +139,6 @@ LPP_TYPE_MAPPINGS: dict[int | str, dict] = {
     },
 }
 
-# meshcore-py resolves LPP type IDs to string names (e.g. 117 -> "current")
-# via its lpp_json_encoder before the data reaches this addon. Add string
-# aliases so that these types match the proper sensor configurations above
-# instead of falling through to the generic sensor path.
-for _id, _name in ((116, "voltage"), (117, "current"), (128, "power")):
-    LPP_TYPE_MAPPINGS[_name] = LPP_TYPE_MAPPINGS[_id]
-
-# Cayenne LPP types that carry signed data from bidirectional sensors (e.g.
-# INA3221) but are defined as unsigned in the spec.  The cayennelpp library
-# decodes them as unsigned, so values representing negative readings wrap
-# around.  Each entry maps an LPP type (string name as delivered by
-# meshcore-py) to (threshold, wrap) where:
-#   threshold = 2^15 / scale   (midpoint of unsigned range after scaling)
-#   wrap      = 2^16 / scale   (full unsigned range after scaling)
-_SIGNED_LPP_TYPES: dict[int | str, tuple[float, float]] = {
-    "current": (32.767, 65.536),  # 2 bytes, scale 1000
-    117: (32.767, 65.536),  # alias for "current" (LPP type ID 117)
-    "power": (32767, 65536),  # 2 bytes, scale 1
-    128: (32767, 65536),  # alias for "power" (LPP type ID 128)
-}
-
 
 class TelemetrySensorManager:
     """Manages dynamic creation and updates of telemetry sensors."""
@@ -555,13 +534,6 @@ class MeshCoreTelemetrySensor(CoordinatorEntity, SensorEntity):
                 value = channel_data.get("value")
                 self._raw_value = value
                 self._last_updated = time.time()
-
-                # Fix unsigned wrapping for bidirectional sensors (e.g. INA3221)
-                signed_params = _SIGNED_LPP_TYPES.get(self.lpp_type)
-                if signed_params is not None:
-                    threshold, wrap = signed_params
-                    if isinstance(value, (int, float)) and value > threshold:
-                        value = value - wrap
 
                 # Extract the specific field value if this is a multi-value sensor
                 if self.field and isinstance(value, dict):
