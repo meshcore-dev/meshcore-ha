@@ -63,6 +63,10 @@ Typical LetsMesh settings:
 - `Packets Topic`: `meshcore/{IATA}/{PUBLIC_KEY}/packets`
 
 :::info
+When uploading to LetsMesh, you do not need to provide a username or password. Authentication is handled automatically when **Use MeshCore Auth Token** is enabled.
+:::
+
+:::info
 If a LetsMesh broker is configured with an `/events` packets topic, the integration auto-corrects it to `/packets`.
 :::
 
