@@ -66,6 +66,8 @@ class BrokerConfig:
     password: str
     use_auth_token: bool
     token_audience: str
+    owner_public_key: str
+    owner_email: str
     token_ttl_seconds: int
     payload_mode: str
     client_id_prefix: str
@@ -194,6 +196,28 @@ class MeshCoreMqttUploader:
             if iata == "XYZ" and self.global_iata != "XYZ":
                 iata = self.global_iata
 
+            owner_public_key = str(
+                broker_settings.get("owner_public_key", "") or ""
+            ).strip().replace(" ", "").replace("-", "").upper()
+            if owner_public_key and (
+                len(owner_public_key) != 64
+                or not all(c in "0123456789ABCDEF" for c in owner_public_key)
+            ):
+                self.logger.warning(
+                    "[%s] Ignoring invalid owner public key (expected 64 hex characters)",
+                    broker_name,
+                )
+                owner_public_key = ""
+
+            owner_email = str(
+                broker_settings.get("owner_email", "") or ""
+            ).strip().lower()
+            if owner_email:
+                email_pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+                if not re.match(email_pattern, owner_email):
+                    self.logger.warning("[%s] Ignoring invalid owner email format", broker_name)
+                    owner_email = ""
+
             broker = BrokerConfig(
                 number=idx,
                 enabled=True,
@@ -222,6 +246,8 @@ class MeshCoreMqttUploader:
                 token_audience=str(
                     broker_settings.get("token_audience", "") or ""
                 ).strip(),
+                owner_public_key=owner_public_key,
+                owner_email=owner_email,
                 token_ttl_seconds=_as_int(
                     broker_settings.get("token_ttl_seconds"),
                     self.default_token_ttl_seconds,
@@ -521,6 +547,10 @@ class MeshCoreMqttUploader:
         claims = {}
         if broker.token_audience:
             claims["aud"] = broker.token_audience
+        if broker.owner_public_key:
+            claims["owner"] = broker.owner_public_key
+        if broker.owner_email:
+            claims["email"] = broker.owner_email
         if self.client_agent:
             claims["client"] = self.client_agent
 

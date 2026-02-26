@@ -858,6 +858,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 "password": user_input.get("password", ""),
                 "use_auth_token": user_input.get("use_auth_token", False),
                 "token_audience": user_input.get("token_audience", ""),
+                "owner_public_key": user_input.get("owner_public_key", ""),
+                "owner_email": user_input.get("owner_email", ""),
                 "topic_status": user_input.get("topic_status", DEFAULT_MQTT_TOPIC_STATUS),
                 "topic_events": user_input.get("topic_events", DEFAULT_MQTT_TOPIC_EVENTS),
                 "iata": user_input.get("iata", legacy_global_iata),
@@ -881,6 +883,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             vol.Optional("password", default=broker.get("password", "")): str,
             vol.Optional("use_auth_token", default=broker.get("use_auth_token", False)): cv.boolean,
             vol.Optional("token_audience", default=broker.get("token_audience", "")): str,
+            vol.Optional("owner_public_key", default=broker.get("owner_public_key", "")): str,
+            vol.Optional("owner_email", default=broker.get("owner_email", "")): str,
             vol.Optional("payload_mode", default=broker.get("payload_mode", "packet")): vol.In(
                 {
                     "packet": "Packet (LetsMesh-compatible)",

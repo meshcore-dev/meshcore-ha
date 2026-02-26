@@ -40,6 +40,8 @@ Per broker, configure:
 - **Username / Password** (not needed when using auth token)
 - **Use MeshCore Auth Token**
 - **Token Audience** (usually broker hostname for token-based setups)
+- **Owner Public Key** (optional JWT `owner` claim)
+- **Owner Email** (optional JWT `email` claim)
 - **Auth Token TTL** (seconds)
 - **Payload Mode**:
   - `packet` = normalized packet payloads (LetsMesh-compatible behavior)
