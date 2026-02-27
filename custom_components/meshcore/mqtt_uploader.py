@@ -794,8 +794,21 @@ class MeshCoreMqttUploader:
             "payload": payload,
         }
 
+    def _maybe_update_node_name(self, event_type: str, payload: Any) -> None:
+        """Refresh origin node name from live SELF_INFO events."""
+        if not isinstance(payload, dict):
+            return
+        if "SELF_INFO" not in (event_type or "").upper():
+            return
+        name = str(payload.get("name", "") or "").strip()
+        if not name or name == self.node_name:
+            return
+        self.node_name = name
+        self.logger.info("Updated MQTT origin name from SELF_INFO: %s", self.node_name)
+
     async def async_publish_raw_event(self, event_type: str, payload: Any) -> None:
         """Publish one event without blocking the HA event loop callback path."""
+        self._maybe_update_node_name(event_type, payload)
         await self.hass.async_add_executor_job(self.publish_raw_event, event_type, payload)
 
     def publish_raw_event(self, event_type: str, payload: Any) -> None:
