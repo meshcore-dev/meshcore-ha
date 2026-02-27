@@ -2,7 +2,7 @@
 import logging
 import asyncio
 import time
-from typing import Optional
+from typing import Any, Optional
 from asyncio import Lock
 
 from meshcore import MeshCore
@@ -47,6 +47,7 @@ class MeshCoreAPI:
         self._connection = None
         self._mesh_core = None
         self._node_info = {}
+        self._last_self_info: dict[str, Any] = {}
         self._cached_contacts = {}
         self._cached_messages = []
         
@@ -68,6 +69,24 @@ class MeshCoreAPI:
     def connected(self) -> bool:
         """Return whether the device is connected."""
         return self._connected
+
+    @property
+    def node_name(self) -> str:
+        """Return latest known node name from SELF_INFO."""
+        return str(self._last_self_info.get("name", "") or "").strip()
+
+    def _cache_self_info_event(self, event: Any) -> None:
+        """Cache SELF_INFO payload for consumers that need startup identity details."""
+        if event is None:
+            return
+        event_type = getattr(event, "type", None)
+        if event_type != EventType.SELF_INFO and "SELF_INFO" not in str(event_type):
+            return
+        payload = getattr(event, "payload", None)
+        if not isinstance(payload, dict):
+            return
+        self._last_self_info = dict(payload)
+        self._node_info.update(payload)
         
     async def connect(self) -> bool:
         """Connect to the MeshCore device using the appropriate connection type."""
@@ -135,6 +154,7 @@ class MeshCoreAPI:
                     self._mesh_core = None
                     return False
 
+                self._cache_self_info_event(appstart_result)
                 _LOGGER.info("Connection validated successfully: %s", appstart_result)
             except Exception as ex:
                 _LOGGER.error(f"Connection validation failed (appstart exception): {ex}")

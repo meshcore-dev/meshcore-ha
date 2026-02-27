@@ -102,7 +102,8 @@ class MeshCoreMqttUploader:
         self.api = api
         self.integration_version = (integration_version or "unknown").strip() or "unknown"
         self.settings = entry.data.get(CONF_MQTT_BROKERS, {}) or {}
-        self.node_name = str(entry.data.get(CONF_NAME, "meshcore") or "meshcore").strip()
+        configured_name = str(entry.data.get(CONF_NAME, "meshcore") or "meshcore").strip()
+        self.node_name = self._resolve_initial_node_name(configured_name)
         self.public_key = (entry.data.get(CONF_PUBKEY, "") or "").upper()
         self.global_iata = str(entry.data.get(CONF_MQTT_IATA, "XYZ") or "XYZ").strip().upper()
         self.decoder_cmd = str(entry.data.get(CONF_MQTT_DECODER_CMD, "meshcore-decoder") or "meshcore-decoder").strip()
@@ -124,6 +125,23 @@ class MeshCoreMqttUploader:
     def _build_client_agent(self) -> str:
         """Build fixed LetsMesh client agent label."""
         return f"meshcore-dev/meshcore-ha:{self.integration_version}"
+
+    def _resolve_initial_node_name(self, fallback_name: str) -> str:
+        """Prefer runtime SELF_INFO name captured at connect-time over config-entry name."""
+        runtime_name = ""
+        if self.api is not None:
+            try:
+                runtime_name = str(getattr(self.api, "node_name", "") or "").strip()
+            except Exception:
+                runtime_name = ""
+        if runtime_name:
+            if runtime_name != fallback_name:
+                self.logger.info(
+                    "Using runtime node name for MQTT origin at startup: %s",
+                    runtime_name,
+                )
+            return runtime_name
+        return fallback_name
 
     @property
     def enabled(self) -> bool:
