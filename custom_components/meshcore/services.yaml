@@ -177,3 +177,15 @@ cleanup_unavailable_contacts:
       example: "abc123def456"
       selector:
         text:
+
+clear_discovered_contacts:
+  name: Clear All Discovered Contacts
+  description: Remove all discovered contacts and their associated binary sensor entities from Home Assistant. This does NOT remove contacts from your node's contact list.
+  fields:
+    entry_id:
+      name: Config Entry ID
+      description: The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device.
+      required: false
+      example: "abc123def456"
+      selector:
+        text:
