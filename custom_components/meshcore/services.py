@@ -1,9 +1,12 @@
 """Services for the MeshCore integration."""
+import ast
+import inspect
 import logging
+import re
+import shlex
 import time
 import voluptuous as vol
-import shlex
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
@@ -69,6 +72,42 @@ UI_MESSAGE_SCHEMA = vol.Schema(
         vol.Optional(ATTR_ENTRY_ID): cv.string,
     }
 )
+
+def _parse_functional_command(command_str: str) -> tuple | None:
+    """Parse 'cmd(arg1, kw=val)' format using ast. Returns (name, pos_args, kwargs) or None."""
+    m = re.match(r"^(\w+)\s*\((.*)\)\s*$", command_str.strip(), re.DOTALL)
+    if not m:
+        return None
+    cmd_name = m.group(1)
+    body = m.group(2).strip()
+    if not body:
+        return cmd_name, [], {}
+    try:
+        node = ast.parse(f"_({body})", mode="eval")
+        call_node = cast(ast.Call, node.body)
+        pos_args = [ast.literal_eval(a) for a in call_node.args]
+        kw_args = {kw.arg: ast.literal_eval(kw.value) for kw in call_node.keywords}
+        return cmd_name, pos_args, kw_args
+    except Exception:
+        return None
+
+
+def _resolve_contact(arg: str, command_name: str, api: Any, coordinator: Any) -> Any:
+    """Look up a contact by pubkey prefix or name. Returns contact dict or None."""
+    if len(arg) < 6:
+        _LOGGER.error("Invalid pubkey prefix length: %s", arg)
+        return None
+    contact = api.mesh_core.get_contact_by_key_prefix(arg)
+    if not contact:
+        contact = api.mesh_core.get_contact_by_name(arg)
+    if not contact and command_name == "add_contact":
+        for dc in coordinator._discovered_contacts.values():
+            if dc.get("public_key", "").startswith(arg) or dc.get("adv_name") == arg:
+                return dc
+    if not contact:
+        _LOGGER.error("Contact not found with key or name: %s", arg)
+    return contact
+
 
 async def async_setup_services(hass: HomeAssistant) -> None:
     """Set up services for MeshCore integration."""
@@ -305,20 +344,24 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         command_str = call.data[ATTR_COMMAND]
         entry_id = call.data.get(ATTR_ENTRY_ID)
         
-        # Parse the command using shlex to handle quoted arguments properly
-        try:
-            parts = shlex.split(command_str)
-        except Exception as ex:
-            _LOGGER.error("Error parsing command: %s", ex)
-            return
-            
-        if not parts:
-            _LOGGER.error("No command specified")
-            return
-            
-        # Extract the command name and arguments
-        command_name = parts[0]
-        arguments = parts[1:]
+        # Support both functional: cmd(arg1, kw=val) and positional: cmd arg1 arg2
+        functional = _parse_functional_command(command_str)
+        if functional:
+            command_name, pos_literals, kw_literals = functional
+            arguments = None
+        else:
+            try:
+                parts = shlex.split(command_str)
+            except Exception as ex:
+                _LOGGER.error("Error parsing command: %s", ex)
+                return
+            if not parts:
+                _LOGGER.error("No command specified")
+                return
+            command_name = parts[0]
+            arguments = parts[1:]
+            pos_literals = None
+            kw_literals = {}
         
         _LOGGER.debug("Executing command: %s with arguments: %s", command_name, arguments)
         
@@ -440,84 +483,74 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                         "set_channel": ["int", "str", "bytes"],
                     }
                     
-                    # Get parameter types for this command
                     param_types = command_param_types.get(command_name, [])
-                    
-                    # Prepare arguments with proper types
                     prepared_args = []
-                    
-                    # Process each argument according to the expected parameter type
-                    for i, arg in enumerate(arguments):
-                        param_type = param_types[i] if i < len(param_types) else "str"
-                        
-                        if param_type == "contact":
-                            # For contact params, try to get contact by key prefix
-                            if len(arg) >= 6:  # Ensure it's a reasonable pubkey prefix
-                                contact = api.mesh_core.get_contact_by_key_prefix(arg)
-                                if contact:
-                                    prepared_args.append(contact)
-                                else:
-                                    # If no contact found, try by name
-                                    contact = api.mesh_core.get_contact_by_name(arg)
-                                    if contact:
-                                        prepared_args.append(contact)
-                                    else:
-                                        # For add_contact, also check discovered contacts
-                                        if command_name == "add_contact":
-                                            for discovered_contact in coordinator._discovered_contacts.values():
-                                                if discovered_contact.get("public_key", "").startswith(arg) or discovered_contact.get("adv_name") == arg:
-                                                    contact = discovered_contact
-                                                    prepared_args.append(contact)
-                                                    break
+                    prepared_kwargs = {}
 
-                                        if not contact:
-                                            _LOGGER.error(f"Contact not found with key or name: {arg}")
-                                            return
+                    if pos_literals is not None:
+                        # Functional format: values are already-typed Python literals
+                        for i, val in enumerate(pos_literals):
+                            ptype = param_types[i] if i < len(param_types) else None
+                            if ptype == "contact":
+                                contact = _resolve_contact(str(val), command_name, api, coordinator)
+                                if contact is None:
+                                    return
+                                prepared_args.append(contact)
                             else:
-                                _LOGGER.error(f"Invalid pubkey prefix length: {arg}")
-                                return
-                                
-                        elif param_type == "int":
-                            # Convert to integer
-                            try:
-                                prepared_args.append(int(arg))
-                            except ValueError:
-                                _LOGGER.error(f"Could not convert '{arg}' to integer")
-                                return
-                                
-                        elif param_type == "float":
-                            # Convert to float
-                            try:
-                                prepared_args.append(float(arg))
-                            except ValueError:
-                                _LOGGER.error(f"Could not convert '{arg}' to float")
-                                return
-                                
-                        elif param_type == "bool":
-                            # Handle boolean parameters
-                            if arg.lower() in ('true', 'yes', 'y', '1'):
-                                prepared_args.append(True)
-                            elif arg.lower() in ('false', 'no', 'n', '0'):
-                                prepared_args.append(False)
+                                prepared_args.append(val)
+                        if kw_literals:
+                            sig_params = list(inspect.signature(command_method).parameters.keys())
+                            for kw_name, kw_val in kw_literals.items():
+                                if kw_name not in sig_params:
+                                    _LOGGER.error("Unknown keyword '%s' for command '%s'", kw_name, command_name)
+                                    return
+                                idx = sig_params.index(kw_name)
+                                ptype = param_types[idx] if idx < len(param_types) else None
+                                if ptype == "contact":
+                                    kw_val = _resolve_contact(str(kw_val), command_name, api, coordinator)
+                                    if kw_val is None:
+                                        return
+                                prepared_kwargs[kw_name] = kw_val
+                    else:
+                        # Space-separated format: convert string arguments by declared type
+                        for i, arg in enumerate(arguments or []):
+                            param_type = param_types[i] if i < len(param_types) else "str"
+                            if param_type == "contact":
+                                contact = _resolve_contact(arg, command_name, api, coordinator)
+                                if contact is None:
+                                    return
+                                prepared_args.append(contact)
+                            elif param_type == "int":
+                                try:
+                                    prepared_args.append(int(arg))
+                                except ValueError:
+                                    _LOGGER.error("Could not convert '%s' to integer", arg)
+                                    return
+                            elif param_type == "float":
+                                try:
+                                    prepared_args.append(float(arg))
+                                except ValueError:
+                                    _LOGGER.error("Could not convert '%s' to float", arg)
+                                    return
+                            elif param_type == "bool":
+                                if arg.lower() in ("true", "yes", "y", "1"):
+                                    prepared_args.append(True)
+                                elif arg.lower() in ("false", "no", "n", "0"):
+                                    prepared_args.append(False)
+                                else:
+                                    _LOGGER.error("Could not convert '%s' to boolean", arg)
+                                    return
+                            elif param_type == "bytes":
+                                try:
+                                    prepared_args.append(bytes.fromhex(arg))
+                                except ValueError:
+                                    _LOGGER.error("Could not convert '%s' to bytes - invalid hex string", arg)
+                                    return
                             else:
-                                _LOGGER.error(f"Could not convert '{arg}' to boolean")
-                                return
-                        
-                        elif param_type == "bytes":
-                            # Convert hex string to bytes
-                            try:
-                                prepared_args.append(bytes.fromhex(arg))
-                            except ValueError:
-                                _LOGGER.error(f"Could not convert '{arg}' to bytes - invalid hex string")
-                                return
-                        
-                        else:
-                            # For any other type, pass the argument as is
-                            prepared_args.append(arg)
-                    
-                    # Execute the command with the converted arguments
-                    _LOGGER.debug(f"Executing {command_name} with prepared arguments: {prepared_args}")
-                    result = await command_method(*prepared_args)
+                                prepared_args.append(arg)
+
+                    _LOGGER.debug("Executing %s args=%s kwargs=%s", command_name, prepared_args, prepared_kwargs)
+                    result = await command_method(*prepared_args, **prepared_kwargs)
 
                     # Update coordinator channel info after set_channel
                     if command_name == "set_channel" and result.type != EventType.ERROR:
