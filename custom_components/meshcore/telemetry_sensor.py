@@ -41,7 +41,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # Cayenne LPP Data Type mappings (IPSO Object IDs - 3200)
 # Maps both numeric LPP codes and string type names to sensor configurations
-LPP_TYPE_MAPPINGS = {
+LPP_TYPE_MAPPINGS: dict[int | str, dict] = {
     0: {"name": "Digital Input", "icon": "mdi:toggle-switch", "create_multi": False},
     1: {"name": "Digital Output", "icon": "mdi:toggle-switch", "create_multi": False},
     2: {
@@ -113,11 +113,21 @@ LPP_TYPE_MAPPINGS = {
     },
     117: {
         "name": "Current",
-        "icon": "mdi:current-ac",
+        "icon": "mdi:current-dc",
         "device_class": SensorDeviceClass.CURRENT,
         "native_unit_of_measurement": "A",
+        "suggested_unit_of_measurement": "mA",
         "state_class": SensorStateClass.MEASUREMENT,
-        "suggested_display_precision": 2,
+        "suggested_display_precision": 1,
+        "create_multi": False,
+    },
+    128: {
+        "name": "Power",
+        "icon": "mdi:flash",
+        "device_class": SensorDeviceClass.POWER,
+        "native_unit_of_measurement": "W",
+        "state_class": SensorStateClass.MEASUREMENT,
+        "suggested_display_precision": 0,
         "create_multi": False,
     },
     135: {
@@ -407,6 +417,9 @@ class TelemetrySensorManager:
                 native_unit_of_measurement=type_config.get(
                     "native_unit_of_measurement"
                 ),
+                suggested_unit_of_measurement=type_config.get(
+                    "suggested_unit_of_measurement"
+                ),
                 state_class=type_config.get("state_class"),
                 suggested_display_precision=type_config.get(
                     "suggested_display_precision"
@@ -616,4 +629,3 @@ class MeshCoreBatteryPercentageSensor(MeshCoreTelemetrySensor):
         if self._raw_value is not None:
             attributes["voltage"] = round(self._raw_value, 3)
         return attributes
-

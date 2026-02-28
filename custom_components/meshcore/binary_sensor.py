@@ -636,6 +636,8 @@ class MeshCoreContactDiagnosticBinarySensor(CoordinatorEntity, BinarySensorEntit
         # Add all contact properties as attributes
         for key, value in self._contact_data.items():
             attributes[key] = value
+            
+        attributes["pubkey_short"] = self.public_key[:2] if self.public_key else ""
         
         # Get node type string
         node_type = self._contact_data.get("type")
