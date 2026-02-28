@@ -3,3 +3,6 @@ sync-to-ha.sh
 script_venv
 .venv
 **/.claude/settings.local.json
+__pycache__/
+*.pyc
+.pytest_cache/
