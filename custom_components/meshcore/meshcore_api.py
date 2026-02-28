@@ -135,7 +135,7 @@ class MeshCoreAPI:
                     self._mesh_core = None
                     return False
 
-                _LOGGER.info("Connection validated successfully", appstart_result)
+                _LOGGER.info("Connection validated successfully: %s", appstart_result)
             except Exception as ex:
                 _LOGGER.error(f"Connection validation failed (appstart exception): {ex}")
                 self._connected = False
