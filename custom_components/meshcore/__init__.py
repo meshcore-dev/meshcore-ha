@@ -29,6 +29,9 @@ from .const import (
     CONF_TCP_PORT,
     CONF_BAUDRATE,
     CONF_REPEATER_SUBSCRIPTIONS,
+    CONF_LIMIT_DISCOVERED_CONTACTS,
+    CONF_MAX_DISCOVERED_CONTACTS,
+    DEFAULT_MAX_DISCOVERED_CONTACTS,
     CONF_MESSAGES_INTERVAL,
     DEFAULT_UPDATE_TICK,
 )
@@ -177,6 +180,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except Exception as ex:
         _LOGGER.error(f"Error loading discovered contacts: {ex}")
 
+    # Enforce discovered contacts limit on startup (trim dict + save only, no entity cleanup)
+    if entry.data.get(CONF_LIMIT_DISCOVERED_CONTACTS, False):
+        max_contacts = entry.data.get(CONF_MAX_DISCOVERED_CONTACTS, DEFAULT_MAX_DISCOVERED_CONTACTS)
+        if len(coordinator._discovered_contacts) > max_contacts:
+            evict_count = len(coordinator._discovered_contacts) - max_contacts
+            keys_to_evict = list(coordinator._discovered_contacts.keys())[:evict_count]
+            for key in keys_to_evict:
+                del coordinator._discovered_contacts[key]
+            try:
+                await coordinator._store.async_save(coordinator._discovered_contacts)
+            except Exception as ex:
+                _LOGGER.error(f"Error saving discovered contacts after startup eviction: {ex}")
+            _LOGGER.info(f"Evicted {evict_count} discovered contacts on startup (limit: {max_contacts})")
+
     # Load contacts from device on initialization
     if connected and api.mesh_core:
         try:
@@ -322,10 +339,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
             if public_key:
                 _LOGGER.info(f"Discovered new contact: {contact.get('adv_name', 'Unknown')} ({public_key[:12]})")
+
+                # Refresh insertion order: delete + re-insert moves active contacts to back of FIFO
+                if public_key in coordinator._discovered_contacts:
+                    del coordinator._discovered_contacts[public_key]
                 coordinator._discovered_contacts[public_key] = contact
 
                 # Mark contact as dirty for binary sensor updates
                 coordinator.mark_contact_dirty(public_key[:12])
+
+                # Evict oldest contacts if limit is enabled
+                limit_enabled = entry.data.get(CONF_LIMIT_DISCOVERED_CONTACTS, False)
+                if limit_enabled:
+                    max_contacts = entry.data.get(CONF_MAX_DISCOVERED_CONTACTS, DEFAULT_MAX_DISCOVERED_CONTACTS)
+                    evicted = await coordinator.async_evict_discovered_contacts(max_contacts)
+                    if evicted:
+                        return  # eviction already saves and triggers async_set_updated_data
 
                 # Save to storage
                 try:

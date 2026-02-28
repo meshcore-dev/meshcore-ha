@@ -26,6 +26,7 @@ from .const import (
     SERVICE_REMOVE_SELECTED_CONTACT,
     SERVICE_REMOVE_DISCOVERED_CONTACT,
     SERVICE_CLEANUP_UNAVAILABLE_CONTACTS,
+    SERVICE_CLEAR_DISCOVERED_CONTACTS,
     SELECT_NO_CONTACTS,
     SELECT_NO_DISCOVERED,
     SELECT_NO_ADDED,
@@ -961,7 +962,61 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         async_cleanup_unavailable_contacts_service,
         schema=UI_MESSAGE_SCHEMA,
     )
-    
+
+    async def async_clear_discovered_contacts_service(call: ServiceCall) -> None:
+        """Remove all discovered contacts and their binary sensor entities."""
+        entry_id = call.data.get(ATTR_ENTRY_ID)
+
+        coordinator = None
+        if entry_id:
+            coordinator = hass.data[DOMAIN].get(entry_id)
+        else:
+            for config_entry_id, coord in hass.data[DOMAIN].items():
+                if hasattr(coord, "api"):
+                    coordinator = coord
+                    break
+
+        if not coordinator:
+            _LOGGER.error("Could not find coordinator")
+            return
+
+        if not coordinator._discovered_contacts:
+            _LOGGER.info("No discovered contacts to clear")
+            return
+
+        entity_registry = er.async_get(hass)
+        removed_count = len(coordinator._discovered_contacts)
+
+        for public_key in list(coordinator._discovered_contacts.keys()):
+            pubkey_prefix = public_key[:12]
+            coordinator.tracked_diagnostic_binary_contacts.discard(pubkey_prefix)
+
+            for entity in list(entity_registry.entities.values()):
+                if entity.platform == DOMAIN and entity.domain == "binary_sensor":
+                    if entity.unique_id == pubkey_prefix:
+                        entity_registry.async_remove(entity.entity_id)
+                        break
+
+        coordinator._discovered_contacts.clear()
+
+        try:
+            await coordinator._store.async_save(coordinator._discovered_contacts)
+        except Exception as ex:
+            _LOGGER.error(f"Error saving discovered contacts: {ex}")
+
+        updated_data = dict(coordinator.data) if coordinator.data else {}
+        updated_data["contacts"] = coordinator.get_all_contacts()
+        coordinator.async_set_updated_data(updated_data)
+
+        _LOGGER.info(f"Cleared {removed_count} discovered contacts")
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CLEAR_DISCOVERED_CONTACTS,
+        async_clear_discovered_contacts_service,
+        schema=UI_MESSAGE_SCHEMA,
+    )
+
     # Create CLI command execution service from UI helper
     # async def async_execute_cli_command_ui(call: ServiceCall) -> None:
     #     """Execute CLI command from the text helper entity."""
@@ -1039,6 +1094,9 @@ async def async_unload_services(hass: HomeAssistant) -> None:
 
     if hass.services.has_service(DOMAIN, SERVICE_CLEANUP_UNAVAILABLE_CONTACTS):
         hass.services.async_remove(DOMAIN, SERVICE_CLEANUP_UNAVAILABLE_CONTACTS)
+
+    if hass.services.has_service(DOMAIN, SERVICE_CLEAR_DISCOVERED_CONTACTS):
+        hass.services.async_remove(DOMAIN, SERVICE_CLEAR_DISCOVERED_CONTACTS)
 
 
 def create_service_call(

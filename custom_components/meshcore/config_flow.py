@@ -44,6 +44,9 @@ from .const import (
     DEFAULT_CLIENT_UPDATE_INTERVAL,
     CONF_DEVICE_DISABLED,
     CONF_DISABLE_CONTACT_DISCOVERY,
+    CONF_LIMIT_DISCOVERED_CONTACTS,
+    CONF_MAX_DISCOVERED_CONTACTS,
+    DEFAULT_MAX_DISCOVERED_CONTACTS,
     CONF_SELF_TELEMETRY_ENABLED,
     CONF_SELF_TELEMETRY_INTERVAL,
     DEFAULT_SELF_TELEMETRY_INTERVAL,
@@ -723,17 +726,26 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_global_settings(self, user_input=None):
         """Handle global settings."""
         if user_input is not None:
-            # Update global settings in config entry
             new_data = copy.deepcopy(dict(self.config_entry.data))
             new_data[CONF_DISABLE_CONTACT_DISCOVERY] = user_input[CONF_DISABLE_CONTACT_DISCOVERY]
+            new_data[CONF_LIMIT_DISCOVERED_CONTACTS] = user_input[CONF_LIMIT_DISCOVERED_CONTACTS]
+            new_data[CONF_MAX_DISCOVERED_CONTACTS] = user_input[CONF_MAX_DISCOVERED_CONTACTS]
             new_data[CONF_SELF_TELEMETRY_ENABLED] = user_input[CONF_SELF_TELEMETRY_ENABLED]
             new_data[CONF_SELF_TELEMETRY_INTERVAL] = user_input[CONF_SELF_TELEMETRY_INTERVAL]
             self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
 
+            if new_data[CONF_LIMIT_DISCOVERED_CONTACTS]:
+                coordinator = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id)
+                if coordinator:
+                    await coordinator.async_evict_discovered_contacts(
+                        new_data[CONF_MAX_DISCOVERED_CONTACTS]
+                    )
+
             return await self.async_step_init()
 
-        # Get current values
         current_disable_discovery = self.config_entry.data.get(CONF_DISABLE_CONTACT_DISCOVERY, False)
+        current_limit_enabled = self.config_entry.data.get(CONF_LIMIT_DISCOVERED_CONTACTS, False)
+        current_max_contacts = self.config_entry.data.get(CONF_MAX_DISCOVERED_CONTACTS, DEFAULT_MAX_DISCOVERED_CONTACTS)
         current_telemetry_enabled = self.config_entry.data.get(CONF_SELF_TELEMETRY_ENABLED, False)
         current_telemetry_interval = self.config_entry.data.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL)
 
@@ -741,6 +753,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             step_id="global_settings",
             data_schema=vol.Schema({
                 vol.Optional(CONF_DISABLE_CONTACT_DISCOVERY, default=current_disable_discovery): cv.boolean,
+                vol.Optional(CONF_LIMIT_DISCOVERED_CONTACTS, default=current_limit_enabled): cv.boolean,
+                vol.Optional(CONF_MAX_DISCOVERED_CONTACTS, default=current_max_contacts): vol.All(cv.positive_int, vol.Range(min=1, max=10000)),
                 vol.Optional(CONF_SELF_TELEMETRY_ENABLED, default=current_telemetry_enabled): cv.boolean,
                 vol.Optional(CONF_SELF_TELEMETRY_INTERVAL, default=current_telemetry_interval): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
             }),

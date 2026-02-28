@@ -35,6 +35,7 @@ SERVICE_ADD_SELECTED_CONTACT: Final = "add_selected_contact"
 SERVICE_REMOVE_SELECTED_CONTACT: Final = "remove_selected_contact"
 SERVICE_REMOVE_DISCOVERED_CONTACT: Final = "remove_discovered_contact"
 SERVICE_CLEANUP_UNAVAILABLE_CONTACTS: Final = "cleanup_unavailable_contacts"
+SERVICE_CLEAR_DISCOVERED_CONTACTS: Final = "clear_discovered_contacts"
 
 # Select entity placeholders
 SELECT_NO_CONTACTS: Final = "Select a contact..."
@@ -82,6 +83,9 @@ AUTO_DISABLE_HOURS: Final = 120  # Auto-disable devices after this many hours wi
 
 # Contact discovery settings
 CONF_DISABLE_CONTACT_DISCOVERY: Final = "disable_contact_discovery"
+CONF_LIMIT_DISCOVERED_CONTACTS: Final = "limit_discovered_contacts"
+CONF_MAX_DISCOVERED_CONTACTS: Final = "max_discovered_contacts"
+DEFAULT_MAX_DISCOVERED_CONTACTS: Final = 100
 
 # Self telemetry settings
 CONF_SELF_TELEMETRY_ENABLED: Final = "self_telemetry_enabled"

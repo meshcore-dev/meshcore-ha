@@ -99,6 +99,8 @@
       "global_settings": {
         "data": {
           "disable_contact_discovery": "Zakázať zisťovanie kontaktov",
+          "limit_discovered_contacts": "Obmedziť objavené kontakty",
+          "max_discovered_contacts": "Maximálny počet objavených kontaktov",
           "self_telemetry_enabled": "Povoliť vlastnú telemetriu",
           "self_telemetry_interval": "Interval vlastnej telemetrie (v sekundách)"
         },
@@ -224,6 +226,16 @@
         "entry_id": {
           "name": "ID konfigurácie",
           "description": "ID konfigurácie, ak máte viac zariadení MeshCore. Nechajte prázdne, aby sa vyčistili všetky zariadenia."
+        }
+      }
+    },
+    "clear_discovered_contacts": {
+      "name": "Vymazať všetky objavené kontakty",
+      "description": "Odstrániť všetky objavené kontakty a ich priradené binárne senzory z Home Asistenta. Toto NEODSTRÁNI kontakty zo zoznamu kontaktov vášho uzla.",
+      "fields": {
+        "entry_id": {
+          "name": "ID konfigurácie",
+          "description": "ID konfigurácie, ak máte viac zariadení MeshCore. Nevyplňujte, ak chcete použiť prvé dostupné zariadenie."
         }
       }
     }

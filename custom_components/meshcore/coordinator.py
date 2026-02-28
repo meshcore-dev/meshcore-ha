@@ -233,6 +233,46 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
 
         return list(contacts_dict.values())
 
+    async def async_evict_discovered_contacts(self, max_contacts: int) -> bool:
+        """Evict oldest discovered contacts using FIFO ordering when over the limit.
+
+        Returns True if any contacts were evicted.
+        """
+        if len(self._discovered_contacts) <= max_contacts:
+            return False
+
+        from homeassistant.helpers import entity_registry as er
+
+        evict_count = len(self._discovered_contacts) - max_contacts
+        keys_to_evict = list(self._discovered_contacts.keys())[:evict_count]
+
+        entity_registry = er.async_get(self.hass)
+
+        for public_key in keys_to_evict:
+            pubkey_prefix = public_key[:12]
+            del self._discovered_contacts[public_key]
+            self.tracked_diagnostic_binary_contacts.discard(pubkey_prefix)
+
+            for entity in list(entity_registry.entities.values()):
+                if entity.platform == DOMAIN and entity.domain == "binary_sensor":
+                    if entity.unique_id == pubkey_prefix:
+                        _LOGGER.info(f"Evicting binary sensor entity: {entity.entity_id}")
+                        entity_registry.async_remove(entity.entity_id)
+                        break
+
+        _LOGGER.info(f"Evicted {evict_count} oldest discovered contacts (limit: {max_contacts})")
+
+        try:
+            await self._store.async_save(self._discovered_contacts)
+        except Exception as ex:
+            _LOGGER.error(f"Error saving discovered contacts after eviction: {ex}")
+
+        updated_data = dict(self.data) if self.data else {}
+        updated_data["contacts"] = self.get_all_contacts()
+        self.async_set_updated_data(updated_data)
+
+        return True
+
     def get_contact_by_prefix(self, prefix: str) -> Dict[str, Any]:
         """Get a contact by its public key prefix.
 

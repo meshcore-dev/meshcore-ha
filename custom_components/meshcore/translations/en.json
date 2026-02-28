@@ -99,6 +99,8 @@
       "global_settings": {
         "data": {
           "disable_contact_discovery": "Disable Contact Discovery",
+          "limit_discovered_contacts": "Limit Discovered Contacts",
+          "max_discovered_contacts": "Maximum Discovered Contacts",
           "self_telemetry_enabled": "Enable Self Telemetry",
           "self_telemetry_interval": "Self Telemetry Interval (seconds)"
         },
@@ -199,6 +201,8 @@
       "global_settings": {
         "data": {
           "disable_contact_discovery": "Disable Contact Discovery",
+          "limit_discovered_contacts": "Limit Discovered Contacts",
+          "max_discovered_contacts": "Maximum Discovered Contacts",
           "self_telemetry_enabled": "Enable Self Telemetry",
           "self_telemetry_interval": "Self Telemetry Interval (seconds)"
         },
@@ -351,6 +355,16 @@
         "entry_id": {
           "name": "Config Entry ID",
           "description": "The config entry ID if you have multiple MeshCore devices. Leave empty to clean all devices."
+        }
+      }
+    },
+    "clear_discovered_contacts": {
+      "name": "Clear All Discovered Contacts",
+      "description": "Remove all discovered contacts and their associated binary sensor entities from Home Assistant. This does NOT remove contacts from your node's contact list.",
+      "fields": {
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device."
         }
       }
     }
