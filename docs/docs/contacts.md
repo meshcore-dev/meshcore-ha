@@ -69,6 +69,26 @@ If you have many contacts on your mesh network but only want to track specific r
 - Reducing entity count in Home Assistant
 - You want to use services/automations without contact entities
 
+#### Limiting Discovered Contacts
+
+If you want to keep contact discovery enabled but prevent thousands of contacts from accumulating, you can set a maximum limit:
+
+**To enable:**
+1. Go to **Settings → Devices & Services**
+2. Find your MeshCore integration
+3. Click **Configure**
+4. Select **Global Settings**
+5. Enable **Limit Discovered Contacts**
+6. Set **Maximum Discovered Contacts** (default: 100, range: 1–10,000)
+7. Click **Submit**
+
+**How it works:**
+- Uses FIFO (first-in, first-out) eviction — the oldest discovered contacts are removed first
+- When a contact re-advertises, it moves to the back of the queue so active contacts are not evicted
+- Evicted contacts have their binary sensor entities automatically removed
+- The limit is enforced on startup and whenever a new contact is discovered
+- Changing the limit takes effect immediately
+
 ## Managing Contacts via UI
 
 Use this card to manage discovered and added contacts:
@@ -230,17 +250,32 @@ Discovered contacts are persisted to Home Assistant's `.storage` directory:
 - Automatically saved when new contacts are discovered
 - Loaded on integration startup
 
-#### Clearing Discovered Contacts
+#### Clearing All Discovered Contacts
 
-If you want to completely clear all discovered contacts (e.g., starting fresh or removing old/invalid entries):
+To remove all discovered contacts at once:
 
-1. Stop Home Assistant
-2. Delete the storage file: `.storage/meshcore.<entry_id>.discovered_contacts`
-3. Start Home Assistant
+```yaml
+service: meshcore.clear_discovered_contacts
+```
 
-Replace `<entry_id>` with your config entry ID (found in the URL when viewing the device in Settings → Devices & Services).
+This removes all discovered contacts and their binary sensor entities from Home Assistant. It does **NOT** remove contacts from your node's contact list.
 
-**Note**: This only clears the discovered contacts list. Contacts that are already added to your node will remain added and will need to be removed separately using the remove contact service.
+**Dashboard Button:**
+```yaml
+type: button
+name: Clear All Discovered
+icon: mdi:delete-sweep
+tap_action:
+  action: call-service
+  service: meshcore.clear_discovered_contacts
+```
+
+For multiple devices, specify the entry_id:
+```yaml
+service: meshcore.clear_discovered_contacts
+data:
+  entry_id: "abc123def456"
+```
 
 ### Added Contacts
 
