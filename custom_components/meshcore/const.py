@@ -88,6 +88,13 @@ CONF_SELF_TELEMETRY_ENABLED: Final = "self_telemetry_enabled"
 CONF_SELF_TELEMETRY_INTERVAL: Final = "self_telemetry_interval"
 DEFAULT_SELF_TELEMETRY_INTERVAL: Final = 300  # 5 minutes in seconds
 
+# MQTT upload settings
+CONF_MQTT_IATA: Final = "mqtt_iata"
+CONF_MQTT_DECODER_CMD: Final = "mqtt_decoder_cmd"
+CONF_MQTT_PRIVATE_KEY: Final = "mqtt_private_key"
+CONF_MQTT_TOKEN_TTL_SECONDS: Final = "mqtt_token_ttl_seconds"
+CONF_MQTT_BROKERS: Final = "mqtt_brokers"
+
 # Backoff constants for repeater failures
 REPEATER_BACKOFF_BASE: Final = 2  # Base multiplier for exponential backoff
 REPEATER_BACKOFF_MAX_MULTIPLIER: Final = 120  # Maximum backoff multiplier (10 minutes when * 5 seconds)
@@ -127,4 +134,3 @@ class NodeType(IntEnum):
     REPEATER = 2
     ROOM_SERVER = 3
     SENSOR = 4
-

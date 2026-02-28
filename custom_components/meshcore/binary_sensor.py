@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any, Dict
 
@@ -247,6 +248,15 @@ async def async_setup_entry(
         if contact_entities:
             async_add_entities(contact_entities)
 
+    mqtt_uploader = getattr(coordinator, "mqtt_uploader", None)
+    if mqtt_uploader:
+        mqtt_entities = [
+            MeshCoreMqttBrokerConnectionBinarySensor(coordinator, broker.number, broker.server)
+            for broker in mqtt_uploader.get_brokers()
+        ]
+        if mqtt_entities:
+            async_add_entities(mqtt_entities)
+
     # Subscribe to our internal message sent event for outgoing messages
     @callback
     async def message_sent_handler(event):
@@ -381,6 +391,84 @@ class MeshCoreMessageEntity(CoordinatorEntity, BinarySensorEntity):
             attributes["public_key"] = self.public_key
             
         return attributes
+
+
+class MeshCoreMqttBrokerConnectionBinarySensor(CoordinatorEntity, BinarySensorEntity):
+    """Binary sensor for one MQTT broker connection state."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+
+    def __init__(self, coordinator: DataUpdateCoordinator, broker_num: int, server: str) -> None:
+        """Initialize the MQTT broker connection binary sensor."""
+        super().__init__(coordinator)
+        self._broker_num = broker_num
+        self._server = server
+        self._connected = False
+        self._unsubscribe_callback: Callable[[], None] | None = None
+
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_mqtt_broker_{broker_num}_connection"
+        self._attr_name = f"MQTT Broker {broker_num} Connection"
+        device_key = (coordinator.pubkey or "")[:6]
+        self.entity_id = format_entity_id(
+            ENTITY_DOMAIN_BINARY_SENSOR,
+            device_key,
+            f"mqtt_broker_{broker_num}",
+            "connection",
+        )
+
+    async def async_added_to_hass(self) -> None:
+        """Register for uploader connection-state callbacks."""
+        await super().async_added_to_hass()
+        uploader = getattr(self.coordinator, "mqtt_uploader", None)
+        if not uploader:
+            return
+        self._connected = uploader.is_broker_connected(self._broker_num)
+        self._unsubscribe_callback = uploader.register_connection_state_callback(
+            self._handle_connection_update
+        )
+        self.async_write_ha_state()
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Remove uploader callback registration."""
+        if self._unsubscribe_callback:
+            self._unsubscribe_callback()
+            self._unsubscribe_callback = None
+        await super().async_will_remove_from_hass()
+
+    @callback
+    def _handle_connection_update(self, broker_num: int, connected: bool) -> None:
+        """Update sensor state when uploader emits a broker connection change."""
+        if broker_num != self._broker_num:
+            return
+        if self._connected == connected:
+            return
+        self._connected = connected
+        self.async_write_ha_state()
+
+    @property
+    def device_info(self):
+        """Attach sensor to main MeshCore device."""
+        return DeviceInfo(**self.coordinator.device_info)
+
+    @property
+    def available(self) -> bool:
+        """Return true when uploader object exists."""
+        return getattr(self.coordinator, "mqtt_uploader", None) is not None
+
+    @property
+    def is_on(self) -> bool:
+        """Return broker connection state."""
+        return self._connected
+
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return broker context attributes."""
+        return {
+            "broker_number": self._broker_num,
+            "server": self._server,
+        }
 
 
 class MeshCoreContactDiagnosticBinarySensor(CoordinatorEntity, BinarySensorEntity):

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from pathlib import Path
@@ -33,6 +34,7 @@ from .const import (
 )
 from .coordinator import MeshCoreDataUpdateCoordinator
 from .meshcore_api import MeshCoreAPI
+from .mqtt_uploader import MeshCoreMqttUploader
 from .services import async_setup_services, async_unload_services
 from .utils import (
     create_message_correlation_key,
@@ -45,6 +47,17 @@ _LOGGER = logging.getLogger(__name__)
 
 # List of platforms to set up
 PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SELECT, Platform.TEXT, Platform.DEVICE_TRACKER]
+
+
+def _read_integration_version() -> str:
+    """Read integration version from manifest."""
+    try:
+        manifest_path = Path(__file__).with_name("manifest.json")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        version = str(manifest.get("version", "")).strip()
+        return version or "unknown"
+    except Exception:
+        return "unknown"
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Migrate old entry."""
@@ -187,6 +200,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Store coordinator for this entry
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
+
+    integration_version = await hass.async_add_executor_job(_read_integration_version)
+    mqtt_uploader = MeshCoreMqttUploader(
+        hass,
+        _LOGGER,
+        entry,
+        api=coordinator.api,
+        integration_version=integration_version,
+    )
+    await mqtt_uploader.async_start()
+    coordinator.mqtt_uploader = mqtt_uploader
     
     # Set up all platforms for this device
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -265,6 +289,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "payload": sanitized_payload,
                 "timestamp": time.time()
             })
+            if getattr(coordinator, "mqtt_uploader", None):
+                hass.async_create_task(
+                    coordinator.mqtt_uploader.async_publish_raw_event(event_type_str, sanitized_payload)
+                )
         except Exception as ex:
             _LOGGER.error(f"Error serializing event payload: {ex}")
             # Fire event without payload to ensure delivery
@@ -343,6 +371,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 remove_listener()
                 
         # Disconnect from the device
+        if getattr(coordinator, "mqtt_uploader", None):
+            await coordinator.mqtt_uploader.async_stop()
         await coordinator.api.disconnect()
         
         # Remove entry

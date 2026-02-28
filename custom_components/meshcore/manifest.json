@@ -5,7 +5,7 @@
   "dependencies": ["logbook"],
   "codeowners": ["@awolden"],
   "loggers": ["custom_components.meshcore"],
-  "requirements": ["meshcore>=2.1.16", "meshcore-cli>=0.0.0", "pycryptodome>=3.20.0", "cachetools>=5.3.0"],
+  "requirements": ["meshcore>=2.1.16", "meshcore-cli>=0.0.0", "pycryptodome>=3.20.0", "cachetools>=5.3.0", "paho-mqtt>=1.6.0", "pynacl>=1.5.0"],
   "iot_class": "local_polling",
   "version": "2.3.0",
   "config_flow": true

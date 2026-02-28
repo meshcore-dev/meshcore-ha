@@ -54,6 +54,21 @@ Core integration is powered by [meshcore-py](https://github.com/meshcore-dev/mes
 
 For detailed configuration instructions, see the [documentation](https://meshcore-dev.github.io/meshcore-ha/).
 
+## MQTT Upload (Addon/Container Env)
+
+Configuration can be done in the Home Assistant Web UI:
+
+- Settings -> Devices & Services -> MeshCore -> Configure
+- MQTT Global Settings
+- MQTT Broker Settings (Broker 1-4)
+
+Auth-token mode is easy install by default:
+
+- `meshcore-decoder` is optional.
+- If `meshcore-decoder` is not available, the integration automatically falls back to in-process Python signing (`PyNaCl`).
+- Signing key is pulled from the connected node via `export_private_key()`.
+- If private key export is disabled/blocked on firmware, auth-token upload cannot start.
+
 ## Development
 
 ### Local Development Setup

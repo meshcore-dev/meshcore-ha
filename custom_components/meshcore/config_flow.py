@@ -47,6 +47,9 @@ from .const import (
     CONF_SELF_TELEMETRY_ENABLED,
     CONF_SELF_TELEMETRY_INTERVAL,
     DEFAULT_SELF_TELEMETRY_INTERVAL,
+    CONF_MQTT_IATA,
+    CONF_MQTT_TOKEN_TTL_SECONDS,
+    CONF_MQTT_BROKERS,
     NodeType,
 )
 from .meshcore_api import MeshCoreAPI
@@ -55,6 +58,11 @@ _LOGGER = logging.getLogger(__name__)
 
 class CannotConnect(HomeAssistantError):
     """Error to indicate we cannot connect."""
+
+
+DEFAULT_MQTT_TOPIC_STATUS = "meshcore/{IATA}/{PUBLIC_KEY}/status"
+DEFAULT_MQTT_TOPIC_EVENTS = "meshcore/{IATA}/{PUBLIC_KEY}/packets"
+MAX_MQTT_BROKERS = 4
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
@@ -343,6 +351,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 return await self.async_step_manage_devices()
             elif action == "global_settings":
                 return await self.async_step_global_settings()
+            elif action == "mqtt_brokers":
+                return await self.async_step_mqtt_brokers()
             else:
                 return self.async_create_entry(title="", data={})
 
@@ -371,6 +381,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 "add_client": "Add Tracked Client", 
                 "manage_devices": "Manage Monitored Devices",
                 "global_settings": "Global Settings",
+                "mqtt_brokers": "Manage MQTT Brokers",
             })
         })
 
@@ -385,39 +396,20 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         
     def _get_repeater_contacts(self):
         """Get repeater contacts from coordinator's cached data."""
-        # Get the coordinator
-        if not self.hass or DOMAIN not in self.hass.data:
-            return []
-
-        coordinator = self.hass.data[DOMAIN].get(self.config_entry.entry_id) # type: ignore
-        if not coordinator:
-            return []
-
-        # Get contacts from the _contacts attribute
         repeater_contacts = []
+        for contact in self._iter_known_contacts():
+            contact_type = self._normalize_contact_type(contact)
+            contact_name = self._contact_name(contact)
+            public_key = contact.get("public_key", "")
+            pubkey_prefix = public_key[:12] if public_key else ""
 
-        # Only proceed if _contacts attribute exists
-        if not hasattr(coordinator, "_contacts"):
-            return []
+            is_repeater_like = contact_type in {NodeType.REPEATER, NodeType.ROOM_SERVER, NodeType.SENSOR}
+            if not is_repeater_like and isinstance(contact_name, str):
+                name_lower = contact_name.lower()
+                is_repeater_like = any(tag in name_lower for tag in ("repeater", "roomserver", "room server", "sensor"))
 
-        for contact in coordinator._contacts.values(): # type: ignore
-            if not isinstance(contact, dict):
-                continue
-
-            contact_name = contact.get("adv_name", "")
-            if not contact_name:
-                continue
-
-            contact_type = contact.get("type")
-
-            # Check for repeater (2), room server (3), or sensor (4) node types
-            if contact_type == NodeType.REPEATER or contact_type == NodeType.ROOM_SERVER or contact_type == NodeType.SENSOR:
-                public_key = contact.get("public_key", "")
-                pubkey_prefix = public_key[:12] if public_key else ""
-
-                # Add tuple of (pubkey_prefix, name)
-                if pubkey_prefix:
-                    repeater_contacts.append((pubkey_prefix, contact_name))
+            if is_repeater_like and pubkey_prefix and contact_name:
+                repeater_contacts.append((pubkey_prefix, contact_name))
 
         return repeater_contacts
         
@@ -753,37 +745,233 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_SELF_TELEMETRY_INTERVAL, default=current_telemetry_interval): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
             }),
         )
+
+    def _get_mqtt_brokers_data(self) -> Dict[str, Dict[str, Any]]:
+        """Get MQTT broker settings from config entry data."""
+        brokers = self.config_entry.data.get(CONF_MQTT_BROKERS, {})
+        if isinstance(brokers, dict):
+            return copy.deepcopy(brokers)
+        return {}
+
+    @staticmethod
+    def _sorted_mqtt_broker_keys(brokers: Dict[str, Dict[str, Any]]) -> list[str]:
+        """Return broker keys sorted numerically when possible."""
+        def key_sorter(value: str) -> tuple[int, str]:
+            return (0, f"{int(value):04d}") if value.isdigit() else (1, value)
+
+        return sorted(brokers.keys(), key=key_sorter)
+
+    @staticmethod
+    def _format_mqtt_broker_label(broker_key: str, broker: Dict[str, Any]) -> str:
+        """Build display label for a configured broker."""
+        enabled = bool(broker.get("enabled", False))
+        server = str(broker.get("server", "") or "").strip() or "(no server)"
+        status = "Enabled" if enabled else "Disabled"
+        return f"Broker {broker_key}: {server} ({status})"
+
+    @staticmethod
+    def _next_mqtt_broker_key(brokers: Dict[str, Dict[str, Any]]) -> str | None:
+        """Find next available broker key within max supported brokers."""
+        used = set(brokers.keys())
+        for idx in range(1, MAX_MQTT_BROKERS + 1):
+            key = str(idx)
+            if key not in used:
+                return key
+        return None
+
+    async def async_step_mqtt_brokers(self, user_input=None):
+        """Manage MQTT brokers with add/edit/remove actions."""
+        brokers = self._get_mqtt_brokers_data()
+
+        if user_input is not None:
+            action = user_input.get("broker_action")
+            selected = str(user_input.get("selected_broker", "") or "").strip()
+
+            if action == "add":
+                next_key = self._next_mqtt_broker_key(brokers)
+                if next_key is not None:
+                    self._editing_mqtt_broker = int(next_key)
+                    return await self.async_step_mqtt_broker()
+            elif action == "edit" and selected in brokers:
+                self._editing_mqtt_broker = int(selected)
+                return await self.async_step_mqtt_broker()
+            elif action == "remove" and selected in brokers:
+                brokers.pop(selected, None)
+                new_data = copy.deepcopy(dict(self.config_entry.data))
+                new_data[CONF_MQTT_BROKERS] = brokers
+                self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
+            elif action == "back":
+                return await self.async_step_init()
+
+        broker_options = {
+            key: self._format_mqtt_broker_label(key, brokers[key])
+            for key in self._sorted_mqtt_broker_keys(brokers)
+        }
+        broker_list = "\n".join([f"• {label}" for label in broker_options.values()]) or "No MQTT brokers configured."
+
+        if broker_options:
+            action_options: Dict[str, str] = {
+                "edit": "Edit Broker",
+                "remove": "Remove Broker",
+                "back": "Back",
+            }
+            if len(brokers) < MAX_MQTT_BROKERS:
+                action_options["add"] = "Add Broker"
+            first_key = next(iter(broker_options))
+            schema = vol.Schema({
+                vol.Optional("selected_broker", default=first_key): vol.In(broker_options),
+                vol.Required("broker_action"): vol.In(action_options),
+            })
+        else:
+            action_options = {"back": "Back"}
+            if len(brokers) < MAX_MQTT_BROKERS:
+                action_options["add"] = "Add Broker"
+            schema = vol.Schema({
+                vol.Required("broker_action"): vol.In(action_options),
+            })
+
+        return self.async_show_form(
+            step_id="mqtt_brokers",
+            data_schema=schema,
+            description_placeholders={"broker_list": broker_list},
+        )
+
+    async def async_step_mqtt_broker(self, user_input=None):
+        """Edit one MQTT broker settings."""
+        broker_num = getattr(self, "_editing_mqtt_broker", 1)
+        broker_key = str(broker_num)
+        brokers = self._get_mqtt_brokers_data()
+        broker = brokers.get(broker_key, {})
+        legacy_global_iata = str(self.config_entry.data.get(CONF_MQTT_IATA, "XYZ") or "XYZ").upper()
+        legacy_global_ttl = self.config_entry.data.get(CONF_MQTT_TOKEN_TTL_SECONDS, 3600)
+
+        if user_input is not None:
+            brokers[broker_key] = {
+                "enabled": user_input.get("enabled", False),
+                "server": user_input.get("server", ""),
+                "port": user_input.get("port", 1883),
+                "transport": user_input.get("transport", "tcp"),
+                "use_tls": user_input.get("use_tls", False),
+                "tls_verify": user_input.get("tls_verify", True),
+                "keepalive": user_input.get("keepalive", 60),
+                "username": user_input.get("username", ""),
+                "password": user_input.get("password", ""),
+                "use_auth_token": user_input.get("use_auth_token", False),
+                "token_audience": user_input.get("token_audience", ""),
+                "owner_public_key": user_input.get("owner_public_key", ""),
+                "owner_email": user_input.get("owner_email", ""),
+                "topic_status": user_input.get("topic_status", DEFAULT_MQTT_TOPIC_STATUS),
+                "topic_events": user_input.get("topic_events", DEFAULT_MQTT_TOPIC_EVENTS),
+                "iata": user_input.get("iata", legacy_global_iata),
+                "token_ttl_seconds": user_input.get("token_ttl_seconds", legacy_global_ttl),
+                "payload_mode": user_input.get("payload_mode", "packet"),
+            }
+            new_data = copy.deepcopy(dict(self.config_entry.data))
+            new_data[CONF_MQTT_BROKERS] = brokers
+            self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
+            return await self.async_step_mqtt_brokers()
+
+        schema = vol.Schema({
+            vol.Optional("enabled", default=broker.get("enabled", False)): cv.boolean,
+            vol.Optional("server", default=broker.get("server", "")): str,
+            vol.Optional("port", default=broker.get("port", 1883)): cv.port,
+            vol.Optional("transport", default=broker.get("transport", "tcp")): vol.In(["tcp", "websockets"]),
+            vol.Optional("use_tls", default=broker.get("use_tls", False)): cv.boolean,
+            vol.Optional("tls_verify", default=broker.get("tls_verify", True)): cv.boolean,
+            vol.Optional("keepalive", default=broker.get("keepalive", 60)): vol.All(cv.positive_int, vol.Range(min=15, max=300)),
+            vol.Optional("username", default=broker.get("username", "")): str,
+            vol.Optional("password", default=broker.get("password", "")): str,
+            vol.Optional("use_auth_token", default=broker.get("use_auth_token", False)): cv.boolean,
+            vol.Optional("token_audience", default=broker.get("token_audience", "")): str,
+            vol.Optional("owner_public_key", default=broker.get("owner_public_key", "")): str,
+            vol.Optional("owner_email", default=broker.get("owner_email", "")): str,
+            vol.Optional("payload_mode", default=broker.get("payload_mode", "packet")): vol.In(
+                {
+                    "packet": "Packet (LetsMesh-compatible)",
+                    "raw": "Raw Event",
+                }
+            ),
+            vol.Optional(
+                "token_ttl_seconds",
+                default=broker.get("token_ttl_seconds", legacy_global_ttl),
+            ): vol.All(cv.positive_int, vol.Range(min=60, max=86400)),
+            vol.Optional("topic_status", default=broker.get("topic_status", DEFAULT_MQTT_TOPIC_STATUS)): str,
+            vol.Optional("topic_events", default=broker.get("topic_events", DEFAULT_MQTT_TOPIC_EVENTS)): str,
+            vol.Optional("iata", default=broker.get("iata", legacy_global_iata)): str,
+        })
+
+        return self.async_show_form(
+            step_id="mqtt_broker",
+            data_schema=schema,
+            description_placeholders={"broker_number": str(broker_num)},
+        )
         
     def _get_client_contacts(self):
         """Get client contacts from coordinator's cached data."""
+        client_contacts = []
+        for contact in self._iter_known_contacts():
+            contact_type = self._normalize_contact_type(contact)
+            if contact_type != NodeType.CLIENT:
+                continue
+
+            contact_name = self._contact_name(contact)
+            public_key = contact.get("public_key", "")
+            pubkey_prefix = public_key[:12] if public_key else ""
+
+            if pubkey_prefix and contact_name:
+                client_contacts.append((pubkey_prefix, contact_name))
+
+        return client_contacts
+
+    def _iter_known_contacts(self) -> list[Dict[str, Any]]:
+        """Return merged contacts from coordinator (added + discovered)."""
         if not self.hass or DOMAIN not in self.hass.data:
             return []
-
         coordinator = self.hass.data[DOMAIN].get(self.config_entry.entry_id) # type: ignore
         if not coordinator:
             return []
+        if hasattr(coordinator, "get_all_contacts"):
+            try:
+                contacts = coordinator.get_all_contacts()
+                if isinstance(contacts, list):
+                    return [c for c in contacts if isinstance(c, dict)]
+            except Exception:
+                pass
+        if hasattr(coordinator, "_contacts"):
+            return [c for c in coordinator._contacts.values() if isinstance(c, dict)] # type: ignore
+        return []
 
-        client_contacts = []
-        if not hasattr(coordinator, "_contacts"):
-            return []
+    @staticmethod
+    def _contact_name(contact: Dict[str, Any]) -> str:
+        """Get best available contact display name."""
+        return (
+            contact.get("adv_name")
+            or contact.get("name")
+            or contact.get("display_name")
+            or ""
+        )
 
-        for contact in coordinator._contacts.values(): # type: ignore
-            if not isinstance(contact, dict):
-                continue
-
-            contact_name = contact.get("adv_name", "")
-            if not contact_name:
-                continue
-
-            contact_type = contact.get("type")
-            if contact_type == NodeType.CLIENT:
-                public_key = contact.get("public_key", "")
-                pubkey_prefix = public_key[:12] if public_key else ""
-
-                if pubkey_prefix:
-                    client_contacts.append((pubkey_prefix, contact_name))
-
-        return client_contacts
+    @staticmethod
+    def _normalize_contact_type(contact: Dict[str, Any]):
+        """Normalize contact type from various formats to NodeType/int when possible."""
+        raw = contact.get("type", contact.get("node_type"))
+        if isinstance(raw, NodeType):
+            return raw
+        if isinstance(raw, int):
+            return raw
+        if isinstance(raw, str):
+            value = raw.strip().lower()
+            if value.isdigit():
+                return int(value)
+            mapping = {
+                "client": NodeType.CLIENT,
+                "repeater": NodeType.REPEATER,
+                "room_server": NodeType.ROOM_SERVER,
+                "roomserver": NodeType.ROOM_SERVER,
+                "sensor": NodeType.SENSOR,
+            }
+            return mapping.get(value, raw)
+        return raw
         
     async def async_step_edit_repeater(self, user_input=None):
         """Handle editing a repeater."""

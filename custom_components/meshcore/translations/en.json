@@ -104,6 +104,141 @@
         },
         "description": "Configure global integration settings",
         "title": "Global Settings"
+      },
+      "mqtt_brokers": {
+        "data": {
+          "selected_broker": "Broker",
+          "broker_action": "Action"
+        },
+        "description": "Manage configured MQTT brokers:\n\n{broker_list}",
+        "title": "Manage MQTT Brokers"
+      },
+      "mqtt_broker": {
+        "data": {
+          "enabled": "Enabled",
+          "server": "Server",
+          "port": "Port",
+          "transport": "Transport",
+          "use_tls": "Use TLS",
+          "tls_verify": "Verify TLS Certificate",
+          "keepalive": "Keepalive (seconds)",
+          "username": "Username (not needed with Auth Token)",
+          "password": "Password (not needed with Auth Token)",
+          "use_auth_token": "Use MeshCore Auth Token",
+          "token_audience": "Token Audience",
+          "owner_public_key": "Owner Public Key (JWT owner claim)",
+          "owner_email": "Owner Email (JWT email claim)",
+          "payload_mode": "Payload Mode",
+          "token_ttl_seconds": "Auth Token TTL (seconds)",
+          "topic_status": "Status Topic",
+          "topic_events": "Packets Topic",
+          "iata": "Broker IATA Code"
+        },
+        "description": "Configure MQTT broker {broker_number}",
+        "title": "MQTT Broker Settings"
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "data": {
+          "action": "Choose an action"
+        },
+        "description": "Configure your MeshCore integration.\n\n{device_status}",
+        "title": "MeshCore Configuration"
+      },
+      "add_repeater": {
+        "data": {
+          "repeater_name": "Available Repeaters",
+          "repeater_password": "Repeater Password",
+          "telemetry_enabled": "Enable Telemetry Polling",
+          "repeater_update_interval": "Telemetry Refresh Rate (seconds)",
+          "disable_path_reset": "Disable Path Reset"
+        },
+        "description": "Monitor a repeater for telemetry and status",
+        "title": "Add Repeater Station"
+      },
+      "add_client": {
+        "data": {
+          "client_name": "Available Clients",
+          "client_update_interval": "Update Frequency (seconds)",
+          "disable_path_reset": "Disable Path Reset"
+        },
+        "description": "Track presence and battery for a client device",
+        "title": "Add Tracked Client"
+      },
+      "manage_devices": {
+        "data": {
+          "selected_device": "Select Device",
+          "device_action": "Action"
+        },
+        "description": "Manage your configured devices:\n\n{device_list}",
+        "title": "Manage Monitored Devices"
+      },
+      "edit_repeater": {
+        "data": {
+          "repeater_password": "Update Password (leave blank to keep current)",
+          "telemetry_enabled": "Enable Telemetry Polling",
+          "repeater_update_interval": "Telemetry Refresh Rate (seconds)",
+          "disable_path_reset": "Disable Path Reset",
+          "disabled": "Disable Device"
+        },
+        "description": "Edit settings for {device_name}",
+        "title": "Edit Repeater"
+      },
+      "edit_client": {
+        "data": {
+          "client_update_interval": "Update Frequency (seconds)",
+          "disable_path_reset": "Disable Path Reset",
+          "disabled": "Disable Device"
+        },
+        "description": "Edit settings for {device_name}",
+        "title": "Edit Tracked Client"
+      },
+      "global_settings": {
+        "data": {
+          "disable_contact_discovery": "Disable Contact Discovery",
+          "self_telemetry_enabled": "Enable Self Telemetry",
+          "self_telemetry_interval": "Self Telemetry Interval (seconds)"
+        },
+        "description": "Configure global integration settings",
+        "title": "Global Settings"
+      },
+      "mqtt_brokers": {
+        "data": {
+          "selected_broker": "Broker",
+          "broker_action": "Action"
+        },
+        "description": "Manage configured MQTT brokers:\n\n{broker_list}",
+        "title": "Manage MQTT Brokers"
+      },
+      "mqtt_broker": {
+        "data": {
+          "enabled": "Enabled",
+          "server": "Server",
+          "port": "Port",
+          "transport": "Transport",
+          "use_tls": "Use TLS",
+          "tls_verify": "Verify TLS Certificate",
+          "keepalive": "Keepalive (seconds)",
+          "qos": "QoS",
+          "retain": "Retain Messages",
+          "username": "Username (not needed with Auth Token)",
+          "password": "Password (not needed with Auth Token)",
+          "use_auth_token": "Use MeshCore Auth Token",
+          "token_audience": "Token Audience",
+          "owner_public_key": "Owner Public Key (JWT owner claim)",
+          "owner_email": "Owner Email (JWT email claim)",
+          "payload_mode": "Payload Mode",
+          "token_ttl_seconds": "Auth Token TTL (seconds)",
+          "topic_status": "Status Topic",
+          "topic_events": "Packets Topic",
+          "iata": "Broker IATA Code",
+          "client_id_prefix": "Client ID Prefix"
+        },
+        "description": "Configure MQTT broker {broker_number}",
+        "title": "MQTT Broker Settings"
       }
     }
   },
