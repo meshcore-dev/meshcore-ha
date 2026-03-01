@@ -51,6 +51,7 @@ This guide will help you install and configure the Meshcore integration for Home
 #### USB Connection
 - Enter the USB port path (e.g., `/dev/ttyUSB0` or `/dev/ttyACM0`)
 - Set the baud rate (default: 115200)
+- **Note**: If you flashed the 'Companion Bluetooth' firmware, this will fail to connect. Flash 'Companion USB' instead.
 
 #### BLE Connection
 - Select your Meshcore device from discovered devices
@@ -116,6 +117,7 @@ Once configured, you should see:
 - Verify the device is properly connected and the correct port is selected
 - Try a different baud rate if the default doesn't work
 - Check permissions for USB device access
+- Make sure you flashed the 'Companion USB' firmware, instead of the 'Companion Bluetooth' firmware.
 - Common port paths:
   - Linux: `/dev/ttyUSB0`, `/dev/ttyACM0`
   - macOS: `/dev/tty.usbserial-*`
