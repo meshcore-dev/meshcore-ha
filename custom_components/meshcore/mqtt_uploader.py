@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import inspect
 import json
 import re
 import shlex
@@ -121,6 +122,15 @@ class MeshCoreMqttUploader:
         self._connection_state_callbacks: set[Callable[[int, bool], None]] = set()
         self._recent_packet_signatures: dict[str, float] = {}
         self._packet_dedupe_ttl_seconds = 1.0
+        self._status_refresh_interval_seconds = 300
+        self._status_refresh_task: asyncio.Task[None] | None = None
+        self._startup_timestamp = time.time()
+        self._device_stats: dict[str, Any] = {}
+        self._status_meta: dict[str, str] = {
+            "radio": "unknown",
+            "model": "unknown",
+            "firmware_version": "unknown",
+        }
 
     def _build_client_agent(self) -> str:
         """Build fixed LetsMesh client agent label."""
@@ -358,6 +368,10 @@ class MeshCoreMqttUploader:
                 client.loop_start()
             except Exception as ex:
                 self.logger.error("[%s] Connection error: %s", broker.name, ex)
+        if self._status_refresh_task is None or self._status_refresh_task.done():
+            self._status_refresh_task = self.hass.async_create_task(
+                self._async_status_refresh_loop()
+            )
 
     async def _async_create_client(self, broker: BrokerConfig):
         """Create an MQTT client for one broker."""
@@ -792,7 +806,7 @@ class MeshCoreMqttUploader:
 
     def _build_status_payload(self, state: str) -> dict[str, Any]:
         """Build status payload compatible with other uploaders."""
-        return {
+        payload: dict[str, Any] = {
             "status": state,
             "timestamp": datetime.now().isoformat(),
             "origin": self.node_name,
@@ -800,6 +814,154 @@ class MeshCoreMqttUploader:
             "source": "meshcore-ha",
             "client_version": self.client_agent or "meshcore-dev/meshcore-ha:unknown",
         }
+        payload.update(self._status_meta)
+        if self._device_stats:
+            payload["stats"] = dict(self._device_stats)
+        return payload
+
+    def _update_status_cache_from_event(self, event_type: str, payload: Any) -> None:
+        """Cache identity/metrics fields from live events for status payload parity."""
+        if not isinstance(payload, dict):
+            return
+        et = (event_type or "").upper()
+
+        if "DEVICE_INFO" in et:
+            model = str(payload.get("model", "") or "").strip()
+            firmware = str(payload.get("ver", "") or payload.get("fw_build", "") or "").strip()
+            if model:
+                self._status_meta["model"] = model
+            if firmware:
+                self._status_meta["firmware_version"] = firmware
+
+        if "SELF_INFO" in et:
+            freq = payload.get("radio_freq")
+            bw = payload.get("radio_bw")
+            sf = payload.get("radio_sf")
+            cr = payload.get("radio_cr")
+            if all(v is not None for v in (freq, bw, sf, cr)):
+                self._status_meta["radio"] = f"{freq}/{bw}/SF{sf}/CR{cr}"
+
+        if "BATTERY" in et:
+            level = payload.get("level")
+            try:
+                battery_mv = int(level)
+                if 1000 <= battery_mv <= 6000:
+                    self._device_stats["battery_mv"] = battery_mv
+            except (TypeError, ValueError):
+                pass
+
+    @staticmethod
+    def _parse_stats_payload(payload: Any) -> dict[str, Any]:
+        """Normalize stats command payloads to dict."""
+        if isinstance(payload, dict):
+            return payload
+        if isinstance(payload, (bytes, bytearray)):
+            payload = payload.decode("utf-8", errors="ignore").strip()
+        if isinstance(payload, str):
+            text = payload.strip()
+            if not text:
+                return {}
+            if "-> " in text:
+                text = text.split("-> ", 1)[1].strip()
+            text = text.splitlines()[0].strip()
+            try:
+                parsed = json.loads(text)
+                return parsed if isinstance(parsed, dict) else {}
+            except Exception:
+                return {}
+        return {}
+
+    async def _async_call_command_variants(
+        self, commands: Any, method_names: list[str]
+    ) -> dict[str, Any]:
+        """Try method-name variants and return first dict payload."""
+        for name in method_names:
+            command = getattr(commands, name, None)
+            if not callable(command):
+                continue
+            try:
+                result = command()
+                if inspect.isawaitable(result):
+                    result = await result
+                payload = getattr(result, "payload", result)
+                parsed = self._parse_stats_payload(payload)
+                if parsed:
+                    return parsed
+            except TypeError:
+                continue
+            except Exception as ex:
+                self.logger.debug("Stats command %s failed: %s", name, ex)
+        return {}
+
+    async def _async_refresh_device_stats(self) -> None:
+        """Refresh repeater/observer stats for LetsMesh metrics compatibility."""
+        stats: dict[str, Any] = {
+            "uptime_secs": int(max(0, time.time() - self._startup_timestamp))
+        }
+        if self._device_stats.get("battery_mv") is not None:
+            stats["battery_mv"] = self._device_stats["battery_mv"]
+
+        if self.api is None:
+            self._device_stats.update(stats)
+            return
+        try:
+            mesh_core = self.api.mesh_core
+            commands = getattr(mesh_core, "commands", None)
+        except Exception:
+            commands = None
+        if commands is None:
+            self._device_stats.update(stats)
+            return
+
+        core = await self._async_call_command_variants(
+            commands,
+            ["stats_core", "get_stats_core", "send_stats_core", "statscore"],
+        )
+        radio = await self._async_call_command_variants(
+            commands,
+            ["stats_radio", "get_stats_radio", "send_stats_radio", "statsradio"],
+        )
+        packets = await self._async_call_command_variants(
+            commands,
+            ["stats_packets", "get_stats_packets", "send_stats_packets", "statspackets"],
+        )
+
+        if "battery_mv" in core:
+            stats["battery_mv"] = core["battery_mv"]
+        if "uptime_secs" in core:
+            stats["uptime_secs"] = core["uptime_secs"]
+        if "errors" in core:
+            stats["debug_flags"] = core["errors"]
+        if "debug_flags" in core:
+            stats["debug_flags"] = core["debug_flags"]
+        if "queue_len" in core:
+            stats["queue_len"] = core["queue_len"]
+
+        if "noise_floor" in radio:
+            stats["noise_floor"] = radio["noise_floor"]
+        if "tx_air_secs" in radio:
+            stats["tx_air_secs"] = radio["tx_air_secs"]
+        if "rx_air_secs" in radio:
+            stats["rx_air_secs"] = radio["rx_air_secs"]
+
+        if "recv_errors" in packets:
+            stats["recv_errors"] = packets["recv_errors"]
+
+        self._device_stats = stats
+
+    async def _async_status_refresh_loop(self) -> None:
+        """Periodic status refresh so metrics stay current for observer dashboards."""
+        while self._clients:
+            try:
+                if any(info.get("connected") for info in self._clients):
+                    await self._async_refresh_device_stats()
+                    await self._async_publish_online_status_update()
+                await asyncio.sleep(self._status_refresh_interval_seconds)
+            except asyncio.CancelledError:
+                raise
+            except Exception as ex:
+                self.logger.debug("Status refresh loop error: %s", ex)
+                await asyncio.sleep(30)
 
     def _build_raw_event_payload(self, event_type: str, payload: Any) -> dict[str, Any]:
         """Build raw event payload for non-normalized broker mode."""
@@ -840,6 +1002,7 @@ class MeshCoreMqttUploader:
 
     async def async_publish_raw_event(self, event_type: str, payload: Any) -> None:
         """Publish one event without blocking the HA event loop callback path."""
+        self._update_status_cache_from_event(event_type, payload)
         await self._maybe_update_node_name(event_type, payload)
         await self.hass.async_add_executor_job(self.publish_raw_event, event_type, payload)
 
@@ -1020,6 +1183,13 @@ class MeshCoreMqttUploader:
 
     async def async_stop(self) -> None:
         """Stop all MQTT clients after publishing offline status."""
+        if self._status_refresh_task and not self._status_refresh_task.done():
+            self._status_refresh_task.cancel()
+            try:
+                await self._status_refresh_task
+            except asyncio.CancelledError:
+                pass
+        self._status_refresh_task = None
         if not self._clients:
             return
         for info in self._clients:
