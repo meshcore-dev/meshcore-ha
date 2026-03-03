@@ -353,18 +353,21 @@ def parse_and_decrypt_rx_log(payload: Any, channels_info: dict[int, dict]) -> di
     return result
 
 
-def create_message_correlation_key(channel_idx: int, timestamp: int, text: str) -> str:
+def create_message_correlation_key(channel_idx: int, timestamp: int) -> str:
     """Create a correlation hash key for matching RX_LOG to channel messages.
+
+    Uses only channel index and timestamp for correlation. Text is excluded
+    because the HA config name may differ from the on-device advertised name,
+    making text-based matching unreliable.
 
     Args:
         channel_idx: Channel index
         timestamp: Sender's timestamp (unix time)
-        text: Message text content
 
     Returns:
         16-character hex string hash
     """
-    correlation_key = f"{channel_idx}:{timestamp}:{text}"
+    correlation_key = f"{channel_idx}:{timestamp}"
     hash_key = hashlib.sha256(correlation_key.encode()).hexdigest()[:16]
     return hash_key
 

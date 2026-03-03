@@ -15,7 +15,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.device_registry import async_get as async_get_device_registry
@@ -491,7 +491,45 @@ async def async_setup_entry(
                 except Exception as ex:
                     _LOGGER.error(f"Error creating reliability sensor {reliability_description.key} for client: {ex}")
     
+    # Add message delivery status sensor (tracks repeater count for channel msgs, ACK for direct msgs)
+    delivery_sensor = LastMessageDeliverySensor(coordinator)
+    entities.append(delivery_sensor)
+
     async_add_entities(entities)
+
+    # Set up listeners for outgoing message events to update the delivery sensor.
+    # - meshcore_message_sent: fires immediately when a message is sent (from services.py)
+    # - meshcore_delivery_update: fires on each intermediate collection pass (sensor only)
+    # - meshcore_message: fires once on the final pass (logbook + sensor)
+    from .logbook import EVENT_MESHCORE_MESSAGE, EVENT_MESHCORE_DELIVERY_UPDATE
+
+    @callback
+    def _handle_message_sent(event):
+        """Immediately set sensor to 'waiting' when a message is sent."""
+        data = event.data
+        if data.get("message_type"):
+            delivery_sensor.set_waiting(data)
+
+    @callback
+    def _handle_delivery_update(event):
+        """Update delivery sensor on each progressive collection pass."""
+        data = event.data
+        if data.get("outgoing") and data.get("message_type"):
+            delivery_sensor.update_from_event(data)
+
+    @callback
+    def _handle_message_event(event):
+        """Update delivery sensor on the final logbook event."""
+        data = event.data
+        if data.get("outgoing") and data.get("message_type"):
+            delivery_sensor.update_from_event(data)
+
+    unsub_sent = hass.bus.async_listen(f"{DOMAIN}_message_sent", _handle_message_sent)
+    unsub_delivery = hass.bus.async_listen(EVENT_MESHCORE_DELIVERY_UPDATE, _handle_delivery_update)
+    unsub_logbook = hass.bus.async_listen(EVENT_MESHCORE_MESSAGE, _handle_message_event)
+    entry.async_on_unload(unsub_sent)
+    entry.async_on_unload(unsub_delivery)
+    entry.async_on_unload(unsub_logbook)
 
 
 class RateLimiterSensor(CoordinatorEntity, SensorEntity):
@@ -554,9 +592,212 @@ class RateLimiterSensor(CoordinatorEntity, SensorEntity):
         self.async_write_ha_state()
 
 
+class LastMessageDeliverySensor(CoordinatorEntity, SensorEntity):
+    """Sensor showing delivery status of the last sent message.
+
+    For channel messages: shows how many repeaters relayed the message by
+    counting RX_LOG re-broadcasts (similar to MeshCore iOS app feedback).
+
+    For direct messages: shows whether the recipient acknowledged (ACK'd)
+    the message, confirming delivery.
+
+    The sensor state is a human-readable delivery summary. Detailed data
+    (per-repeater RSSI/SNR, ACK status, etc.) is available as attributes.
+    """
+
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator: MeshCoreDataUpdateCoordinator) -> None:
+        """Initialize the last message delivery sensor."""
+        super().__init__(coordinator)
+        self.coordinator = coordinator
+
+        raw_device_name = coordinator.name or "Unknown"
+        public_key_short = coordinator.pubkey[:6] if coordinator.pubkey else ""
+
+        self._attr_unique_id = "_".join([
+            coordinator.config_entry.entry_id,
+            "last_message_delivery",
+            public_key_short,
+            raw_device_name
+        ])
+
+        self.entity_id = format_entity_id(
+            ENTITY_DOMAIN_SENSOR,
+            public_key_short,
+            "last_message_delivery",
+            sanitize_name(raw_device_name)
+        )
+
+        self._attr_icon = "mdi:radio-tower"
+        self._attr_name = "Last Message Delivery"
+
+        # Internal state – default to "Idle" so the entity is never "unavailable"
+        self._state: str = "Idle"
+        self._message_type: str | None = None
+        self._repeater_count: int | None = None
+        self._ack_received: bool | None = None
+        self._rx_log_data: list[dict] = []
+        self._last_message: str | None = None
+        self._current_send_id: str | None = None
+        self._last_send_time: str | None = None
+        self._receiver: str | None = None
+        self._channel: str | None = None
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device info."""
+        return self.coordinator.device_info
+
+    @property
+    def translation_key(self) -> str:
+        """Return the translation key."""
+        return "last_message_delivery"
+
+    @property
+    def native_value(self) -> str | None:
+        """Return a human-readable delivery status string."""
+        return self._state
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return True
+
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return detailed delivery data as attributes."""
+        attrs: Dict[str, Any] = {}
+        if self._message_type is not None:
+            attrs["message_type"] = self._message_type
+        if self._last_message is not None:
+            attrs["last_message"] = self._last_message
+        if self._last_send_time is not None:
+            attrs["last_send_time"] = self._last_send_time
+
+        # Channel-specific attributes
+        if self._message_type == "channel":
+            attrs["repeater_count"] = self._repeater_count
+            if self._channel is not None:
+                attrs["channel"] = self._channel
+            if self._rx_log_data:
+                attrs["rx_log_data"] = self._rx_log_data
+                attrs["repeater_details"] = [
+                    {
+                        "snr": entry.get("snr"),
+                        "rssi": entry.get("rssi"),
+                        "path_len": entry.get("path_len"),
+                        "path": entry.get("path"),
+                    }
+                    for entry in self._rx_log_data
+                ]
+
+        # Direct message-specific attributes
+        if self._message_type == "direct":
+            if self._ack_received is not None:
+                attrs["ack_received"] = self._ack_received
+            if self._receiver is not None:
+                attrs["receiver"] = self._receiver
+
+        return attrs
+
+    def set_waiting(self, event_data: dict) -> None:
+        """Set sensor to 'waiting' state immediately when a message is sent."""
+        self._current_send_id = event_data.get("send_id")
+        self._message_type = event_data.get("message_type")
+        self._last_message = event_data.get("message")
+        self._last_send_time = event_data.get("timestamp")
+        self._channel = event_data.get("channel") or (
+            f"channel_{event_data.get('channel_idx', 0)}"
+            if self._message_type == "channel" else None
+        )
+        self._receiver = event_data.get("receiver")
+        self._repeater_count = None
+        self._rx_log_data = []
+        self._ack_received = None
+        self._state = "Waiting"
+        self.async_write_ha_state()
+
+    def update_from_event(self, event_data: dict) -> None:
+        """Update sensor state from a meshcore_message logbook event.
+
+        For channel messages with progressive=True, this merges new RX_LOG
+        entries with any already collected, giving rolling repeater counts.
+
+        Events from a previous send (stale send_id) are silently ignored
+        so that a rapid follow-up message isn't overwritten by late arrivals
+        from the earlier send's collection loop.
+        """
+        # Ignore updates from a previous (superseded) send
+        event_send_id = event_data.get("send_id")
+        if event_send_id and self._current_send_id and event_send_id != self._current_send_id:
+            return
+
+        self._message_type = event_data.get("message_type")
+        self._last_message = event_data.get("message")
+        self._last_send_time = event_data.get("timestamp")
+
+        if self._message_type == "channel":
+            new_rx_logs = event_data.get("rx_log_data", [])
+            is_progressive = event_data.get("progressive", False)
+
+            if is_progressive and self._rx_log_data:
+                # Merge: append only entries we haven't already seen.
+                # Each RX_LOG entry is identified by its LoRa reception
+                # characteristics — keys that actually exist in the entry schema.
+                existing_ids = set()
+                for entry in self._rx_log_data:
+                    eid = (
+                        entry.get("snr"),
+                        entry.get("rssi"),
+                        entry.get("path", ""),
+                        entry.get("channel_hash", ""),
+                        entry.get("timestamp"),
+                    )
+                    existing_ids.add(eid)
+                for entry in new_rx_logs:
+                    eid = (
+                        entry.get("snr"),
+                        entry.get("rssi"),
+                        entry.get("path", ""),
+                        entry.get("channel_hash", ""),
+                        entry.get("timestamp"),
+                    )
+                    if eid not in existing_ids:
+                        self._rx_log_data.append(entry)
+                        existing_ids.add(eid)
+            else:
+                self._rx_log_data = new_rx_logs
+
+            self._repeater_count = len(self._rx_log_data)
+            self._channel = event_data.get("channel")
+            self._ack_received = None
+            self._receiver = None
+            count = self._repeater_count or 0
+            if count == 0 and is_progressive:
+                self._state = "Waiting"
+            else:
+                self._state = f"{count} Repeater{'s' if count != 1 else ''}"
+
+        elif self._message_type == "direct":
+            self._ack_received = event_data.get("ack_received")
+            self._receiver = event_data.get("receiver_name")
+            self._repeater_count = None
+            self._rx_log_data = []
+            self._channel = None
+            if self._ack_received is True:
+                self._state = "Delivered"
+            elif self._ack_received is False:
+                self._state = "Unconfirmed"
+            else:
+                self._state = "Sent"
+
+        self.async_write_ha_state()
+
+
 class MeshCoreSensor(CoordinatorEntity, SensorEntity):
     """Representation of a MeshCore sensor."""
-    
+
     _attr_has_entity_name = True
 
     def __init__(
