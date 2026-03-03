@@ -47,6 +47,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # List of platforms to set up
 PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SELECT, Platform.TEXT, Platform.DEVICE_TRACKER]
+STATIC_PATH_REGISTERED_KEY = f"{DOMAIN}_static_path_registered"
 
 
 def _read_integration_version() -> str:
@@ -98,6 +99,16 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up MeshCore from a config entry."""
+    # Home Assistant can trigger a duplicate setup during rapid reload/update cycles.
+    # Skip duplicate setup for an already initialized entry to avoid double platform setup.
+    if entry.entry_id in hass.data.get(DOMAIN, {}):
+        _LOGGER.warning(
+            "Duplicate setup call detected for entry %s (%s); skipping",
+            entry.title,
+            entry.entry_id,
+        )
+        return True
+
     # Get configuration from entry
     connection_type = entry.data[CONF_CONNECTION_TYPE]
     
@@ -219,9 +230,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     should_cache = False
     icons_path = Path(__file__).parent / "www" / "icons"
     
-    await hass.http.async_register_static_paths([
-        StaticPathConfig("/api/meshcore/static", str(icons_path), should_cache)
-    ])
+    if not hass.data.get(STATIC_PATH_REGISTERED_KEY):
+        await hass.http.async_register_static_paths([
+            StaticPathConfig("/api/meshcore/static", str(icons_path), should_cache)
+        ])
+        hass.data[STATIC_PATH_REGISTERED_KEY] = True
     
     # Set up services
     await async_setup_services(hass)
