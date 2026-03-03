@@ -88,6 +88,15 @@ Execute Meshcore SDK commands directly for advanced control.
 
 For a complete list of available commands and their parameters, see the [Meshcore Python SDK documentation](https://github.com/meshcore-dev/meshcore_py).
 
+**Syntax Formats:**
+
+Commands can be written in two formats:
+
+- **Space-separated** (traditional): `set_tx_power 15`
+- **Functional** (Python-style): `set_tx_power(15)`
+
+Both formats are equivalent. The functional syntax supports positional arguments, keyword arguments, strings, numbers, booleans, and bytes literals.
+
 **Examples:**
 
 Set transmit power:
@@ -95,6 +104,13 @@ Set transmit power:
 service: meshcore.execute_command
 data:
   command: "set_tx_power 15"
+```
+
+Using functional syntax:
+```yaml
+service: meshcore.execute_command
+data:
+  command: "set_coords(37.7749, -122.4194)"
 ```
 
 Send message with command:
