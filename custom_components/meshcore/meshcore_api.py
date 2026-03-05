@@ -75,6 +75,11 @@ class MeshCoreAPI:
         """Return latest known node name from SELF_INFO."""
         return str(self._last_self_info.get("name", "") or "").strip()
 
+    @property
+    def self_info(self) -> dict[str, Any]:
+        """Return latest known SELF_INFO payload."""
+        return dict(self._last_self_info)
+
     def _cache_self_info_event(self, event: Any) -> None:
         """Cache SELF_INFO payload for consumers that need startup identity details."""
         if event is None:

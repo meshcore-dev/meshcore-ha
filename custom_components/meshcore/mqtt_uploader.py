@@ -347,6 +347,8 @@ class MeshCoreMqttUploader:
         if not self._brokers:
             return
 
+        await self._async_prime_status_metadata()
+
         for broker in self._brokers:
             client = await self._async_create_client(broker)
             if client is None:
@@ -893,6 +895,44 @@ class MeshCoreMqttUploader:
             except Exception as ex:
                 self.logger.debug("Stats command %s failed: %s", name, ex)
         return {}
+
+    async def _async_prime_status_metadata(self) -> None:
+        """Prime model/firmware/radio metadata before first retained online status publish."""
+        if self.api is None:
+            return
+
+        # Seed from connect-time SELF_INFO cached in API.
+        cached_self_info = {}
+        try:
+            cached_self_info = getattr(self.api, "self_info", {}) or {}
+        except Exception:
+            cached_self_info = {}
+        if isinstance(cached_self_info, dict) and cached_self_info:
+            self._update_status_cache_from_event("self_info", cached_self_info)
+
+        # Query device info immediately so model/firmware are available on first status publish.
+        try:
+            mesh_core = self.api.mesh_core
+            commands = getattr(mesh_core, "commands", None)
+        except Exception:
+            commands = None
+        if commands is None:
+            return
+
+        for method_name in ["send_device_query", "device_query", "get_device_info"]:
+            command = getattr(commands, method_name, None)
+            if not callable(command):
+                continue
+            try:
+                result = command()
+                if inspect.isawaitable(result):
+                    result = await asyncio.wait_for(result, timeout=5)
+                payload = getattr(result, "payload", result)
+                if isinstance(payload, dict) and payload:
+                    self._update_status_cache_from_event("device_info", payload)
+                    return
+            except Exception as ex:
+                self.logger.debug("Device-info prime command %s failed: %s", method_name, ex)
 
     async def _async_refresh_device_stats(self) -> None:
         """Refresh repeater/observer stats for LetsMesh metrics compatibility."""
