@@ -839,7 +839,8 @@ class MeshCoreMqttUploader:
             sf = payload.get("radio_sf")
             cr = payload.get("radio_cr")
             if all(v is not None for v in (freq, bw, sf, cr)):
-                self._status_meta["radio"] = f"{freq}/{bw}/SF{sf}/CR{cr}"
+                # Keep radio format aligned with meshcore-packet-capture for LetsMesh parsing.
+                self._status_meta["radio"] = f"{freq},{bw},{sf},{cr}"
 
         if "BATTERY" in et:
             level = payload.get("level")
