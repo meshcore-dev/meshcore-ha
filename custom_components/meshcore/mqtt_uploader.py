@@ -581,10 +581,18 @@ class MeshCoreMqttUploader:
         claims = {}
         if broker.token_audience:
             claims["aud"] = broker.token_audience
-        if broker.owner_public_key:
-            claims["owner"] = broker.owner_public_key
-        if broker.owner_email:
-            claims["email"] = broker.owner_email
+        include_identity_claims = broker.use_tls and broker.tls_verify
+        owner_claim = broker.owner_public_key if include_identity_claims else ""
+        email_claim = broker.owner_email if include_identity_claims else ""
+        if owner_claim:
+            claims["owner"] = owner_claim
+        if email_claim:
+            claims["email"] = email_claim
+        if (broker.owner_public_key or broker.owner_email) and not include_identity_claims:
+            self.logger.debug(
+                "[%s] Skipping owner/email JWT claims because both TLS and TLS verification are required",
+                broker.name,
+            )
         if self.client_agent:
             claims["client"] = self.client_agent
 
@@ -607,8 +615,8 @@ class MeshCoreMqttUploader:
                 self._create_auth_token_python,
                 broker.token_audience,
                 ttl_seconds,
-                broker.owner_public_key,
-                broker.owner_email,
+                owner_claim,
+                email_claim,
             )
             if token:
                 self.logger.info("[%s] Created auth token using Python fallback signer", broker.name)
