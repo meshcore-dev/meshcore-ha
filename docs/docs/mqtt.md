@@ -40,8 +40,8 @@ Per broker, configure:
 - **Username / Password** (not needed when using auth token)
 - **Use MeshCore Auth Token**
 - **Token Audience** (usually broker hostname for token-based setups)
-- **Owner Public Key** (optional JWT `owner` claim)
-- **Owner Email** (optional JWT `email` claim)
+- **Owner Public Key** (optional JWT `owner` claim; sent only with TLS + TLS Verify)
+- **Owner Email** (optional JWT `email` claim; sent only with TLS + TLS Verify)
 - **Auth Token TTL** (seconds)
 - **Payload Mode**:
   - `packet` = normalized packet payloads (LetsMesh-compatible behavior)
@@ -83,12 +83,12 @@ Auth-token mode works as follows:
 
 Optional owner claims for LetsMesh:
 
-- `Owner Public Key` is sent as JWT claim `owner`
-- `Owner Email` is sent as JWT claim `email`
+- `Owner Public Key` is sent as JWT claim `owner` only when **Use TLS** and **TLS Verify** are both enabled
+- `Owner Email` is sent as JWT claim `email` only when **Use TLS** and **TLS Verify** are both enabled
 - `Owner Public Key` must be 64 hex characters
 - `Owner Email` must be a valid email format
 - Invalid owner values are ignored with warning logs
-- Owner claims are included for both `meshcore-decoder` and Python fallback token generation paths
+- Owner-claim behavior is the same for both `meshcore-decoder` and Python fallback token generation paths
 
 `meshcore-decoder` is optional for normal installs.
 
