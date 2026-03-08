@@ -18,6 +18,8 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.components.http import StaticPathConfig
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 
 
 from .const import (
@@ -28,6 +30,7 @@ from .const import (
     CONF_TCP_HOST,
     CONF_TCP_PORT,
     CONF_BAUDRATE,
+    CONF_PUBKEY,
     CONF_REPEATER_SUBSCRIPTIONS,
     CONF_LIMIT_DISCOVERED_CONTACTS,
     CONF_MAX_DISCOVERED_CONTACTS,
@@ -100,6 +103,62 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     _LOGGER.debug("Migration to configuration version %s successful", config_entry.version)
     return True
 
+def _migrate_entity_ids(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    old_prefix: str,
+    new_prefix: str,
+) -> None:
+    """Rename entity IDs and unique_ids that contain the old pubkey prefix.
+
+    Called when the device's public key changes (e.g. after private key import).
+    Updates both entity_id and unique_id in the entity registry so that
+    entities created with the new prefix match existing registry entries,
+    preventing orphaned duplicates.
+    """
+    entity_registry = er.async_get(hass)
+    migrated = 0
+    old_pattern = f"_{old_prefix}_"
+    new_pattern = f"_{new_prefix}_"
+
+    for entity in list(entity_registry.entities.values()):
+        # Only migrate entities belonging to this config entry
+        if entity.config_entry_id != entry.entry_id:
+            continue
+
+        needs_update = False
+        new_entity_id = entity.entity_id
+        new_unique_id = entity.unique_id
+
+        # Migrate entity_id if it contains the old pubkey prefix
+        if old_pattern in entity.entity_id:
+            new_entity_id = entity.entity_id.replace(old_pattern, new_pattern, 1)
+            needs_update = True
+
+        # Migrate unique_id if it contains the old pubkey prefix
+        if old_prefix in entity.unique_id:
+            new_unique_id = entity.unique_id.replace(old_prefix, new_prefix)
+            needs_update = True
+
+        if not needs_update:
+            continue
+
+        try:
+            entity_registry.async_update_entity(
+                entity.entity_id,
+                new_entity_id=new_entity_id,
+                new_unique_id=new_unique_id,
+            )
+            _LOGGER.info("Migrated entity: %s -> %s", entity.entity_id, new_entity_id)
+            migrated += 1
+        except Exception as ex:
+            _LOGGER.error("Failed to migrate entity %s: %s", entity.entity_id, ex)
+
+    _LOGGER.info(
+        "Migrated %d entities from prefix %s to %s", migrated, old_prefix, new_prefix
+    )
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up MeshCore from a config entry."""
     # Home Assistant can trigger a duplicate setup during rapid reload/update cycles.
@@ -159,6 +218,49 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Continue setup even if connection failed - coordinator will retry
     if not connected:
         _LOGGER.warning("Starting integration with no initial connection - coordinator will retry")
+
+    # --- Public key change detection and entity migration ---
+    # After connecting, the API caches SELF_INFO (including public_key) via send_appstart().
+    # Compare the live key to what's stored in config_entry to detect key changes.
+    live_pubkey = api._last_self_info.get("public_key", "") if connected else ""
+    stored_pubkey = entry.data.get(CONF_PUBKEY, "")
+
+    if live_pubkey and stored_pubkey and live_pubkey != stored_pubkey:
+        _LOGGER.warning(
+            "Public key changed! Old: %s... New: %s... Migrating entities.",
+            stored_pubkey[:12], live_pubkey[:12],
+        )
+
+        # Migrate entity IDs and unique_ids before platforms are set up
+        old_prefix = stored_pubkey[:6]
+        new_prefix = live_pubkey[:6]
+        _migrate_entity_ids(hass, entry, old_prefix, new_prefix)
+
+        # Update config entry with new pubkey so coordinator picks it up
+        new_data = dict(entry.data)
+        new_data[CONF_PUBKEY] = live_pubkey
+        hass.config_entries.async_update_entry(entry, data=new_data)
+
+        # Create persistent repair issue to warn about automation/dashboard references
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            f"pubkey_changed_{entry.entry_id}",
+            is_fixable=False,
+            is_persistent=True,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key="pubkey_changed",
+            translation_placeholders={
+                "old_key": stored_pubkey[:12],
+                "new_key": live_pubkey[:12],
+            },
+        )
+    elif live_pubkey and not stored_pubkey:
+        # First time getting pubkey (shouldn't normally happen, but handle gracefully)
+        new_data = dict(entry.data)
+        new_data[CONF_PUBKEY] = live_pubkey
+        hass.config_entries.async_update_entry(entry, data=new_data)
+        _LOGGER.info("Stored initial public key: %s...", live_pubkey[:12])
 
     # TODO: remove this with contact refresh interval migration?
     # Get the messages interval for base update frequency
