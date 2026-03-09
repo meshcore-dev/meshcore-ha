@@ -268,7 +268,7 @@ async def async_setup_entry(
                 # Create message entity if needed
                 pubkey_prefix = event.data["contact_public_key"][:12]
                 if pubkey_prefix not in coordinator.tracked_contacts:
-                    contact_name = event.data.get("receiver", "Unknown")
+                    contact_name = event.data.get("receiver") or "Unknown"
                     message_entity = MeshCoreMessageEntity(
                         coordinator, pubkey_prefix, f"{contact_name} Messages", 
                         public_key=pubkey_prefix

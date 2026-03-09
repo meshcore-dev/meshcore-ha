@@ -183,7 +183,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                             "message": message,
                             "device": config_entry_id,
                             "message_type": "direct",
-                            "receiver": contact.get("name"),
+                            "receiver": contact.get("adv_name") or contact.get("name"),
                             "timestamp": int(time.time()),
                             "contact_public_key": pubkey
                         }
