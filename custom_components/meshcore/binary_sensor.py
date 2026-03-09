@@ -191,7 +191,10 @@ async def async_setup_entry(
     coordinator.tracked_contacts = set()
     coordinator.tracked_channels = set()
     coordinator.tracked_diagnostic_binary_contacts = set()
-    
+
+    # Store callback so services (e.g. add_contact) can create binary sensors dynamically
+    coordinator.binary_sensor_async_add_entities = async_add_entities
+
     # Set up event listeners
     listeners = []
     

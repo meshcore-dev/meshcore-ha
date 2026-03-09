@@ -37,6 +37,7 @@ from .const import (
     ATTR_ENTRY_ID,
 )
 from .utils import extract_pubkey_from_selection
+from .binary_sensor import create_contact_sensor
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -93,6 +94,21 @@ def _parse_functional_command(command_str: str) -> tuple | None:
         return None
 
 
+def _ensure_contact_compat(contact: dict) -> dict:
+    """Ensure contact dict has all fields required by the current meshcore SDK.
+
+    Older stored contacts may be missing 'out_path_hash_mode' which was added
+    in meshcore SDK ~2.2.20+. Default to -1 (flood) if out_path_len is -1,
+    otherwise 0 (mode 0, 1-byte path hash).
+    """
+    if "out_path_hash_mode" not in contact:
+        if contact.get("out_path_len", -1) == -1:
+            contact["out_path_hash_mode"] = -1
+        else:
+            contact["out_path_hash_mode"] = 0
+    return contact
+
+
 def _resolve_contact(arg: str, command_name: str, api: Any, coordinator: Any) -> Any:
     """Look up a contact by pubkey prefix or name. Returns contact dict or None."""
     if len(arg) < 6:
@@ -104,9 +120,11 @@ def _resolve_contact(arg: str, command_name: str, api: Any, coordinator: Any) ->
     if not contact and command_name == "add_contact":
         for dc in coordinator._discovered_contacts.values():
             if dc.get("public_key", "").startswith(arg) or dc.get("adv_name") == arg:
-                return dc
+                return _ensure_contact_compat(dc)
     if not contact:
         _LOGGER.error("Contact not found with key or name: %s", arg)
+    if contact:
+        return _ensure_contact_compat(contact)
     return contact
 
 
@@ -582,6 +600,16 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
                                 # Mark contact as dirty so binary sensors update
                                 coordinator.mark_contact_dirty(prefix)
+
+                                # Create binary sensor entity if one doesn't exist yet
+                                try:
+                                    add_entities_cb = getattr(coordinator, "binary_sensor_async_add_entities", None)
+                                    if add_entities_cb:
+                                        sensor = create_contact_sensor(coordinator, contact_to_add)
+                                        if sensor:
+                                            add_entities_cb([sensor])
+                                except Exception as sensor_ex:
+                                    _LOGGER.warning("Failed to create binary sensor for contact %s: %s", prefix, sensor_ex)
 
                                 # Trigger immediate update
                                 updated_data = dict(coordinator.data) if coordinator.data else {}
