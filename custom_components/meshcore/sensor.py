@@ -648,7 +648,7 @@ class MeshCoreSensor(CoordinatorEntity, SensorEntity):
             
         elif key == "tx_power":
             def update_tx(event: Event):
-                self._native_value = event.payload.get("max_tx_power")
+                self._native_value = event.payload.get("tx_power")
             meshcore.dispatcher.subscribe(
                 EventType.SELF_INFO,
                 update_tx,
