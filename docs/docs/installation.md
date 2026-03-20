@@ -97,6 +97,7 @@ Configure integration-wide settings:
 - **Disable Contact Discovery**: Stop automatically creating contact sensors (useful for large networks)
 - **Enable Self Telemetry**: Collect telemetry from this node
 - **Self Telemetry Interval** (60-3600 seconds): How often to collect self telemetry data
+- **Enable Map Upload (map.meshcore.dev)**: When enabled, adverts from repeaters and room servers you receive are uploaded to [map.meshcore.dev](https://map.meshcore.dev). Those nodes appear on the official MeshCore map for the community. See [Map Auto Uploader](./map-upload) for details.
 
 **Note:** Disabling contact discovery is recommended if you have 50+ contacts and only need to monitor specific tracked repeaters/clients.
 
