@@ -92,6 +92,9 @@ CONF_SELF_TELEMETRY_ENABLED: Final = "self_telemetry_enabled"
 CONF_SELF_TELEMETRY_INTERVAL: Final = "self_telemetry_interval"
 DEFAULT_SELF_TELEMETRY_INTERVAL: Final = 300  # 5 minutes in seconds
 
+# Map Auto Uploader settings
+CONF_MAP_UPLOAD_ENABLED: Final = "map_upload_enabled"
+
 # MQTT upload settings
 CONF_MQTT_IATA: Final = "mqtt_iata"
 CONF_MQTT_DECODER_CMD: Final = "mqtt_decoder_cmd"

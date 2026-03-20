@@ -114,6 +114,9 @@ def _resolve_contact(arg: str, command_name: str, api: Any, coordinator: Any) ->
     if len(arg) < 6:
         _LOGGER.error("Invalid pubkey prefix length: %s", arg)
         return None
+    if not api or not api.mesh_core:
+        _LOGGER.error("Device not connected - cannot resolve contact")
+        return None
     contact = api.mesh_core.get_contact_by_key_prefix(arg)
     if not contact:
         contact = api.mesh_core.get_contact_by_name(arg)
