@@ -22,6 +22,8 @@ _LOGGER = logging.getLogger(__name__)
 
 # Single event type for all messages
 EVENT_MESHCORE_MESSAGE = "meshcore_message"
+# RX Message Log event — all received RF packets when the switch is enabled
+EVENT_MESHCORE_RX_LOG = "meshcore_rx_log"
 
 @callback
 def async_describe_events(
@@ -56,6 +58,76 @@ def async_describe_events(
         }
     
     async_describe_event(DOMAIN, EVENT_MESHCORE_MESSAGE, process_message_event)
+
+    @callback
+    def process_rx_log_event(event: Event) -> dict[str, str]:
+        """Process MeshCore RX_LOG events for logbook."""
+        data = event.data
+        route_type = data.get("route_type", "UNKNOWN")
+        payload_type = data.get("payload_type", "UNKNOWN")
+        snr = data.get("snr")
+        rssi = data.get("rssi")
+        size_bytes = data.get("size_bytes", 0)
+        # hop_count is the actual number of relay hops (from unpacked path_len byte)
+        # Fall back to path_len for backward compatibility with older event data
+        hop_count = data.get("hop_count", data.get("path_len", 0))
+        path_nodes = data.get("path_nodes", [])
+
+        # Build path display
+        if path_nodes:
+            path_str = f" [{','.join(path_nodes)}]"
+        else:
+            path_str = ""
+
+        # Build description based on payload type
+        parts = [f"{route_type} {payload_type}"]
+
+        # Advert-specific details
+        if payload_type == "ADVERT":
+            node_name = data.get("node_name", "")
+            node_type = data.get("node_type", "")
+            if node_name:
+                parts[0] += f' from "{node_name}"'
+                if node_type:
+                    parts[0] += f" ({node_type})"
+
+        # GroupText-specific details
+        elif payload_type == "GROUP TEXT":
+            decrypted = data.get("decrypted", False)
+            if decrypted:
+                channel_name = data.get("channel_name", "")
+                message_text = data.get("message_text", "")
+                if channel_name:
+                    parts[0] += f" on #{channel_name}"
+                if message_text:
+                    # Truncate long messages
+                    display_text = message_text[:60] + ("..." if len(message_text) > 60 else "")
+                    parts[0] += f': "{display_text}"'
+            else:
+                parts[0] += " (encrypted)"
+
+        # Path info
+        hop_label = "hop" if hop_count == 1 else "hops"
+        parts.append(f"{hop_count} {hop_label}{path_str}")
+
+        # Signal quality
+        if snr is not None:
+            parts.append(f"SNR: {snr:.2f} dB")
+        if rssi is not None:
+            parts.append(f"RSSI: {rssi} dBm")
+
+        # Size
+        parts.append(f"{size_bytes} bytes")
+
+        description = " \u00b7 ".join(parts)
+
+        return {
+            "message": description,
+            "domain": DOMAIN,
+            "icon": "mdi:access-point",
+        }
+
+    async_describe_event(DOMAIN, EVENT_MESHCORE_RX_LOG, process_rx_log_event)
 
 async def handle_channel_message(event, coordinator) -> None:
     """Handle channel message event."""

@@ -6,7 +6,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from datetime import timedelta
+from datetime import datetime, timedelta
 from meshcore.events import EventType
 
 from .const import (
@@ -34,6 +34,7 @@ from .const import (
     DEFAULT_MAX_DISCOVERED_CONTACTS,
     CONF_MESSAGES_INTERVAL,
     DEFAULT_UPDATE_TICK,
+    ENTITY_DOMAIN_BINARY_SENSOR,
 )
 from .coordinator import MeshCoreDataUpdateCoordinator
 from .meshcore_api import MeshCoreAPI
@@ -41,15 +42,18 @@ from .mqtt_uploader import MeshCoreMqttUploader
 from .services import async_setup_services, async_unload_services
 from .utils import (
     create_message_correlation_key,
+    format_entity_id,
     parse_and_decrypt_rx_log,
     parse_rx_log_data,
+    parse_rx_log_full,
     sanitize_event_data,
 )
+from .logbook import EVENT_MESHCORE_RX_LOG
 
 _LOGGER = logging.getLogger(__name__)
 
 # List of platforms to set up
-PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SELECT, Platform.TEXT, Platform.DEVICE_TRACKER]
+PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SELECT, Platform.TEXT, Platform.DEVICE_TRACKER, Platform.SWITCH]
 STATIC_PATH_REGISTERED_KEY = f"{DOMAIN}_static_path_registered"
 
 
@@ -300,7 +304,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         "text": text,
                         "snr": event.payload.get("snr"),
                         "rssi": event.payload.get("rssi"),
-                        "path_len": decrypted_data.get("path_len"),
+                        "hop_count": decrypted_data.get("hop_count", decrypted_data.get("path_len", 0)),
                         "path": decrypted_data.get("path"),
                         "channel_hash": decrypted_data.get("channel_hash"),
                     }
@@ -311,6 +315,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         coordinator._pending_rx_logs[hash_key] = [rx_log_entry]
 
                     _LOGGER.debug(f"Stored RX_LOG for correlation: ch={channel_idx}, hash={hash_key[:8]}")
+
+                # Fire RX_LOG event to logbook if enabled
+                if getattr(coordinator, "rx_log_enabled", False):
+                    parsed_full = parse_rx_log_full(event.payload, decrypted_data)
+                    if parsed_full:
+                        device_key = coordinator.pubkey or "unknown"
+                        rx_entity_id = format_entity_id(
+                            ENTITY_DOMAIN_BINARY_SENSOR,
+                            device_key[:6],
+                            "rx",
+                            "messages"
+                        )
+                        rx_event_data = {
+                            "entity_id": rx_entity_id,
+                            "domain": DOMAIN,
+                            **parsed_full,
+                            "timestamp": datetime.now().isoformat(),
+                        }
+                        hass.bus.async_fire(EVENT_MESHCORE_RX_LOG, rx_event_data)
 
             # Fire event to HA event bus with sanitized payload
             _LOGGER.debug(f"Firing event to HA event bus: {event}")

@@ -251,6 +251,10 @@ async def async_setup_entry(
         if contact_entities:
             async_add_entities(contact_entities)
 
+    # Create the RX Messages entity unconditionally (the switch controls whether events fire)
+    rx_log_entity = MeshCoreRxLogEntity(coordinator)
+    async_add_entities([rx_log_entity])
+
     mqtt_uploader = getattr(coordinator, "mqtt_uploader", None)
     if mqtt_uploader:
         mqtt_entities = [
@@ -669,5 +673,60 @@ class MeshCoreContactDiagnosticBinarySensor(CoordinatorEntity, BinarySensorEntit
         if last_advert > 0:
             last_advert_time = datetime.fromtimestamp(last_advert)
             attributes["last_advert_formatted"] = last_advert_time.isoformat()
-            
+
         return attributes
+
+
+class MeshCoreRxLogEntity(CoordinatorEntity, BinarySensorEntity):
+    """Binary sensor entity for RX Message Log entries.
+
+    This entity serves as the logbook target for RX_LOG events.
+    The entity always exists; the companion switch controls whether events fire.
+    """
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+
+    def __init__(self, coordinator) -> None:
+        """Initialize the RX Messages entity."""
+        super().__init__(coordinator)
+
+        device_key = coordinator.pubkey or ""
+        pubkey6 = device_key[:6]
+
+        # Unique ID
+        self._attr_unique_id = (
+            f"{coordinator.config_entry.entry_id}_rx_messages_{pubkey6}"
+        )
+
+        # Entity ID: binary_sensor.meshcore_{pubkey6}_rx_messages
+        self.entity_id = format_entity_id(
+            ENTITY_DOMAIN_BINARY_SENSOR,
+            pubkey6,
+            "rx",
+            "messages"
+        )
+
+        self._attr_name = "RX Messages"
+        self._attr_icon = "mdi:access-point"
+
+    @property
+    def device_info(self):
+        """Return device info."""
+        return DeviceInfo(**self.coordinator.device_info)
+
+    @property
+    def is_on(self) -> bool:
+        """Return true — entity is always active."""
+        return True
+
+    @property
+    def state(self) -> str:
+        """Return the state of the entity."""
+        return "Active" if self.is_on else "Inactive"
+
+    @property
+    def available(self) -> bool:
+        """Always available."""
+        return True
