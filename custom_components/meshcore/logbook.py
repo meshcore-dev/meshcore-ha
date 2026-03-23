@@ -2,6 +2,7 @@
 import asyncio
 from calendar import c
 import logging
+import time
 from typing import  Callable
 from datetime import datetime
 
@@ -37,7 +38,7 @@ def async_describe_events(
         message = data.get("message", "")
         channel = data.get("channel", "")
         sender = data.get("sender_name", "Unknown")
-        
+
         # Format description based on message type and direction
         if channel:
             # Channel message
@@ -47,7 +48,21 @@ def async_describe_events(
             # Direct message
             description = f"{sender}: {message}"
             icon = "mdi:message-text"
-        
+
+        # Append route if RX_LOG data is available (incoming messages only).
+        # Format: [route:xx,yy,zz] — easily stripped by UI cards.
+        rx_logs = data.get("rx_log_data", [])
+        if rx_logs and not data.get("outgoing"):
+            first_rx = rx_logs[0]
+            path_nodes = first_rx.get("path_nodes", [])
+            if not path_nodes:
+                # Fall back to raw path hex, split into 2-char pairs
+                raw_path = first_rx.get("path", "")
+                if raw_path:
+                    path_nodes = [raw_path[i:i+2] for i in range(0, len(raw_path), 2)]
+            if path_nodes:
+                description += f" [route:{','.join(path_nodes)}]"
+
         return {
             # "name": sender,
             "message": description,
@@ -84,10 +99,16 @@ async def handle_channel_message(event, coordinator) -> None:
 
                 # Use the provided coordinator for contact lookup
                 if coordinator and hasattr(coordinator, "api") and coordinator.api.mesh_core:
-                    # Try to find contact by name to get public key
+                    # Try saved contacts first (SDK), then discovered contacts
                     contact = coordinator.api.mesh_core.get_contact_by_name(sender_name)
                     if contact and isinstance(contact, dict):
                         sender_pubkey = contact.get("public_key", "")[:12]
+                    elif hasattr(coordinator, "_discovered_contacts"):
+                        # Search discovered contacts by advertised name
+                        for full_pk, disc in coordinator._discovered_contacts.items():
+                            if disc.get("adv_name") == sender_name:
+                                sender_pubkey = full_pk[:12]
+                                break
 
         # Check for Home Assistant instance
         if not hasattr(coordinator, "hass"):
@@ -120,7 +141,13 @@ async def handle_channel_message(event, coordinator) -> None:
         if sender_pubkey:
             event_data["pubkey_prefix"] = sender_pubkey
 
-        # Correlate with RX_LOG data - delay 500ms to collect multiple receptions
+        # Correlate with RX_LOG data using multiple collection passes.
+        # RX_LOG events may arrive after the channel message event, especially
+        # on multi-hop paths. Two passes (500ms + 1000ms) catch late arrivals
+        # without delaying the logbook entry excessively.
+        INCOMING_COLLECTION_PASSES = 2
+        INCOMING_PASS_INTERVALS = [0.5, 1.0]  # seconds to wait before each pass
+
         try:
             timestamp = payload.get("sender_timestamp")
             original_text = payload.get("text", "")
@@ -133,6 +160,29 @@ async def handle_channel_message(event, coordinator) -> None:
                 if rx_logs:
                     _LOGGER.debug(f"Correlated channel message with {len(rx_logs)} RX_LOG reception(s)")
                     event_data["rx_log_data"] = rx_logs
+
+                    # Store route data on the sender's contact entity.
+                    # Use the first RX_LOG entry (typically the most direct path).
+                    if sender_pubkey:
+                        first_rx = rx_logs[0]
+                        rx_data = {
+                            "last_snr": first_rx.get("snr"),
+                            "last_rssi": first_rx.get("rssi"),
+                            "last_rx_hops": first_rx.get("hop_count", 0),
+                            "last_rx_path": first_rx.get("path", ""),
+                            "last_rx_path_nodes": [],  # Not parsed in RX_LOG entries
+                            "last_rx_route_type": "channel_msg",
+                            "last_rx_payload_type": "GroupText",
+                            "last_rx_timestamp": time.time(),
+                        }
+                        stored = coordinator.update_contact_rx_data(sender_pubkey, rx_data)
+                        if stored:
+                            _LOGGER.debug(
+                                "Stored route data on sender %s from channel message: SNR=%s RSSI=%s hops=%s",
+                                sender_pubkey[:6], rx_data["last_snr"],
+                                rx_data["last_rssi"], rx_data["last_rx_hops"],
+                            )
+                            coordinator.async_set_updated_data(coordinator.data or {})
         except Exception as ex:
             _LOGGER.debug(f"Error correlating channel message with RX_LOG: {ex}")
 
@@ -202,6 +252,30 @@ def handle_contact_message(event, coordinator) -> None:
             "timestamp": datetime.now().isoformat(),
             "message_type": "direct"  # Explicit message type for filtering
         }
+
+        # Store route data on the sender's contact entity.
+        # Direct messages come straight from the sender's radio; store any
+        # signal data the SDK provides and record that a message was received.
+        try:
+            rx_data = {
+                "last_snr": payload.get("snr"),
+                "last_rssi": payload.get("rssi"),
+                "last_rx_hops": payload.get("hop_count"),
+                "last_rx_path": payload.get("path", ""),
+                "last_rx_path_nodes": [],
+                "last_rx_route_type": "direct_msg",
+                "last_rx_payload_type": "ContactMsg",
+                "last_rx_timestamp": time.time(),
+            }
+            stored = coordinator.update_contact_rx_data(pubkey_prefix, rx_data)
+            if stored:
+                _LOGGER.debug(
+                    "Stored route data on sender %s from direct message: SNR=%s RSSI=%s",
+                    pubkey_prefix[:6], rx_data["last_snr"], rx_data["last_rssi"],
+                )
+                coordinator.async_set_updated_data(coordinator.data or {})
+        except Exception as ex:
+            _LOGGER.debug(f"Error storing direct message route data: {ex}")
 
         # Fire event
         hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, event_data)

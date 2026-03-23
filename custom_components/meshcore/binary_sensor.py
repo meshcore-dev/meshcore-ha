@@ -669,5 +669,18 @@ class MeshCoreContactDiagnosticBinarySensor(CoordinatorEntity, BinarySensorEntit
         if last_advert > 0:
             last_advert_time = datetime.fromtimestamp(last_advert)
             attributes["last_advert_formatted"] = last_advert_time.isoformat()
-            
+
+        # RX signal data (SNR, RSSI, path) from last received packet
+        rx_data = self.coordinator.get_contact_rx_data(self.pubkey_prefix)
+        if rx_data:
+            attributes["last_snr"] = rx_data.get("last_snr")
+            attributes["last_rssi"] = rx_data.get("last_rssi")
+            attributes["last_rx_hops"] = rx_data.get("last_rx_hops")
+            attributes["last_rx_path"] = rx_data.get("last_rx_path")
+            attributes["last_rx_path_nodes"] = rx_data.get("last_rx_path_nodes", [])
+            attributes["last_rx_route_type"] = rx_data.get("last_rx_route_type")
+            attributes["last_rx_payload_type"] = rx_data.get("last_rx_payload_type")
+            rx_ts = rx_data.get("last_rx_timestamp")
+            if rx_ts:
+                attributes["last_rx_time"] = datetime.fromtimestamp(rx_ts).isoformat()
         return attributes

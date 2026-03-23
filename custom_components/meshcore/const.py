@@ -138,3 +138,46 @@ class NodeType(IntEnum):
     REPEATER = 2
     ROOM_SERVER = 3
     SENSOR = 4
+
+
+# LoRa frame payload types (header bits 2-5, from firmware Packet.h)
+RX_PAYLOAD_TYPE_NAMES: Final = {
+    0x00: "REQUEST",
+    0x01: "RESPONSE",
+    0x02: "DIRECT TEXT",
+    0x03: "ACK",
+    0x04: "ADVERT",
+    0x05: "GROUP TEXT",
+    0x06: "GROUP DATA",
+    0x07: "ANON REQUEST",
+    0x08: "PATH",
+    0x09: "TRACE",
+    0x0A: "MULTIPART",
+    0x0B: "CONTROL",
+    0x0F: "RAW CUSTOM",
+}
+
+# LoRa frame route types (header bits 0-1, from firmware Packet.h)
+RX_ROUTE_TYPE_NAMES: Final = {
+    0x00: "TRANSPORT FLOOD",
+    0x01: "FLOOD",
+    0x02: "DIRECT",
+    0x03: "TRANSPORT DIRECT",
+}
+
+# Advert node types (from firmware AdvertDataHelpers.h)
+ADV_NODE_TYPE_NAMES: Final = {
+    0: "UNKNOWN",
+    1: "CLIENT",
+    2: "REPEATER",
+    3: "ROOM SERVER",
+    4: "SENSOR",
+}
+
+# Advert payload structure constants (from firmware AdvertDataHelpers.h, MeshCore.h)
+ADV_PUB_KEY_SIZE: Final = 32
+ADV_SIGNATURE_SIZE: Final = 64
+ADV_LATLON_MASK: Final = 0x10
+ADV_FEAT1_MASK: Final = 0x20
+ADV_FEAT2_MASK: Final = 0x40
+ADV_NAME_MASK: Final = 0x80

@@ -169,6 +169,11 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         # Set of pubkey prefixes that have been updated and need sensor refresh
         self._dirty_contacts = set()
 
+        # RX signal data per contact — keyed by 12-char pubkey prefix
+        # Stores last received SNR, RSSI, path, hops, etc.
+        self._contact_rx_data: dict[str, dict[str, Any]] = {}
+        self._contact_rx_rate_limit: dict[str, float] = {}  # last update time per prefix
+
     def mark_contact_dirty(self, pubkey_prefix: str):
         """Mark a contact as needing update (for performance optimization).
 
@@ -196,6 +201,42 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         if pubkey_prefix:
             normalized = pubkey_prefix[:12]
             self._dirty_contacts.discard(normalized)
+
+    def update_contact_rx_data(self, pubkey_prefix: str, rx_data: dict[str, Any]) -> bool:
+        """Store latest RX signal data for a contact with 10-second rate limit.
+
+        Returns True if the data was stored, False if rate-limited.
+        """
+        if not pubkey_prefix:
+            return False
+        normalized = pubkey_prefix[:12]
+        now = time.time()
+        last_update = self._contact_rx_rate_limit.get(normalized, 0)
+        if now - last_update < 10:
+            return False
+        self._contact_rx_data[normalized] = rx_data
+        self._contact_rx_rate_limit[normalized] = now
+        self.mark_contact_dirty(normalized)
+        return True
+
+    def get_contact_rx_data(self, pubkey_prefix: str) -> dict[str, Any]:
+        """Return stored RX signal data for a contact, or empty dict."""
+        if not pubkey_prefix:
+            return {}
+        return self._contact_rx_data.get(pubkey_prefix[:12], {})
+
+    def clear_all_contact_rx_data(self) -> int:
+        """Clear all stored RX signal data and rate limits.
+
+        Returns the number of contacts whose data was cleared.
+        Marks each affected contact as dirty so sensors refresh.
+        """
+        count = len(self._contact_rx_data)
+        for prefix in list(self._contact_rx_data.keys()):
+            self.mark_contact_dirty(prefix)
+        self._contact_rx_data.clear()
+        self._contact_rx_rate_limit.clear()
+        return count
 
     def get_all_contacts(self) -> list:
         """Get deduplicated list of all contacts (added + discovered).

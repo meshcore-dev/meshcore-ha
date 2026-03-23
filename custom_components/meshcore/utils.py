@@ -6,12 +6,18 @@ import hashlib
 import hmac
 import logging
 import re
+import struct
 from typing import Any
 
 from Crypto.Cipher import AES
 from homeassistant.util import slugify
 
-from .const import BAT_VMAX, BAT_VMIN, CHANNEL_PREFIX, DOMAIN, MESSAGES_SUFFIX, NodeType
+from .const import (
+    BAT_VMAX, BAT_VMIN, CHANNEL_PREFIX, DOMAIN, MESSAGES_SUFFIX, NodeType,
+    RX_PAYLOAD_TYPE_NAMES, RX_ROUTE_TYPE_NAMES, ADV_NODE_TYPE_NAMES,
+    ADV_PUB_KEY_SIZE, ADV_SIGNATURE_SIZE,
+    ADV_LATLON_MASK, ADV_FEAT1_MASK, ADV_FEAT2_MASK, ADV_NAME_MASK,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -459,4 +465,203 @@ def parse_rx_log_data(payload: Any) -> dict[str, Any]:
         _LOGGER.debug(f"Error parsing RX_LOG data: {ex}")
 
     return result
+
+
+def parse_rx_log_full(event_payload: dict, decrypted_data: dict | None = None) -> dict | None:
+    """Parse an RX_LOG event payload into display-ready fields.
+
+    Combines SNR/RSSI from the event with full LoRa frame parsing including
+    advert payload details (node name, type, location) and GroupText decryption.
+
+    Args:
+        event_payload: Raw RX_LOG event payload dict with snr, rssi, payload fields
+        decrypted_data: Optional pre-computed decrypted GroupText data from
+                        parse_and_decrypt_rx_log()
+
+    Returns:
+        Dict with all display-ready fields, or None if payload cannot be parsed.
+    """
+    try:
+        # Extract signal quality from event payload
+        snr = event_payload.get("snr")
+        rssi = event_payload.get("rssi")
+
+        # Get the raw LoRa frame hex
+        hex_str = None
+        if isinstance(event_payload, dict):
+            hex_str = event_payload.get("payload") or event_payload.get("raw_hex")
+        elif isinstance(event_payload, (str, bytes)):
+            hex_str = event_payload
+
+        if not hex_str:
+            return None
+
+        # Convert to bytes
+        if isinstance(hex_str, str):
+            packet_bytes = bytes.fromhex(hex_str.replace(" ", "").replace("\n", ""))
+        elif isinstance(hex_str, bytes):
+            packet_bytes = hex_str
+        else:
+            return None
+
+        if len(packet_bytes) < 2:
+            return None
+
+        # Parse header byte
+        header = packet_bytes[0]
+        route_type_raw = header & 0x03
+        payload_type_raw = (header >> 2) & 0x0F
+
+        # Parse packed path_len byte
+        # Firmware Packet.h: bits 6-7 encode hash size, bits 0-5 encode hop count
+        path_len_raw = packet_bytes[1]
+        hash_size = (path_len_raw >> 6) + 1   # 1, 2, or 3 bytes per hop
+        hop_count = path_len_raw & 63          # number of relay hops
+        path_byte_len = hop_count * hash_size
+        path_end = 2 + path_byte_len
+
+        if len(packet_bytes) < path_end:
+            return None
+
+        path_data = packet_bytes[2:path_end]
+        # Parse individual nodes (hash_size bytes each)
+        path_nodes = []
+        for i in range(0, len(path_data), hash_size):
+            path_nodes.append(path_data[i:i + hash_size].hex())
+
+        # Build result
+        result = {
+            "snr": snr,
+            "rssi": rssi,
+            "size_bytes": len(packet_bytes),
+            "route_type": RX_ROUTE_TYPE_NAMES.get(route_type_raw, f"UNKNOWN({route_type_raw})"),
+            "payload_type": RX_PAYLOAD_TYPE_NAMES.get(payload_type_raw, f"UNKNOWN({payload_type_raw})"),
+            "payload_type_raw": payload_type_raw,
+            "path_len": path_len_raw,
+            "hop_count": hop_count,
+            "hash_size": hash_size,
+            "path": path_data.hex(),
+            "path_nodes": path_nodes,
+        }
+
+        # Parse advert-specific fields
+        if payload_type_raw == 0x04:
+            _parse_advert_payload(packet_bytes[path_end:], result)
+
+        # Include GroupText decryption data if available
+        if payload_type_raw == 0x05 and decrypted_data:
+            if decrypted_data.get("decrypted"):
+                result["channel_name"] = decrypted_data.get("channel_name", "")
+                result["channel_idx"] = decrypted_data.get("channel_idx")
+                result["message_text"] = decrypted_data.get("text", "")
+                result["decrypted"] = True
+            else:
+                result["decrypted"] = False
+
+        return result
+
+    except Exception as ex:
+        _LOGGER.debug(f"Error in parse_rx_log_full: {ex}")
+        return None
+
+
+def _parse_advert_payload(payload_after_path: bytes, result: dict) -> None:
+    """Parse advert-specific fields from the payload after the LoRa header + path.
+
+    Advert structure (from firmware Mesh.cpp, AdvertDataHelpers.cpp):
+    1. Public key — 32 bytes (ADV_PUB_KEY_SIZE)
+    2. Timestamp — 4 bytes, uint32_t little-endian
+    3. Signature — 64 bytes (ADV_SIGNATURE_SIZE)
+    4. App data — variable length, parsed by AdvertDataParser
+
+    App data flags byte (byte 0):
+    - Bits 0-3: Node type (0=unknown, 1=client, 2=repeater, 3=room, 4=sensor)
+    - Bit 4 (0x10): Latitude/longitude present (8 bytes total)
+    - Bit 5 (0x20): Extra1 present (2 bytes)
+    - Bit 6 (0x40): Extra2 present (2 bytes)
+    - Bit 7 (0x80): Name present (remaining bytes)
+
+    Args:
+        payload_after_path: Raw bytes starting after the LoRa header + path
+        result: Dict to update with advert-specific fields
+    """
+    try:
+        offset = 0
+
+        # Public key (32 bytes)
+        if len(payload_after_path) < offset + ADV_PUB_KEY_SIZE:
+            return
+        pubkey = payload_after_path[offset:offset + ADV_PUB_KEY_SIZE]
+        result["node_pubkey"] = pubkey.hex()
+        offset += ADV_PUB_KEY_SIZE
+
+        # Timestamp (4 bytes, little-endian)
+        if len(payload_after_path) < offset + 4:
+            return
+        advert_timestamp = struct.unpack_from("<I", payload_after_path, offset)[0]
+        result["advert_timestamp"] = advert_timestamp
+        offset += 4
+
+        # Signature (64 bytes)
+        if len(payload_after_path) < offset + ADV_SIGNATURE_SIZE:
+            return
+        offset += ADV_SIGNATURE_SIZE
+
+        # App data (variable length)
+        app_data = payload_after_path[offset:]
+        if len(app_data) < 1:
+            # No app data, use pubkey prefix as name
+            result["node_name"] = result["node_pubkey"][:12]
+            result["node_type"] = "UNKNOWN"
+            result["has_location"] = False
+            return
+
+        # Parse flags byte
+        flags = app_data[0]
+        node_type_raw = flags & 0x0F
+        result["node_type"] = ADV_NODE_TYPE_NAMES.get(node_type_raw, f"UNKNOWN({node_type_raw})")
+
+        app_offset = 1
+
+        # Latitude/longitude (if bit 4 set)
+        if flags & ADV_LATLON_MASK:
+            if len(app_data) >= app_offset + 8:
+                lat_raw = struct.unpack_from("<i", app_data, app_offset)[0]
+                app_offset += 4
+                lon_raw = struct.unpack_from("<i", app_data, app_offset)[0]
+                app_offset += 4
+                result["has_location"] = True
+                result["latitude"] = lat_raw / 1e6
+                result["longitude"] = lon_raw / 1e6
+            else:
+                result["has_location"] = False
+        else:
+            result["has_location"] = False
+
+        # Extra1 (if bit 5 set)
+        if flags & ADV_FEAT1_MASK:
+            if len(app_data) >= app_offset + 2:
+                app_offset += 2
+
+        # Extra2 (if bit 6 set)
+        if flags & ADV_FEAT2_MASK:
+            if len(app_data) >= app_offset + 2:
+                app_offset += 2
+
+        # Name (if bit 7 set, remaining bytes)
+        if flags & ADV_NAME_MASK:
+            name_bytes = app_data[app_offset:]
+            if name_bytes:
+                result["node_name"] = name_bytes.decode("utf-8", errors="ignore").strip("\x00")
+            else:
+                result["node_name"] = result.get("node_pubkey", "")[:12]
+        else:
+            result["node_name"] = result.get("node_pubkey", "")[:12]
+
+    except Exception as ex:
+        _LOGGER.debug(f"Error parsing advert payload: {ex}")
+        # Best-effort: set defaults for any missing fields
+        result.setdefault("node_name", result.get("node_pubkey", "")[:12])
+        result.setdefault("node_type", "UNKNOWN")
+        result.setdefault("has_location", False)
 

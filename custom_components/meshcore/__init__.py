@@ -43,6 +43,7 @@ from .utils import (
     create_message_correlation_key,
     parse_and_decrypt_rx_log,
     parse_rx_log_data,
+    parse_rx_log_full,
     sanitize_event_data,
 )
 
@@ -99,6 +100,64 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     
     _LOGGER.debug("Migration to configuration version %s successful", config_entry.version)
     return True
+
+def _attribute_rx_to_contact(
+    coordinator: MeshCoreDataUpdateCoordinator,
+    event_payload: dict,
+    parsed_full: dict,
+) -> None:
+    """Store signal data on contacts from RX_LOG packets with exact identification.
+
+    Only stores data when the contact can be identified unambiguously:
+
+    - Adverts (payload_type 0x04): The sender's full 32-byte public key is
+      embedded in the packet, allowing exact matching regardless of hop count.
+      SNR/RSSI is only stored for direct adverts (hop_count == 0) since that
+      measures the actual RF link to the sender.
+
+    Route-based matching (using short path-node hashes) is intentionally not
+    used because mode-0 hashing (1-byte prefixes) is too ambiguous with large
+    contact lists.
+
+    Message-based attribution (channel and direct messages) is handled
+    separately in logbook.py where the sender is already identified.
+    """
+    payload_type_raw = parsed_full.get("payload_type_raw")
+    hop_count = parsed_full.get("hop_count", 0)
+    path_nodes = parsed_full.get("path_nodes", [])
+
+    # Only adverts contain the sender's full public key
+    if payload_type_raw != 0x04:
+        return
+
+    node_pubkey = parsed_full.get("node_pubkey", "")
+    if not node_pubkey or len(node_pubkey) < 12:
+        return
+
+    candidate = node_pubkey[:12]
+
+    # Verify we know this contact (saved or discovered)
+    if not (candidate in coordinator._contacts
+            or any(pk.startswith(candidate) for pk in coordinator._discovered_contacts)):
+        return
+
+    rx_data = {
+        "last_snr": event_payload.get("snr") if hop_count == 0 else None,
+        "last_rssi": event_payload.get("rssi") if hop_count == 0 else None,
+        "last_rx_hops": hop_count,
+        "last_rx_path": parsed_full.get("path", ""),
+        "last_rx_path_nodes": path_nodes,
+        "last_rx_route_type": parsed_full.get("route_type", ""),
+        "last_rx_payload_type": parsed_full.get("payload_type", ""),
+        "last_rx_timestamp": time.time(),
+    }
+    stored = coordinator.update_contact_rx_data(candidate, rx_data)
+    if stored:
+        _LOGGER.debug(
+            "Stored RX data for advert sender %s: SNR=%s RSSI=%s hops=%s",
+            candidate, rx_data["last_snr"], rx_data["last_rssi"], hop_count,
+        )
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up MeshCore from a config entry."""
@@ -312,6 +371,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
                     _LOGGER.debug(f"Stored RX_LOG for correlation: ch={channel_idx}, hash={hash_key[:8]}")
 
+                # Parse full packet structure (needed for contact attribution)
+                parsed_full = parse_rx_log_full(event.payload, decrypted_data)
+
+                # --- Contact RX data attribution ---
+                # Identify which contact this packet came from and store signal data
+                if parsed_full:
+                    _attribute_rx_to_contact(coordinator, event.payload, parsed_full)
+                    # Notify entities so contact binary sensors refresh with new RX attributes.
+                    # The 10-second rate limit inside update_contact_rx_data throttles frequency.
+                    if coordinator._dirty_contacts:
+                        coordinator.async_set_updated_data(coordinator.data or {})
             # Fire event to HA event bus with sanitized payload
             _LOGGER.debug(f"Firing event to HA event bus: {event}")
             hass.bus.async_fire(f"{DOMAIN}_raw_event", {
