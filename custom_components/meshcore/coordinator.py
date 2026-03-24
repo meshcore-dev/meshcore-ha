@@ -678,7 +678,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             await asyncio.sleep(1)  # Small delay to avoid tight loops
 
                 
-    async def _async_update_data(self) -> None:
+    async def _async_update_data(self) -> Dict[str, Any]:
         """Trigger commands that will generate events on schedule.
         
         In the event-driven architecture, this method:
@@ -952,3 +952,5 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     telemetry_task.set_name(f"client_telemetry_{client_name}")
                 else:
                     _LOGGER.warning(f"Could not find contact for client telemetry request: {pubkey_prefix}")
+
+        return result_data
