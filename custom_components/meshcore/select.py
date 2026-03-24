@@ -38,7 +38,6 @@ async def async_setup_entry(
     entities.extend([
         MeshCoreChannelSelect(coordinator),
         MeshCoreContactSelect(coordinator),
-        MeshCoreDmLogContactSelect(coordinator),
         MeshCoreRecipientTypeSelect(coordinator),
         MeshCoreDiscoveredContactSelect(coordinator),
         MeshCoreAddedContactSelect(coordinator)
@@ -249,18 +248,6 @@ class MeshCoreContactSelect(CoordinatorEntity, SelectEntity):
                 )
 
         return attributes
-
-
-class MeshCoreDmLogContactSelect(MeshCoreContactSelect):
-    """Select which contact's DM logbook to show (independent from compose target)."""
-
-    def __init__(self, coordinator: DataUpdateCoordinator) -> None:
-        """Initialize DM log contact picker."""
-        super().__init__(coordinator)
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_dm_log_contact_select"
-        self.entity_id = "select.meshcore_dm_log_contact"
-        self._attr_name = "MeshCore DM log contact"
-        self._attr_icon = "mdi:message-text-lock-outline"
 
 
 class MeshCoreRecipientTypeSelect(CoordinatorEntity, SelectEntity):
