@@ -102,7 +102,11 @@
           "limit_discovered_contacts": "Limit Discovered Contacts",
           "max_discovered_contacts": "Maximum Discovered Contacts",
           "self_telemetry_enabled": "Enable Self Telemetry",
-          "self_telemetry_interval": "Self Telemetry Interval (seconds)"
+          "self_telemetry_interval": "Self Telemetry Interval (seconds)",
+          "map_upload_enabled": "Enable Map Auto Uploader (map.meshcore.dev)"
+        },
+        "data_description": {
+          "map_upload_enabled": "When enabled, adverts from repeaters and room servers you receive are uploaded to map.meshcore.dev. Those nodes appear on the official MeshCore map for the community."
         },
         "description": "Configure global integration settings",
         "title": "Global Settings"
@@ -204,7 +208,11 @@
           "limit_discovered_contacts": "Limit Discovered Contacts",
           "max_discovered_contacts": "Maximum Discovered Contacts",
           "self_telemetry_enabled": "Enable Self Telemetry",
-          "self_telemetry_interval": "Self Telemetry Interval (seconds)"
+          "self_telemetry_interval": "Self Telemetry Interval (seconds)",
+          "map_upload_enabled": "Enable Map Auto Uploader (map.meshcore.dev)"
+        },
+        "data_description": {
+          "map_upload_enabled": "When enabled, adverts from repeaters and room servers you receive are uploaded to map.meshcore.dev. Those nodes appear on the official MeshCore map for the community."
         },
         "description": "Configure global integration settings",
         "title": "Global Settings"

@@ -37,6 +37,7 @@ from .const import (
 )
 from .coordinator import MeshCoreDataUpdateCoordinator
 from .meshcore_api import MeshCoreAPI
+from .map_uploader import MeshCoreMapUploader
 from .mqtt_uploader import MeshCoreMqttUploader
 from .services import async_setup_services, async_unload_services
 from .utils import (
@@ -230,15 +231,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
     integration_version = await hass.async_add_executor_job(_read_integration_version)
-    mqtt_uploader = MeshCoreMqttUploader(
-        hass,
-        _LOGGER,
-        entry,
-        api=coordinator.api,
-        integration_version=integration_version,
-    )
-    await mqtt_uploader.async_start()
-    coordinator.mqtt_uploader = mqtt_uploader
+    try:
+        mqtt_uploader = MeshCoreMqttUploader(
+            hass,
+            _LOGGER,
+            entry,
+            api=coordinator.api,
+            integration_version=integration_version,
+        )
+        await mqtt_uploader.async_start()
+        coordinator.mqtt_uploader = mqtt_uploader
+    except Exception as ex:
+        _LOGGER.warning("MQTT uploader failed to start: %s - continuing without it", ex)
+        coordinator.mqtt_uploader = None
+
+    try:
+        map_uploader = MeshCoreMapUploader(hass, _LOGGER, entry, api=coordinator.api)
+        if coordinator.api.self_info:
+            map_uploader.update_self_info(coordinator.api.self_info)
+        coordinator.map_uploader = map_uploader
+    except Exception as ex:
+        _LOGGER.warning("Map Auto Uploader failed to initialize: %s - continuing without it", ex)
+        coordinator.map_uploader = None
     
     # Set up all platforms for this device
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -323,6 +337,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 hass.async_create_task(
                     coordinator.mqtt_uploader.async_publish_raw_event(event_type_str, sanitized_payload)
                 )
+            if hasattr(event, "type") and event.type == EventType.SELF_INFO and isinstance(event.payload, dict):
+                if getattr(coordinator, "map_uploader", None):
+                    coordinator.map_uploader.update_self_info(event.payload)
+            if hasattr(event, "type") and event.type == EventType.RX_LOG_DATA:
+                if getattr(coordinator, "map_uploader", None):
+                    hass.async_create_task(
+                        coordinator.map_uploader.async_handle_rx_log(event_type_str, event.payload)
+                    )
         except Exception as ex:
             _LOGGER.error(f"Error serializing event payload: {ex}")
             # Fire event without payload to ensure delivery

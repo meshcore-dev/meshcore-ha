@@ -15,12 +15,14 @@ from homeassistant.helpers.update_coordinator import (
 
 from .const import (
     DOMAIN,
+    ENTITY_DOMAIN_BINARY_SENSOR,
+    MESSAGES_SUFFIX,
     NodeType,
     SELECT_NO_CONTACTS,
     SELECT_NO_DISCOVERED,
     SELECT_NO_ADDED,
 )
-from .utils import extract_pubkey_from_selection
+from .utils import extract_pubkey_from_selection, format_entity_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,6 +38,7 @@ async def async_setup_entry(
     entities.extend([
         MeshCoreChannelSelect(coordinator),
         MeshCoreContactSelect(coordinator),
+        MeshCoreDmLogContactSelect(coordinator),
         MeshCoreRecipientTypeSelect(coordinator),
         MeshCoreDiscoveredContactSelect(coordinator),
         MeshCoreAddedContactSelect(coordinator)
@@ -67,20 +70,33 @@ class MeshCoreChannelSelect(CoordinatorEntity, SelectEntity):
         self._attr_entity_registry_visible_default = False
 
     def _get_channel_options(self) -> List[str]:
-        """Get list of channels with their names."""
-        options = []
+        """Get list of configured channels with their names.
 
-        # Get max channels from coordinator (default 4)
+        Slots with no name / (unused) in firmware memory are omitted so the UI
+        only lists channels that are actually assigned (except index 0, which
+        defaults to Public when unnamed).
+        """
+        options: List[str] = []
+
         max_channels = getattr(self.coordinator, "_max_channels", 4)
 
         for idx in range(max_channels):
-            # Get channel info from coordinator
             channel_info = self.coordinator._channel_info.get(idx, {})
-            channel_name = channel_info.get("channel_name", "(unused)")
+            raw_name = channel_info.get("channel_name")
+            if raw_name is None:
+                raw_name = "(unused)"
+            name = raw_name.strip() if isinstance(raw_name, str) else str(raw_name).strip()
 
-            # Format as "Name (idx)"
-            option = f"{channel_name} ({idx})"
-            options.append(option)
+            if idx == 0:
+                if not name or name == "(unused)":
+                    name = "Public"
+                options.append(f"{name} ({idx})")
+                continue
+
+            if not name or name == "(unused)":
+                continue
+
+            options.append(f"{name} ({idx})")
 
         return options if options else ["No channels"]
 
@@ -222,7 +238,29 @@ class MeshCoreContactSelect(CoordinatorEntity, SelectEntity):
                     attributes["public_key"] = contact.get("public_key")
                     attributes["contact_name"] = contact.get("adv_name")
 
+                # Matches binary_sensor message entity id (entity_key[:6] in MeshCoreMessageEntity)
+                device_key = (self.coordinator.pubkey or "")[:6]
+                msg_key = pubkey_part[:6]
+                attributes["message_log_entity_id"] = format_entity_id(
+                    ENTITY_DOMAIN_BINARY_SENSOR,
+                    device_key,
+                    msg_key,
+                    MESSAGES_SUFFIX,
+                )
+
         return attributes
+
+
+class MeshCoreDmLogContactSelect(MeshCoreContactSelect):
+    """Select which contact's DM logbook to show (independent from compose target)."""
+
+    def __init__(self, coordinator: DataUpdateCoordinator) -> None:
+        """Initialize DM log contact picker."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_dm_log_contact_select"
+        self.entity_id = "select.meshcore_dm_log_contact"
+        self._attr_name = "MeshCore DM log contact"
+        self._attr_icon = "mdi:message-text-lock-outline"
 
 
 class MeshCoreRecipientTypeSelect(CoordinatorEntity, SelectEntity):
