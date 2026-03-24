@@ -41,6 +41,22 @@ from .binary_sensor import create_contact_sensor
 
 _LOGGER = logging.getLogger(__name__)
 
+
+def _coordinator_for_cli_feedback(hass: HomeAssistant, entry_id: Optional[str]) -> Any:
+    """Pick coordinator for last-command feedback (same targeting as execute_command)."""
+    domain_data = hass.data.get(DOMAIN)
+    if not domain_data:
+        return None
+    if entry_id and entry_id in domain_data:
+        coord = domain_data[entry_id]
+        if hasattr(coord, "api"):
+            return coord
+    for _, coord in domain_data.items():
+        if hasattr(coord, "api"):
+            return coord
+    return None
+
+
 # Schema for send_message service with either node_id or pubkey_prefix required
 SEND_MESSAGE_SCHEMA = vol.Schema(
     {
@@ -376,9 +392,15 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                 parts = shlex.split(command_str)
             except Exception as ex:
                 _LOGGER.error("Error parsing command: %s", ex)
+                c = _coordinator_for_cli_feedback(hass, entry_id)
+                if c:
+                    c.set_command_error(command_str, f"Parse error: {ex}")
                 return
             if not parts:
                 _LOGGER.error("No command specified")
+                c = _coordinator_for_cli_feedback(hass, entry_id)
+                if c:
+                    c.set_command_error(command_str, "No command specified")
                 return
             command_name = parts[0]
             arguments = parts[1:]
@@ -656,17 +678,25 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                                     result.type, json_safe_payload)
                     else:
                         _LOGGER.info("Command result: %s", result)
-                    
+
+                    coordinator.set_command_result(command_str, result)
                     return
-                    
+
                 except Exception as ex:
                     _LOGGER.error("Error executing command %s: %s", command_name, ex)
-                
+                    coordinator.set_command_error(command_str, str(ex))
+
                 # Only attempt with the first available API if no entry_id specified
                 if not entry_id:
                     return
-        
+
         _LOGGER.error("Failed to execute command on any device: %s", command_name)
+        c = _coordinator_for_cli_feedback(hass, entry_id)
+        if c:
+            c.set_command_error(
+                command_str,
+                f"Command '{command_name}' could not be executed on any connected device",
+            )
     
     async def async_execute_command_ui_service(call: ServiceCall) -> None:
         """Execute command from the text helper entity."""
