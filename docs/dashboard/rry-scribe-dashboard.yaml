@@ -1,0 +1,485 @@
+# =============================================================================
+# MeshCore RRY_Scribe — Lovelace dashboard (YAML)
+# =============================================================================
+# Deployed on HA as: /config/meshcore-rry-dashboard.yaml (symlink → /homeassistant)
+# UI Lovelace Minimalist variant: rry-scribe-dashboard-ui-lm.yaml
+#
+# Two views:
+#   1. meshcore-messaging — channels, logbooks, send UI
+#   2. meshcore-monitoring — repeater telemetry (col 1), repeater HA how-to (col 2), companion CLI (col 3)
+#
+# Bubble Card: hash pop-ups only work on the same view as the navigate buttons.
+#
+# Prerequisites (HACS / resources):
+#   - Bubble Card, mini-graph-card, auto-entities (map + DM logbook via filter.template)
+#   - meshcore-ha: select.meshcore_contact + message_log_entity_id attribute (same as Target contact)
+#
+# Resolved for CNFI_Scribe / HASqSp (2026-03-24) from HA entity registry:
+#   Channel log / compose: select.meshcore_channel (options from integration; empty slots omitted)
+#   Logbook entity pattern: binary_sensor.meshcore_<pubkey6>_ch_<idx>_messages — edit if your prefix ≠ bf46e7
+#   Repeater slug: be_kjk_rry20
+# =============================================================================
+views:
+  - title: MeshCore · Messages
+    path: meshcore-messaging
+    type: panel
+    cards:
+      - type: grid
+        columns: 3
+        square: false
+        cards:
+          - type: vertical-stack
+            cards:
+              - type: custom:bubble-card
+                card_type: separator
+                name: Channel log · read mesh traffic
+                icon: mdi:forum-outline
+              - type: markdown
+                content: >
+                  Uses **`select.meshcore_channel`** (same as **Target channel** when composing to a channel).
+                  Pick any configured channel from the list; empty / unused slots are hidden by the integration.
+              - type: entities
+                title: View channel
+                show_header_toggle: false
+                entities:
+                  - entity: select.meshcore_channel
+                    name: Channel
+              - type: custom:auto-entities
+                card:
+                  type: logbook
+                  title: Channel message history
+                  hours_to_show: 720
+                show_empty: false
+                else:
+                  type: markdown
+                  content: >
+                    Select a channel above. If nothing appears, the log entity may not exist until there is
+                    traffic on that channel (companion prefix must match your node, e.g. bf46e7).
+                filter:
+                  template: |
+                    {% set idx = state_attr('select.meshcore_channel', 'channel_idx') %}
+                    {% if idx is not none %}
+                    {{ ['binary_sensor.meshcore_bf46e7_ch_' ~ idx ~ '_messages'] }}
+                    {% else %}
+                    []
+                    {% endif %}
+
+          - type: vertical-stack
+            cards:
+              - type: custom:bubble-card
+                card_type: separator
+                name: Compose · send to channel or contact
+                icon: mdi:send-circle-outline
+              - type: custom:bubble-card
+                card_type: separator
+                name: Recipient
+                icon: mdi:account-switch
+              - type: horizontal-stack
+                cards:
+                  - type: custom:bubble-card
+                    card_type: button
+                    button_type: name
+                    name: Channel
+                    icon: mdi:forum-outline
+                    tap_action:
+                      action: call-service
+                      service: select.select_option
+                      target:
+                        entity_id: select.meshcore_recipient_type
+                      data:
+                        option: Channel
+                  - type: custom:bubble-card
+                    card_type: button
+                    button_type: name
+                    name: Contact
+                    icon: mdi:account
+                    tap_action:
+                      action: call-service
+                      service: select.select_option
+                      target:
+                        entity_id: select.meshcore_recipient_type
+                      data:
+                        option: Contact
+              - type: conditional
+                conditions:
+                  - condition: state
+                    entity: select.meshcore_recipient_type
+                    state: Channel
+                card:
+                  type: entities
+                  entities:
+                    - entity: select.meshcore_channel
+                      name: Target channel
+              - type: conditional
+                conditions:
+                  - condition: state
+                    entity: select.meshcore_recipient_type
+                    state: Contact
+                card:
+                  type: entities
+                  entities:
+                    - entity: select.meshcore_contact
+                      name: Target contact
+              - type: entities
+                title: Message
+                entities:
+                  - entity: text.meshcore_message
+                    name: Text
+              - type: custom:bubble-card
+                card_type: button
+                button_type: name
+                name: Send now
+                icon: mdi:send
+                card_layout: large
+                tap_action:
+                  action: call-service
+                  service: meshcore.send_ui_message
+                  data: {}
+
+          - type: vertical-stack
+            cards:
+              - type: custom:bubble-card
+                card_type: separator
+                name: Private messages · one contact
+                icon: mdi:message-text-lock-outline
+              - type: markdown
+                content: >
+                  Uses **`select.meshcore_contact`** (same as **Target contact** when composing to a contact).
+              - type: entities
+                title: Conversation
+                show_header_toggle: false
+                entities:
+                  - entity: select.meshcore_contact
+                    name: Target contact
+              - type: custom:auto-entities
+                card:
+                  type: logbook
+                  title: Direct messages (RX & TX)
+                  hours_to_show: 720
+                show_empty: false
+                else:
+                  type: markdown
+                  content: >
+                    Pick a contact in **Target contact** (Compose column or here) to load this logbook. If you
+                    see this while a contact is selected, the DM message entity may not exist yet (no traffic
+                    with that contact).
+                filter:
+                  template: |
+                    {% set eid = state_attr('select.meshcore_contact', 'message_log_entity_id') %}
+                    {{ [eid] if eid else [] }}
+
+  - title: MeshCore · Monitor
+    path: meshcore-monitoring
+    type: panel
+    cards:
+      - type: vertical-stack
+        cards:
+          - type: grid
+            columns: 3
+            square: false
+            cards:
+              - type: vertical-stack
+                cards:
+                  - type: custom:bubble-card
+                    card_type: separator
+                    name: "BE-KJK-RRY20☀️ · repeater health & RF"
+                    icon: mdi:tower-beach
+                  - type: horizontal-stack
+                    cards:
+                      - type: custom:bubble-card
+                        card_type: button
+                        button_type: state
+                        entity: sensor.meshcore_7aa6d67962_bat_be_kjk_rry20
+                        name: Battery voltage
+                        show_state: true
+                        show_icon: true
+                      - type: custom:bubble-card
+                        card_type: button
+                        button_type: state
+                        entity: sensor.meshcore_7aa6d67962_battery_percentage_be_kjk_rry20
+                        name: Charge level
+                        show_state: true
+                        show_icon: true
+                  - type: custom:bubble-card
+                    card_type: separator
+                    name: BE-KJK-RRY20 · snapshot
+                    icon: mdi:router-wireless
+                  - type: horizontal-stack
+                    cards:
+                      - type: vertical-stack
+                        cards:
+                          - type: custom:bubble-card
+                            card_type: button
+                            button_type: state
+                            entity: sensor.meshcore_7aa6d67962_uptime_be_kjk_rry20
+                            name: Uptime
+                            show_state: true
+                            show_icon: true
+                          - type: custom:bubble-card
+                            card_type: button
+                            button_type: state
+                            entity: sensor.meshcore_7aa6d67962_last_rssi_be_kjk_rry20
+                            name: Last RSSI
+                            show_state: true
+                            show_icon: true
+                          - type: custom:bubble-card
+                            card_type: button
+                            button_type: state
+                            entity: sensor.meshcore_7aa6d67962_last_snr_be_kjk_rry20
+                            name: Last SNR
+                            show_state: true
+                            show_icon: true
+                      - type: vertical-stack
+                        cards:
+                          - type: custom:bubble-card
+                            card_type: button
+                            button_type: state
+                            entity: sensor.meshcore_7aa6d67962_tx_queue_len_be_kjk_rry20
+                            name: TX queue
+                            show_state: true
+                            show_icon: true
+                          - type: custom:bubble-card
+                            card_type: button
+                            button_type: state
+                            entity: sensor.meshcore_7aa6d67962_nb_recv_rate_be_kjk_rry20
+                            name: Recv rate
+                            show_state: true
+                            show_icon: true
+                          - type: custom:bubble-card
+                            card_type: button
+                            button_type: state
+                            entity: sensor.meshcore_7aa6d67962_nb_sent_rate_be_kjk_rry20
+                            name: Sent rate
+                            show_state: true
+                            show_icon: true
+                  - type: entities
+                    title: Counters & RX airtime
+                    show_header_toggle: false
+                    entities:
+                      - entity: sensor.meshcore_7aa6d67962_nb_recv_be_kjk_rry20
+                        name: Packets received (total)
+                      - entity: sensor.meshcore_7aa6d67962_nb_sent_be_kjk_rry20
+                        name: Packets sent (total)
+                      - entity: sensor.meshcore_7aa6d67962_recv_direct_be_kjk_rry20
+                        name: Recv direct (total)
+                      - entity: sensor.meshcore_7aa6d67962_recv_flood_be_kjk_rry20
+                        name: Recv flood (total)
+                      - entity: sensor.meshcore_7aa6d67962_sent_direct_be_kjk_rry20
+                        name: Sent direct (total)
+                      - entity: sensor.meshcore_7aa6d67962_sent_flood_be_kjk_rry20
+                        name: Sent flood (total)
+                      - entity: sensor.meshcore_7aa6d67962_rx_airtime_utilization_be_kjk_rry20
+                        name: RX airtime utilization
+                      - entity: sensor.meshcore_7aa6d67962_rx_airtime_be_kjk_rry20
+                        name: RX airtime (cumulative)
+                      - entity: sensor.meshcore_7aa6d67962_full_evts_be_kjk_rry20
+                        name: Full queue events
+                  - type: custom:mini-graph-card
+                    name: Battery voltage · last 14 days
+                    icon: mdi:battery-heart-variant
+                    hours_to_show: 336
+                    points_per_hour: 0.25
+                    line_width: 2
+                    height: 180
+                    entities:
+                      - entity: sensor.meshcore_7aa6d67962_bat_be_kjk_rry20
+                        name: Voltage
+                    show:
+                      graph: line
+                      points: hover
+                      legend: false
+                  - type: horizontal-stack
+                    cards:
+                      - type: custom:mini-graph-card
+                        name: Airtime usage · last 24h
+                        icon: mdi:percent
+                        hours_to_show: 24
+                        points_per_hour: 2
+                        height: 140
+                        entities:
+                          - entity: sensor.meshcore_7aa6d67962_airtime_utilization_be_kjk_rry20
+                        show:
+                          graph: line
+                          legend: false
+                      - type: custom:mini-graph-card
+                        name: RF noise floor & RSSI · last 24h
+                        icon: mdi:signal-cellular-outline
+                        hours_to_show: 24
+                        points_per_hour: 2
+                        height: 140
+                        entities:
+                          - entity: sensor.meshcore_7aa6d67962_noise_floor_be_kjk_rry20
+                            name: Noise floor
+                          - entity: sensor.meshcore_7aa6d67962_last_rssi_be_kjk_rry20
+                            name: RSSI
+                        show:
+                          graph: line
+                          points: hover
+                          legend: true
+                  - type: custom:mini-graph-card
+                    name: Msg rate in / out · last 24h
+                    icon: mdi:swap-vertical
+                    hours_to_show: 24
+                    points_per_hour: 2
+                    height: 140
+                    entities:
+                      - entity: sensor.meshcore_7aa6d67962_nb_recv_rate_be_kjk_rry20
+                        name: Recv
+                      - entity: sensor.meshcore_7aa6d67962_nb_sent_rate_be_kjk_rry20
+                        name: Sent
+                    show:
+                      graph: line
+                      points: hover
+                      legend: true
+
+              - type: vertical-stack
+                cards:
+                  - type: custom:bubble-card
+                    card_type: separator
+                    name: Repeater · Home Assistant
+                    icon: mdi:router-wireless-settings
+                  - type: markdown
+                    content: >
+                      **Register and tune monitoring** — Settings → Devices & services → **MeshCore** → **Configure**
+                      → **Add repeater station** or **Manage monitored devices**. Set the repeater **password**, telemetry
+                      **update interval**, and edit a device if it was **auto-disabled** after long outages.
+
+                      **Left column sensors** — Entities like `sensor.meshcore_*_be_kjk_rry20` refresh when the integration
+                      logs into **BE-KJK-RRY20** over the mesh and pulls stats (battery, traffic, airtime, RF). Shorter
+                      intervals feel more live but use more airtime; see meshcore-ha **Remote node tracking**.
+
+                      **Reach the repeater over RF** — **Developer tools → Services**: `meshcore.send_message` with
+                      `node_id` or `pubkey_prefix` for this repeater, or `meshcore.send_channel_message` for a channel
+                      broadcast. That traffic goes through the mesh from your gateway node — not through the USB
+                      companion CLI in the last column.
+
+                      **Firmware / factory / full CLI** — Flashing, hardware reset, or serial console access need **physical
+                      USB** (or vendor workflow) on the repeater itself, not Home Assistant.
+
+                      **Further reading** — meshcore-ha docs: **Services** (fields and examples), **Remote node tracking**
+                      (intervals, backoff, re-login).
+
+              - type: vertical-stack
+                cards:
+                  - type: custom:bubble-card
+                    card_type: separator
+                    name: Companion · local node (USB)
+                    icon: mdi:usb-port
+                  - type: markdown
+                    content: >
+                      `meshcore.execute_command` and **Run custom command** run on the **MeshCore device attached to Home
+                      Assistant** (companion), not on the remote repeater. Open **Last reply** for the **detail**
+                      attribute after each run. Pass **`entry_id`** in **Developer tools → Services** if you have several
+                      MeshCore integrations.
+                  - type: entities
+                    title: Last reply
+                    show_header_toggle: false
+                    entities:
+                      - entity: sensor.meshcore_last_command_result
+                        name: Status
+                  - type: custom:bubble-card
+                    card_type: separator
+                    name: Quick checks
+                    icon: mdi:gauge
+                  - type: horizontal-stack
+                    cards:
+                      - type: custom:bubble-card
+                        card_type: button
+                        button_type: name
+                        name: Battery
+                        icon: mdi:battery
+                        tap_action:
+                          action: call-service
+                          service: meshcore.execute_command
+                          data:
+                            command: get_bat
+                      - type: custom:bubble-card
+                        card_type: button
+                        button_type: name
+                        name: Time
+                        icon: mdi:clock-outline
+                        tap_action:
+                          action: call-service
+                          service: meshcore.execute_command
+                          data:
+                            command: get_time
+                      - type: custom:bubble-card
+                        card_type: button
+                        button_type: name
+                        name: Telemetry
+                        icon: mdi:crosshairs-gps
+                        tap_action:
+                          action: call-service
+                          service: meshcore.execute_command
+                          data:
+                            command: get_self_telemetry
+                  - type: custom:bubble-card
+                    card_type: separator
+                    name: Custom command
+                    icon: mdi:keyboard
+                  - type: entities
+                    title: Command line
+                    entities:
+                      - entity: text.meshcore_command
+                        name: Command text
+                  - type: custom:bubble-card
+                    card_type: button
+                    button_type: name
+                    name: Run custom command
+                    icon: mdi:play
+                    card_layout: large
+                    tap_action:
+                      action: call-service
+                      service: meshcore.execute_command_ui
+                      data: {}
+                  - type: custom:bubble-card
+                    card_type: separator
+                    name: Map
+                    icon: mdi:map-search-outline
+                  - type: custom:bubble-card
+                    card_type: button
+                    button_type: name
+                    name: Open mesh map
+                    icon: mdi:map-marker-radius
+                    card_layout: large
+                    button_action:
+                      tap_action:
+                        action: navigate
+                        navigation_path: "#meshcore-contacts-map"
+                  - type: custom:bubble-card
+                    card_type: separator
+                    name: Maintenance
+                    icon: mdi:alert-octagon-outline
+                  - type: horizontal-stack
+                    cards:
+                      - type: custom:bubble-card
+                        card_type: button
+                        button_type: name
+                        name: Reboot companion
+                        icon: mdi:restart-alert
+                        tap_action:
+                          action: call-service
+                          service: meshcore.execute_command
+                          data:
+                            command: reboot
+
+          - type: vertical-stack
+            cards:
+              - type: custom:bubble-card
+                card_type: pop-up
+                hash: "#meshcore-contacts-map"
+                name: Contacts on the map
+                icon: mdi:map
+                width_desktop: 90%
+                card_layout: large
+              - type: custom:auto-entities
+                card:
+                  type: map
+                  default_zoom: 12
+                  aspect_ratio: 16:9
+                filter:
+                  include:
+                    - entity_id: device_tracker.meshcore_*
+                sort:
+                  method: name
+                  ignore_case: true
