@@ -17,6 +17,7 @@ from .const import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.components.http import StaticPathConfig
 
 
@@ -156,9 +157,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         else:
             _LOGGER.error(f"Failed to connect after {max_retries} attempts")
 
-    # Continue setup even if connection failed - coordinator will retry
     if not connected:
-        _LOGGER.warning("Starting integration with no initial connection - coordinator will retry")
+        raise ConfigEntryNotReady(
+            f"Failed to connect to MeshCore device at "
+            f"{entry.data.get(CONF_TCP_HOST, 'unknown')}:{entry.data.get(CONF_TCP_PORT, 5000)} "
+            f"after {max_retries} attempts"
+        )
 
     # TODO: remove this with contact refresh interval migration?
     # Get the messages interval for base update frequency
