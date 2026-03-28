@@ -650,11 +650,6 @@ class LastMessageDeliverySensor(CoordinatorEntity, SensorEntity):
         return self.coordinator.device_info
 
     @property
-    def translation_key(self) -> str:
-        """Return the translation key."""
-        return "last_message_delivery"
-
-    @property
     def native_value(self) -> str | None:
         """Return a human-readable delivery status string."""
         return self._state

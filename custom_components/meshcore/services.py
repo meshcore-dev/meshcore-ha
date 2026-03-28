@@ -1,5 +1,6 @@
 """Services for the MeshCore integration."""
 import ast
+import asyncio
 import inspect
 import logging
 import re
@@ -197,45 +198,49 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                         pubkey = contact.get("public_key", "Unknown")
                         _LOGGER.info("Successfully sent message to %s, pubkey: %s", display_name, pubkey)
 
-                        # Wait for ACK from the recipient to confirm delivery
-                        ack_received = False
-                        try:
-                            expected_ack = result.payload.get("expected_ack")
-                            suggested_timeout = result.payload.get("suggested_timeout", 10000)
-                            if expected_ack:
-                                ack_code = expected_ack.hex() if isinstance(expected_ack, bytes) else str(expected_ack)
-                                # Use suggested_timeout from device (ms → s) with 20% buffer
-                                ack_timeout = (suggested_timeout / 1000) * 1.2
-                                _LOGGER.debug(
-                                    "Waiting for ACK (code=%s, timeout=%.1fs) for message to %s",
-                                    ack_code[:8], ack_timeout, display_name
-                                )
-                                ack_event = await api.mesh_core.dispatcher.wait_for_event(
-                                    EventType.ACK,
-                                    attribute_filters={"code": ack_code},
-                                    timeout=ack_timeout
-                                )
-                                ack_received = ack_event is not None
-                                if ack_received:
-                                    _LOGGER.info("ACK received for message to %s", display_name)
-                                else:
-                                    _LOGGER.info("ACK timeout for message to %s", display_name)
-                        except Exception as ack_ex:
-                            _LOGGER.debug("Error waiting for ACK: %s", ack_ex)
+                        # Fire-and-forget: wait for ACK in background so the
+                        # service call returns immediately after sending.
+                        send_id = uuid.uuid4().hex[:8]
 
-                        # Create outgoing message event data
-                        outgoing_msg = {
-                            "message": message,
-                            "device": config_entry_id,
-                            "message_type": "direct",
-                            "receiver": contact.get("adv_name") or contact.get("name"),
-                            "timestamp": int(time.time()),
-                            "contact_public_key": pubkey,
-                            "ack_received": ack_received,
-                            "send_id": uuid.uuid4().hex[:8],
-                        }
-                        # Fire event for outgoing message to update message-related entities
-                        hass.bus.async_fire(f"{DOMAIN}_message_sent", outgoing_msg)
+                        async def _wait_for_ack_and_notify():
+                            """Background: wait for ACK then fire delivery event."""
+                            ack_received = False
+                            try:
+                                expected_ack = result.payload.get("expected_ack")
+                                suggested_timeout = result.payload.get("suggested_timeout", 10000)
+                                if expected_ack:
+                                    ack_code = expected_ack.hex() if isinstance(expected_ack, bytes) else str(expected_ack)
+                                    ack_timeout = (suggested_timeout / 1000) * 1.2
+                                    _LOGGER.debug(
+                                        "Waiting for ACK (code=%s, timeout=%.1fs) for message to %s",
+                                        ack_code[:8], ack_timeout, display_name
+                                    )
+                                    ack_event = await api.mesh_core.dispatcher.wait_for_event(
+                                        EventType.ACK,
+                                        attribute_filters={"code": ack_code},
+                                        timeout=ack_timeout
+                                    )
+                                    ack_received = ack_event is not None
+                                    if ack_received:
+                                        _LOGGER.info("ACK received for message to %s", display_name)
+                                    else:
+                                        _LOGGER.info("ACK timeout for message to %s", display_name)
+                            except Exception as ack_ex:
+                                _LOGGER.debug("Error waiting for ACK: %s", ack_ex)
+
+                            outgoing_msg = {
+                                "message": message,
+                                "device": config_entry_id,
+                                "message_type": "direct",
+                                "receiver": contact.get("adv_name") or contact.get("name"),
+                                "timestamp": int(time.time()),
+                                "contact_public_key": pubkey,
+                                "ack_received": ack_received,
+                                "send_id": send_id,
+                            }
+                            hass.bus.async_fire(f"{DOMAIN}_message_sent", outgoing_msg)
+
+                        asyncio.create_task(_wait_for_ack_and_notify())
                 except Exception as ex:
                     _LOGGER.error(
                         "Error sending message to %s: %s", target_identifier, ex

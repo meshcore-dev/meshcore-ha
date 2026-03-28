@@ -360,6 +360,11 @@ def create_message_correlation_key(channel_idx: int, timestamp: int) -> str:
     because the HA config name may differ from the on-device advertised name,
     making text-based matching unreliable.
 
+    Note: Because the timestamp has 1-second granularity, two messages sent on
+    the same channel within the same second will produce the same correlation
+    key. In practice this is unlikely given mesh radio TX times, but it is a
+    known limitation.
+
     Args:
         channel_idx: Channel index
         timestamp: Sender's timestamp (unix time)

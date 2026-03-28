@@ -336,7 +336,7 @@ async def handle_outgoing_message(event_data, coordinator) -> None:
                 # Reserve this key so the incoming handler doesn't pop() it.
                 # The incoming handler fires 500ms faster and would steal entries
                 # before our first collection pass at 1000ms.
-                coordinator._outgoing_correlation_keys.add(hash_key)
+                coordinator._outgoing_correlation_keys[hash_key] = True
 
                 all_rx_logs = []
 
@@ -367,7 +367,7 @@ async def handle_outgoing_message(event_data, coordinator) -> None:
                 finally:
                     # Always release the reservation so the cache key can be
                     # reused by future messages on the same channel+timestamp.
-                    coordinator._outgoing_correlation_keys.discard(hash_key)
+                    coordinator._outgoing_correlation_keys.pop(hash_key, None)
 
                 if not all_rx_logs:
                     # Log diagnostic info to help debug correlation mismatches
