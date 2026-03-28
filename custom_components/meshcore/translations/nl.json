@@ -1,0 +1,509 @@
+{
+  "config": {
+    "abort": {
+      "already_configured": "Apparaat is al geconfigureerd"
+    },
+    "error": {
+      "cannot_connect": "Verbinding mislukt",
+      "unknown": "Onverwachte fout",
+      "already_configured": "Repeater is al geconfigureerd",
+      "client_already_tracked": "Client wordt al gevolgd",
+      "login_failed": "Inloggen bij repeater mislukt. Controleer het wachtwoord en probeer het opnieuw.",
+      "login_timeout": "Time-out bij wachten op inlogreactie",
+      "contact_not_found": "Contact niet gevonden",
+      "no_repeaters_found": "Geen repeaters gevonden. Vernieuw eerst de contacten.",
+      "no_clients_found": "Geen clients gevonden. Vernieuw eerst de contacten.",
+      "device_not_found": "Apparaat niet gevonden in configuratie"
+    },
+    "title": "MeshCore",
+    "step": {
+      "user": {
+        "data": {
+          "connection_type": "Verbindingstype"
+        },
+        "description": "Selecteer hoe u verbinding wilt maken met uw MeshCore-node",
+        "title": "MeshCore Installatie"
+      },
+      "usb": {
+        "data": {
+          "usb_path": "USB-apparaat pad",
+          "baudrate": "Verbindingssnelheid"
+        },
+        "description": "Maak verbinding met uw MeshCore-node via USB",
+        "title": "Configureer USB-verbinding"
+      },
+      "ble": {
+        "data": {
+          "ble_address": "Bluetooth-apparaat"
+        },
+        "description": "Maak verbinding met uw MeshCore-node via Bluetooth",
+        "title": "Configureer Bluetooth-verbinding"
+      },
+      "tcp": {
+        "data": {
+          "tcp_host": "Hostadres",
+          "tcp_port": "Poort"
+        },
+        "description": "Maak verbinding met uw MeshCore-node via het netwerk",
+        "title": "Configureer Netwerkverbinding"
+      },
+      "init": {
+        "data": {
+          "action": "Kies een actie"
+        },
+        "description": "Configureer uw MeshCore-integratie.\n\n{device_status}",
+        "title": "MeshCore Configuratie"
+      },
+      "add_repeater": {
+        "data": {
+          "repeater_name": "Beschikbare Repeaters",
+          "repeater_password": "Repeater Wachtwoord",
+          "telemetry_enabled": "Schakel Telemetrie-polling in (pollt en ontdekt automatisch telemetriegegevens)",
+          "repeater_update_interval": "Telemetrie-verversingsinterval (seconden)"
+        },
+        "description": "Monitor een repeater voor telemetrie en status",
+        "title": "Repeater-station Toevoegen"
+      },
+      "add_client": {
+        "data": {
+          "client_name": "Beschikbare Clients",
+          "client_update_interval": "Updatefrequentie (GPS en telemetrie worden automatisch gepolled/ontdekt)"
+        },
+        "description": "Volg aanwezigheid en batterij van een client-apparaat",
+        "title": "Gevolgde Client Toevoegen"
+      },
+      "manage_devices": {
+        "data": {
+          "selected_device": "Selecteer Apparaat",
+          "device_action": "Actie"
+        },
+        "description": "Beheer uw geconfigureerde apparaten:\n\n{device_list}",
+        "title": "Beheer Gemonitorde Apparaten"
+      },
+      "edit_repeater": {
+        "data": {
+          "repeater_password": "Wachtwoord bijwerken (leeg laten om huidige te behouden)",
+          "telemetry_enabled": "Schakel Telemetrie-polling in",
+          "repeater_update_interval": "Telemetrie-verversingsinterval (seconden)"
+        },
+        "description": "Bewerk instellingen voor {device_name}",
+        "title": "Bewerk Repeater"
+      },
+      "edit_client": {
+        "data": {
+          "client_update_interval": "Updatefrequentie (GPS en telemetrie worden automatisch gepolled/ontdekt)"
+        },
+        "description": "Bewerk instellingen voor {device_name}",
+        "title": "Bewerk Gevolgde Client"
+      },
+      "global_settings": {
+        "data": {
+          "disable_contact_discovery": "Schakel Contactontdekking uit",
+          "limit_discovered_contacts": "Beperk Ontdekte Contacten",
+          "max_discovered_contacts": "Maximum aantal Ontdekte Contacten",
+          "self_telemetry_enabled": "Schakel Zelf-telemetrie in",
+          "self_telemetry_interval": "Zelf-telemetrie-interval (seconden)"
+        },
+        "description": "Configureer algemene integratie-instellingen",
+        "title": "Algemene Instellingen"
+      },
+      "mqtt_brokers": {
+        "data": {
+          "selected_broker": "Broker",
+          "broker_action": "Actie"
+        },
+        "description": "Beheer geconfigureerde MQTT-brokers:\n\n{broker_list}",
+        "title": "Beheer MQTT-brokers"
+      },
+      "mqtt_broker": {
+        "data": {
+          "enabled": "Ingeschakeld",
+          "server": "Server",
+          "port": "Poort",
+          "transport": "Transport",
+          "use_tls": "Gebruik TLS",
+          "tls_verify": "Verifieer TLS-certificaat",
+          "keepalive": "Keepalive (seconden)",
+          "username": "Gebruikersnaam (niet nodig bij Auth Token)",
+          "password": "Wachtwoord (niet nodig bij Auth Token)",
+          "use_auth_token": "Gebruik MeshCore Auth Token",
+          "token_audience": "Token Audience",
+          "owner_public_key": "Eigenaar Publieke Sleutel (JWT owner claim)",
+          "owner_email": "Eigenaar E-mail (JWT email claim)",
+          "payload_mode": "Payload-modus",
+          "token_ttl_seconds": "Auth Token TTL (seconden)",
+          "topic_status": "Status-onderwerp (Topic)",
+          "topic_events": "Pakket-onderwerp (Topic)",
+          "iata": "Broker IATA-code"
+        },
+        "description": "Configureer MQTT-broker {broker_number}",
+        "title": "MQTT-brokerinstellingen"
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "data": {
+          "action": "Kies een actie"
+        },
+        "description": "Configureer uw MeshCore-integratie.\n\n{device_status}",
+        "title": "MeshCore Configuratie"
+      },
+      "add_repeater": {
+        "data": {
+          "repeater_name": "Beschikbare Repeaters",
+          "repeater_password": "Repeater Wachtwoord",
+          "telemetry_enabled": "Schakel Telemetrie-polling in",
+          "repeater_update_interval": "Telemetrie-verversingsinterval (seconden)",
+          "disable_path_reset": "Schakel Pad-reset uit"
+        },
+        "description": "Monitor een repeater voor telemetrie en status",
+        "title": "Repeater-station Toevoegen"
+      },
+      "add_client": {
+        "data": {
+          "client_name": "Beschikbare Clients",
+          "client_update_interval": "Updatefrequentie (seconden)",
+          "disable_path_reset": "Schakel Pad-reset uit"
+        },
+        "description": "Volg aanwezigheid en batterij van een client-apparaat",
+        "title": "Gevolgde Client Toevoegen"
+      },
+      "manage_devices": {
+        "data": {
+          "selected_device": "Selecteer Apparaat",
+          "device_action": "Actie"
+        },
+        "description": "Beheer uw geconfigureerde apparaten:\n\n{device_list}",
+        "title": "Beheer Gemonitorde Apparaten"
+      },
+      "edit_repeater": {
+        "data": {
+          "repeater_password": "Wachtwoord bijwerken (leeg laten om huidige te behouden)",
+          "telemetry_enabled": "Schakel Telemetrie-polling in",
+          "repeater_update_interval": "Telemetrie-verversingsinterval (seconden)",
+          "disable_path_reset": "Schakel Pad-reset uit",
+          "disabled": "Schakel Apparaat uit"
+        },
+        "description": "Bewerk instellingen voor {device_name}",
+        "title": "Bewerk Repeater"
+      },
+      "edit_client": {
+        "data": {
+          "client_update_interval": "Updatefrequentie (seconden)",
+          "disable_path_reset": "Schakel Pad-reset uit",
+          "disabled": "Schakel Apparaat uit"
+        },
+        "description": "Bewerk instellingen voor {device_name}",
+        "title": "Bewerk Gevolgde Client"
+      },
+      "global_settings": {
+        "data": {
+          "disable_contact_discovery": "Schakel Contactontdekking uit",
+          "limit_discovered_contacts": "Beperk Ontdekte Contacten",
+          "max_discovered_contacts": "Maximum aantal Ontdekte Contacten",
+          "self_telemetry_enabled": "Schakel Zelf-telemetrie in",
+          "self_telemetry_interval": "Zelf-telemetrie-interval (seconden)"
+        },
+        "description": "Configureer algemene integratie-instellingen",
+        "title": "Algemene Instellingen"
+      },
+      "mqtt_brokers": {
+        "data": {
+          "selected_broker": "Broker",
+          "broker_action": "Actie"
+        },
+        "description": "Beheer geconfigureerde MQTT-brokers:\n\n{broker_list}",
+        "title": "Beheer MQTT-brokers"
+      },
+      "mqtt_broker": {
+        "data": {
+          "enabled": "Ingeschakeld",
+          "server": "Server",
+          "port": "Poort",
+          "transport": "Transport",
+          "use_tls": "Gebruik TLS",
+          "tls_verify": "Verifieer TLS-certificaat",
+          "keepalive": "Keepalive (seconden)",
+          "qos": "QoS",
+          "retain": "Berichten Behouden (Retain)",
+          "username": "Gebruikersnaam (niet nodig bij Auth Token)",
+          "password": "Wachtwoord (niet nodig bij Auth Token)",
+          "use_auth_token": "Gebruik MeshCore Auth Token",
+          "token_audience": "Token Audience",
+          "owner_public_key": "Eigenaar Publieke Sleutel (JWT owner claim)",
+          "owner_email": "Eigenaar E-mail (JWT email claim)",
+          "payload_mode": "Payload-modus",
+          "token_ttl_seconds": "Auth Token TTL (seconden)",
+          "topic_status": "Status-onderwerp (Topic)",
+          "topic_events": "Pakket-onderwerp (Topic)",
+          "iata": "Broker IATA-code",
+          "client_id_prefix": "Client ID Prefix"
+        },
+        "description": "Configureer MQTT-broker {broker_number}",
+        "title": "MQTT-brokerinstellingen"
+      }
+    }
+  },
+  "services": {
+    "send_message": {
+      "name": "Bericht Versturen",
+      "description": "Verstuur een bericht naar een MeshCore-node",
+      "fields": {
+        "node_id": {
+          "name": "Node ID",
+          "description": "De ID van de node waar het bericht naartoe moet"
+        },
+        "message": {
+          "name": "Bericht",
+          "description": "De berichttekst om te versturen"
+        }
+      }
+    },
+    "send_channel_message": {
+      "name": "Kanaalbericht Versturen",
+      "description": "Verstuur een tekstbericht naar een openbaar MeshCore-kanaal.",
+      "fields": {
+        "channel_idx": {
+          "name": "Kanaalindex",
+          "description": "Het indexnummer van het kanaal om naar te versturen."
+        },
+        "message": {
+          "name": "Bericht",
+          "description": "Het bericht om naar het kanaal te sturen.",
+          "example": "Hallo van Home Assistant!"
+        },
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "De config entry ID als u meerdere MeshCore-apparaten heeft. Laat leeg om het eerste beschikbare apparaat te gebruiken."
+        }
+      }
+    },
+    "send_ui_message": {
+      "name": "UI-bericht Versturen",
+      "description": "Verstuur een bericht met gebruik van de MeshCore UI-helpers. Deze service leest waarden uit 'select.meshcore_recipient_type', 'select.meshcore_channel', 'select.meshcore_contact' en 'text.meshcore_message' om de ontvanger en berichtinhoud te bepalen. Roep deze service direct aan vanuit een knopkaart voor een naadloze interface.",
+      "fields": {
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "De config entry ID als u meerdere MeshCore-apparaten heeft. Laat leeg om het eerste beschikbare apparaat te gebruiken."
+        }
+      }
+    },
+    "execute_command": {
+      "name": "MeshCore Opdracht Uitvoeren",
+      "description": "Voer een opdracht uit geleverd door de MeshCore Python-bibliotheek. Dit is een geavanceerde functie die directe toegang geeft tot de onderliggende opdrachteninterface. LET OP: Sommige opdrachten maken PERMANENTE WIJZIGINGEN aan de configuratie van uw node. Gebruik met zorg.",
+      "fields": {
+        "command": {
+          "name": "Opdracht",
+          "description": "De uit te voeren opdracht met parameters. Formaat is \"[command_name] [param1] [param2] ...\" Voorbeelden: - set_name \"MijnApparaat\" - send_msg \"f293ac\" \"Hallo van Home Assistant!\" - get_bat - set_tx_power 20 - set_coords 37.7749 -122.4194"
+        },
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "De config entry ID als u meerdere MeshCore-apparaten heeft. Laat leeg om het eerste beschikbare apparaat te gebruiken."
+        }
+      }
+    },
+    "execute_command_ui": {
+      "name": "Opdracht vanuit UI Uitvoeren",
+      "description": "Voer een opdracht uit met behulp van de text.meshcore_command helper-entiteit. Deze service leest de opdracht uit de tekst-helper en voert deze uit. Het invoerveld wordt na uitvoering automatisch gewist.",
+      "fields": {
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "De config entry ID als u meerdere MeshCore-apparaten heeft. Laat leeg om het eerste beschikbare apparaat te gebruiken."
+        }
+      }
+    },
+    "add_selected_contact": {
+      "name": "Geselecteerd Contact Toevoegen",
+      "description": "Voeg het geselecteerde contact uit de lijst met ontdekte contacten toe aan de contactenlijst van uw node.",
+      "fields": {
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "De config entry ID als u meerdere MeshCore-apparaten heeft. Laat leeg om het eerste beschikbare apparaat te gebruiken."
+        }
+      }
+    },
+    "remove_selected_contact": {
+      "name": "Geselecteerd Contact Verwijderen",
+      "description": "Verwijder het geselecteerde contact uit de lijst met toegevoegde contacten van de contactenlijst van uw node.",
+      "fields": {
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "De config entry ID als u meerdere MeshCore-apparaten heeft. Laat leeg om het eerste beschikbare apparaat te gebruiken."
+        }
+      }
+    },
+    "remove_discovered_contact": {
+      "name": "Ontdekt Contact Verwijderen",
+      "description": "Verwijder een ontdekt contact uit de lijst met ontdekte contacten. Dit verwijdert het contact uit Home Assistant, maar verwijdert het NIET uit de contactenlijst van uw node. U kunt de pubkey_prefix direct opgeven, of leeg laten om het geselecteerde contact uit de selectie-entiteit te gebruiken.",
+      "fields": {
+        "pubkey_prefix": {
+          "name": "Public Key Prefix",
+          "description": "Het prefix van de publieke sleutel (minimaal 6 tekens) van het te verwijderen contact."
+        },
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "De config entry ID als u meerdere MeshCore-apparaten heeft. Laat leeg om het eerste beschikbare apparaat te gebruiken."
+        }
+      }
+    },
+    "cleanup_unavailable_contacts": {
+      "name": "Onbeschikbare Contacten Opschonen",
+      "description": "Verwijder alle onbeschikbare MeshCore-contact-binaire sensoren uit Home Assistant.",
+      "fields": {
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "De config entry ID als u meerdere MeshCore-apparaten heeft. Laat leeg om alle apparaten op te schonen."
+        }
+      }
+    },
+    "clear_discovered_contacts": {
+      "name": "Alle Ontdekte Contacten Wissen",
+      "description": "Verwijder alle ontdekte contacten en hun bijbehorende binaire sensor-entiteiten uit Home Assistant. Dit verwijdert GEEN contacten uit de contactenlijst van uw node.",
+      "fields": {
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "De config entry ID als u meerdere MeshCore-apparaten heeft. Laat leeg om het eerste beschikbare apparaat te gebruiken."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "node_status": {
+        "name": "Node Status",
+        "state": {
+          "online": "Online",
+          "offline": "Offline"
+        }
+      },
+      "node_count": {
+        "name": "Node Aantal"
+      },
+      "last_rssi": {
+        "name": "Laatste RSSI"
+      },
+      "last_snr": {
+        "name": "Laatste SNR"
+      },
+      "battery": {
+        "name": "Batterij"
+      },
+      "uptime": {
+        "name": "Uptime"
+      },
+      "airtime": {
+        "name": "Airtime"
+      },
+      "nb_sent": {
+        "name": "Verzonden Berichten"
+      },
+      "nb_recv": {
+        "name": "Ontvangen Berichten"
+      },
+      "out_path": {
+        "name": "Routeringspad"
+      },
+      "out_path_len": {
+        "name": "Padlengte"
+      },
+      "request_successes": {
+        "name": "Verzoek Successen"
+      },
+      "request_failures": {
+        "name": "Verzoek Fouten"
+      },
+      "battery_voltage": {
+        "name": "Batterijspanning"
+      },
+      "battery_percentage": {
+        "name": "Batterijpercentage"
+      },
+      "tx_power": {
+        "name": "TX Vermogen"
+      },
+      "latitude": {
+        "name": "Breedtegraad"
+      },
+      "longitude": {
+        "name": "Lengtegraad"
+      },
+      "frequency": {
+        "name": "Frequentie"
+      },
+      "bandwidth": {
+        "name": "Bandbreedte"
+      },
+      "spreading_factor": {
+        "name": "Spreading Factor"
+      },
+      "status": {
+        "name": "Status"
+      },
+      "bat": {
+        "name": "Batterijspanning"
+      },
+      "tx_queue_len": {
+        "name": "TX Wachtrijlengte"
+      },
+      "noise_floor": {
+        "name": "Ruisvloer"
+      },
+      "sent_flood": {
+        "name": "Verzonden Flood-berichten"
+      },
+      "sent_direct": {
+        "name": "Verzonden Directe Berichten"
+      },
+      "recv_flood": {
+        "name": "Ontvangen Flood-berichten"
+      },
+      "recv_direct": {
+        "name": "Ontvangen Directe Berichten"
+      },
+      "full_evts": {
+        "name": "Volledige Gebeurtenissen"
+      },
+      "direct_dups": {
+        "name": "Directe Dubbelen"
+      },
+      "flood_dups": {
+        "name": "Flood Dubbelen"
+      },
+      "airtime_utilization": {
+        "name": "Airtime-benutting"
+      },
+      "rx_airtime": {
+        "name": "RX Airtime"
+      },
+      "rx_airtime_utilization": {
+        "name": "RX Airtime-benutting"
+      },
+      "direct_dups_rate": {
+        "name": "Directe Dubbelen Rate"
+      },
+      "flood_dups_rate": {
+        "name": "Flood Dubbelen Rate"
+      },
+      "nb_recv_rate": {
+        "name": "Ontvangen Berichten Rate"
+      },
+      "nb_sent_rate": {
+        "name": "Verzonden Berichten Rate"
+      },
+      "recv_direct_rate": {
+        "name": "Ontvangen Directe Berichten Rate"
+      },
+      "recv_flood_rate": {
+        "name": "Ontvangen Flood-berichten Rate"
+      },
+      "sent_direct_rate": {
+        "name": "Verzonden Directe Berichten Rate"
+      },
+      "sent_flood_rate": {
+        "name": "Verzonden Flood-berichten Rate"
+      }
+    }
+  }
+}
