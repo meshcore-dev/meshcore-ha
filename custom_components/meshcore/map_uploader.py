@@ -127,14 +127,6 @@ class MeshCoreMapUploader:
         self._self_info: dict[str, Any] = {}
         self._upload_lock = asyncio.Lock()
 
-    def _update_self_info(self, payload: dict) -> None:
-        """Update cached SELF_INFO for radio params."""
-        if not isinstance(payload, dict):
-            return
-        for key in ("radio_freq", "radio_bw", "radio_sf", "radio_cr"):
-            if key in payload and payload[key] is not None:
-                self._self_info[key] = payload[key]
-
     async def _ensure_private_key(self) -> bool:
         """Fetch private key from device if not yet available."""
         if self.private_key:
@@ -339,5 +331,9 @@ class MeshCoreMapUploader:
             self._seen_adverts[adv_key] = adv_timestamp
 
     def update_self_info(self, payload: dict) -> None:
-        """Update radio params from SELF_INFO event."""
-        self._update_self_info(payload)
+        """Update cached SELF_INFO radio params from device events."""
+        if not isinstance(payload, dict):
+            return
+        for key in ("radio_freq", "radio_bw", "radio_sf", "radio_cr"):
+            if key in payload and payload[key] is not None:
+                self._self_info[key] = payload[key]
