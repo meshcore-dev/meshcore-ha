@@ -8,7 +8,7 @@ import time
 import voluptuous as vol
 from typing import Any, Dict, Optional, cast
 
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
 from homeassistant.const import MAJOR_VERSION
@@ -639,21 +639,25 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                                 coordinator.async_set_updated_data(updated_data)
 
                     # Convert any binary data to hex strings for logging and events
+                    json_safe_payload = {}
                     if hasattr(result, 'payload') and isinstance(result.payload, dict):
                         # Create a JSON-serializable version of the payload
-                        json_safe_payload = {}
                         for key, value in result.payload.items():
                             if isinstance(value, bytes):
                                 json_safe_payload[key] = value.hex()
                             else:
                                 json_safe_payload[key] = value
-                        
+
                         # Log only the JSON-safe version
-                        _LOGGER.info("Command result: %s with payload: %s", 
+                        _LOGGER.info("Command result: %s with payload: %s",
                                     result.type, json_safe_payload)
                     else:
                         _LOGGER.info("Command result: %s", result)
-                    
+
+                    # Return response data for commands that support it
+                    # (e.g., export_private_key when called with return_response=True)
+                    if json_safe_payload:
+                        return json_safe_payload
                     return
                     
                 except Exception as ex:
@@ -723,6 +727,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         SERVICE_EXECUTE_COMMAND,
         async_execute_command_service,
         schema=EXECUTE_COMMAND_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
     )
     
     hass.services.async_register(

@@ -82,6 +82,7 @@ execute_command:
     Execute a command provided by the MeshCore Python library. This is an advanced feature
     that provides direct access to the underlying commands interface.
     CAUTION: Some commands will make PERMANENT CHANGES to your node's configuration. Use with care.
+  response: optional
   fields:
     command:
       name: Command
