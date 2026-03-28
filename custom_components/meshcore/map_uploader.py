@@ -9,6 +9,7 @@ import hashlib
 import json
 from typing import Any
 
+from cachetools import TTLCache
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
@@ -23,6 +24,7 @@ except ImportError:
 MAP_API_URL = "https://map.meshcore.dev/api/v1/uploader/node"
 ADVERT_TYPE_CHAT = 0
 REPLAY_COOLDOWN_SECONDS = 3600
+_SEEN_ADVERTS_MAX_SIZE = 1000
 
 
 def _extract_advert_payload_from_raw(raw_hex: str) -> bytes | None:
@@ -118,7 +120,10 @@ class MeshCoreMapUploader:
         self.enabled = bool(entry.data.get(CONF_MAP_UPLOAD_ENABLED, False))
         self.public_key = (entry.data.get(CONF_PUBKEY, "") or "").lower()
         self.private_key = ""
-        self._seen_adverts: dict[str, int] = {}
+        self._seen_adverts: TTLCache = TTLCache(
+            maxsize=_SEEN_ADVERTS_MAX_SIZE,
+            ttl=REPLAY_COOLDOWN_SECONDS,
+        )
         self._self_info: dict[str, Any] = {}
         self._upload_lock = asyncio.Lock()
 
