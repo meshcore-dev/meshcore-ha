@@ -13,7 +13,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .const import CONF_MAP_UPLOAD_ENABLED, CONF_PUBKEY
-from .logbook import EVENT_MESHCORE_MAP_UPLOAD
 
 try:
     import nacl.bindings
@@ -213,24 +212,6 @@ class MeshCoreMapUploader:
             self.logger.error("Map Auto Uploader sign failed: %s", ex)
             return None
 
-    def _fire_logbook_event(
-        self,
-        success: bool,
-        node_name: str = "",
-        pubkey_prefix: str = "",
-        error: str = "",
-    ) -> None:
-        """Fire Map Auto Uploader event for logbook."""
-        self.hass.bus.async_fire(
-            EVENT_MESHCORE_MAP_UPLOAD,
-            {
-                "success": success,
-                "node_name": node_name,
-                "pubkey_prefix": pubkey_prefix,
-                "error": error,
-            },
-        )
-
     def _norm_param(self, val: float) -> int | float:
         """Normalize param for JSON: use int when whole number (matches JS JSON.stringify)."""
         return int(val) if val == int(val) else val
@@ -274,11 +255,6 @@ class MeshCoreMapUploader:
                 resp = await self.hass.async_add_executor_job(_do_post)
             result = json.loads(resp.read().decode())
             self.logger.info("Map Auto Uploader: uploaded node, response: %s", result)
-            self._fire_logbook_event(
-                success=True,
-                node_name=node_name,
-                pubkey_prefix=pubkey_prefix,
-            )
             return True
         except urllib.error.HTTPError as ex:
             body = ""
@@ -302,21 +278,9 @@ class MeshCoreMapUploader:
                     ex.code,
                     err_msg,
                 )
-            self._fire_logbook_event(
-                success=False,
-                node_name=node_name,
-                pubkey_prefix=pubkey_prefix,
-                error=err_msg,
-            )
             return False
         except Exception as ex:
             self.logger.warning("Map Auto Uploader: upload failed: %s", ex)
-            self._fire_logbook_event(
-                success=False,
-                node_name=node_name,
-                pubkey_prefix=pubkey_prefix,
-                error=str(ex),
-            )
             return False
 
     async def async_handle_rx_log(self, event_type: str, payload: Any) -> None:
