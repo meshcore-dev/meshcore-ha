@@ -492,6 +492,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             handle_new_contact
         )
 
+        # Subscribe to MESSAGES_WAITING for instant message delivery.
+        # The companion firmware sends this push notification when messages
+        # are queued on the device.  Without this, messages sit in the device
+        # queue until the coordinator's periodic poll calls get_msg().
+        async def handle_messages_waiting(event):
+            """Immediately fetch messages when device signals they are available."""
+            _LOGGER.debug("MESSAGES_WAITING received, triggering immediate message fetch")
+            asyncio.create_task(coordinator.async_flush_messages())
+
+        coordinator.api.mesh_core.subscribe(
+            EventType.MESSAGES_WAITING,
+            handle_messages_waiting
+        )
+        _LOGGER.info("MESSAGES_WAITING auto-fetch subscriber registered")
+
     # Fetch initial data immediately
     # await coordinator._async_update_data()
     
