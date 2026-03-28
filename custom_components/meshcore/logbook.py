@@ -21,7 +21,6 @@ _LOGGER = logging.getLogger(__name__)
 
 # Single event type for all messages
 EVENT_MESHCORE_MESSAGE = "meshcore_message"
-EVENT_MESHCORE_MAP_UPLOAD = "meshcore_map_upload"
 
 
 @callback
@@ -55,30 +54,7 @@ def async_describe_events(
             "icon": icon,
         }
 
-    @callback
-    def process_map_upload_event(event: Event) -> dict[str, str]:
-        """Process MeshCore Map Auto Uploader events for logbook."""
-        data = event.data
-        success = data.get("success", False)
-        node_name = data.get("node_name", "Unknown")
-        pubkey_prefix = data.get("pubkey_prefix", "")
-        error = data.get("error", "")
-
-        if success:
-            description = f"Uploaded {node_name} ({pubkey_prefix}) to map.meshcore.dev"
-            icon = "mdi:map-marker-plus"
-        else:
-            description = f"Map Auto Uploader failed for {node_name or pubkey_prefix}: {error}"
-            icon = "mdi:map-marker-off"
-
-        return {
-            "message": description,
-            "domain": DOMAIN,
-            "icon": icon,
-        }
-
     async_describe_event(DOMAIN, EVENT_MESHCORE_MESSAGE, process_message_event)
-    async_describe_event(DOMAIN, EVENT_MESHCORE_MAP_UPLOAD, process_map_upload_event)
 
 async def handle_channel_message(event, coordinator) -> None:
     """Handle channel message event."""
