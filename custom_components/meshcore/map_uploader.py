@@ -4,14 +4,15 @@ Matches working of recrof/map.meshcore.dev-uploader.
 """
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 from typing import Any
 
+import aiohttp
 from cachetools import TTLCache
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import CONF_MAP_UPLOAD_ENABLED, CONF_PUBKEY
 
@@ -125,7 +126,6 @@ class MeshCoreMapUploader:
             ttl=REPLAY_COOLDOWN_SECONDS,
         )
         self._self_info: dict[str, Any] = {}
-        self._upload_lock = asyncio.Lock()
 
     async def _ensure_private_key(self) -> bool:
         """Fetch private key from device if not yet available."""
@@ -234,47 +234,41 @@ class MeshCoreMapUploader:
         signed = self._sign_upload_data(data)
         if not signed:
             return False
+        session = async_get_clientsession(self.hass)
+        timeout = aiohttp.ClientTimeout(total=15)
         try:
-            import urllib.request
-            import urllib.error
-
-            req = urllib.request.Request(
+            async with session.post(
                 MAP_API_URL,
-                data=json.dumps(signed).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-
-            def _do_post():
-                return urllib.request.urlopen(req, timeout=15)
-
-            async with self._upload_lock:
-                resp = await self.hass.async_add_executor_job(_do_post)
-            result = json.loads(resp.read().decode())
-            self.logger.info("Map Auto Uploader: uploaded node, response: %s", result)
-            return True
-        except urllib.error.HTTPError as ex:
-            body = ""
-            try:
-                body = ex.read().decode("utf-8", errors="replace")
-            except Exception:
-                pass
-            err_msg = body or str(ex)
-            if "ERR_PARAMS_INVALID" in err_msg or "Params" in err_msg:
-                self.logger.warning(
-                    "Map Auto Uploader: params rejected (freq=%s, bw=%s, sf=%s, cr=%s) - %s",
-                    data["params"]["freq"],
-                    data["params"]["bw"],
-                    data["params"]["sf"],
-                    data["params"]["cr"],
-                    err_msg,
-                )
-            else:
-                self.logger.warning(
-                    "Map Auto Uploader: upload failed: HTTP %s - %s",
-                    ex.code,
-                    err_msg,
-                )
+                json=signed,
+                timeout=timeout,
+            ) as resp:
+                body = await resp.text()
+                if resp.status >= 400:
+                    err_msg = body or f"HTTP {resp.status}"
+                    if "ERR_PARAMS_INVALID" in err_msg or "Params" in err_msg:
+                        self.logger.warning(
+                            "Map Auto Uploader: params rejected (freq=%s, bw=%s, sf=%s, cr=%s) - %s",
+                            data["params"]["freq"],
+                            data["params"]["bw"],
+                            data["params"]["sf"],
+                            data["params"]["cr"],
+                            err_msg,
+                        )
+                    else:
+                        self.logger.warning(
+                            "Map Auto Uploader: upload failed: HTTP %s - %s",
+                            resp.status,
+                            err_msg,
+                        )
+                    return False
+                try:
+                    result = json.loads(body) if body else {}
+                except json.JSONDecodeError:
+                    result = {}
+                self.logger.info("Map Auto Uploader: uploaded node, response: %s", result)
+                return True
+        except aiohttp.ClientError as ex:
+            self.logger.warning("Map Auto Uploader: upload failed: %s", ex)
             return False
         except Exception as ex:
             self.logger.warning("Map Auto Uploader: upload failed: %s", ex)
