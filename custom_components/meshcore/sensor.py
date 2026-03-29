@@ -380,8 +380,6 @@ async def async_setup_entry(
     # Add rate limiter monitoring sensor
     entities.append(RateLimiterSensor(coordinator))
 
-    # Last CLI command result (global entity id for single-companion setups)
-    entities.append(MeshCoreLastCommandSensor(coordinator))
     # Add companion prefix sensor (first byte of public key, used in routing paths)
     entities.append(MeshCoreCompanionPrefixSensor(coordinator))
 
@@ -553,51 +551,6 @@ class RateLimiterSensor(CoordinatorEntity, SensorEntity):
     def available(self) -> bool:
         """Return if entity is available."""
         return True
-
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
-        self.async_write_ha_state()
-
-
-class MeshCoreLastCommandSensor(CoordinatorEntity, SensorEntity):
-    """Shows the last meshcore.execute_command result for dashboards."""
-
-    _attr_has_entity_name = True
-
-    def __init__(self, coordinator: MeshCoreDataUpdateCoordinator) -> None:
-        """Initialize the last-command sensor."""
-        super().__init__(coordinator)
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_meshcore_last_command_result"
-        self.entity_id = "sensor.meshcore_last_command_result"
-        self._attr_name = "MeshCore last command result"
-        self._attr_icon = "mdi:console-line"
-        self._attr_entity_registry_visible_default = False
-
-    @property
-    def native_value(self) -> Any:
-        """Return a short status line."""
-        data = getattr(self.coordinator, "_last_command_result", None)
-        if not data:
-            return "—"
-        prefix = "OK" if data.get("ok") else "ERR"
-        summary = data.get("summary") or ""
-        return f"{prefix} · {summary}"[:255]
-
-    @property
-    def extra_state_attributes(self) -> Dict[str, Any]:
-        """Return command text and detail payload."""
-        data = getattr(self.coordinator, "_last_command_result", None) or {}
-        out: Dict[str, Any] = {}
-        if data.get("command"):
-            out["command"] = data["command"]
-        if data.get("detail"):
-            out["detail"] = data["detail"]
-        return out
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device info."""
-        return self.coordinator.device_info
 
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""

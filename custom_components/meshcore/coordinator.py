@@ -6,8 +6,7 @@ import logging
 import random
 import time
 from datetime import timedelta
-import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from cachetools import TTLCache
 
@@ -169,56 +168,6 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         # Dirty contacts tracking for performance optimization
         # Set of pubkey prefixes that have been updated and need sensor refresh
         self._dirty_contacts = set()
-
-        # Last meshcore.commands.* result (for dashboard sensor + automations)
-        self._last_command_result: Optional[Dict[str, Any]] = None
-
-    def set_command_result(self, command: str, result: Any) -> None:
-        """Store last CLI result and notify listeners (last-command sensor)."""
-        summary = ""
-        detail = ""
-        ok = True
-        if hasattr(result, "type"):
-            ok = result.type != EventType.ERROR
-            summary = getattr(result.type, "name", str(result.type))
-            if hasattr(result, "payload") and result.payload is not None:
-                if isinstance(result.payload, dict):
-                    json_safe: Dict[str, Any] = {}
-                    for key, value in result.payload.items():
-                        if isinstance(value, bytes):
-                            json_safe[key] = value.hex()
-                        else:
-                            json_safe[key] = value
-                    try:
-                        detail = json.dumps(json_safe, default=str)
-                    except TypeError:
-                        detail = str(json_safe)
-                else:
-                    detail = str(result.payload)
-        else:
-            detail = str(result)
-            summary = detail[:120] if detail else "done"
-
-        if len(detail) > 4000:
-            detail = detail[:3997] + "…"
-
-        self._last_command_result = {
-            "command": command,
-            "ok": ok,
-            "summary": summary,
-            "detail": detail,
-        }
-        self.async_update_listeners()
-
-    def set_command_error(self, command: str, message: str) -> None:
-        """Record a failed or rejected command for the last-command sensor."""
-        self._last_command_result = {
-            "command": command,
-            "ok": False,
-            "summary": "Error",
-            "detail": message[:4000],
-        }
-        self.async_update_listeners()
 
     def mark_contact_dirty(self, pubkey_prefix: str):
         """Mark a contact as needing update (for performance optimization).

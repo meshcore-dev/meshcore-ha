@@ -15,14 +15,12 @@ from homeassistant.helpers.update_coordinator import (
 
 from .const import (
     DOMAIN,
-    ENTITY_DOMAIN_BINARY_SENSOR,
-    MESSAGES_SUFFIX,
     NodeType,
     SELECT_NO_CONTACTS,
     SELECT_NO_DISCOVERED,
     SELECT_NO_ADDED,
 )
-from .utils import extract_pubkey_from_selection, format_entity_id
+from .utils import extract_pubkey_from_selection
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -69,33 +67,20 @@ class MeshCoreChannelSelect(CoordinatorEntity, SelectEntity):
         self._attr_entity_registry_visible_default = False
 
     def _get_channel_options(self) -> List[str]:
-        """Get list of configured channels with their names.
+        """Get list of channels with their names."""
+        options = []
 
-        Slots with no name / (unused) in firmware memory are omitted so the UI
-        only lists channels that are actually assigned (except index 0, which
-        defaults to Public when unnamed).
-        """
-        options: List[str] = []
-
+        # Get max channels from coordinator (default 4)
         max_channels = getattr(self.coordinator, "_max_channels", 4)
 
         for idx in range(max_channels):
+            # Get channel info from coordinator
             channel_info = self.coordinator._channel_info.get(idx, {})
-            raw_name = channel_info.get("channel_name")
-            if raw_name is None:
-                raw_name = "(unused)"
-            name = raw_name.strip() if isinstance(raw_name, str) else str(raw_name).strip()
+            channel_name = channel_info.get("channel_name", "(unused)")
 
-            if idx == 0:
-                if not name or name == "(unused)":
-                    name = "Public"
-                options.append(f"{name} ({idx})")
-                continue
-
-            if not name or name == "(unused)":
-                continue
-
-            options.append(f"{name} ({idx})")
+            # Format as "Name (idx)"
+            option = f"{channel_name} ({idx})"
+            options.append(option)
 
         return options if options else ["No channels"]
 
@@ -236,16 +221,6 @@ class MeshCoreContactSelect(CoordinatorEntity, SelectEntity):
                 if contact:
                     attributes["public_key"] = contact.get("public_key")
                     attributes["contact_name"] = contact.get("adv_name")
-
-                # Matches binary_sensor message entity id (entity_key[:6] in MeshCoreMessageEntity)
-                device_key = (self.coordinator.pubkey or "")[:6]
-                msg_key = pubkey_part[:6]
-                attributes["message_log_entity_id"] = format_entity_id(
-                    ENTITY_DOMAIN_BINARY_SENSOR,
-                    device_key,
-                    msg_key,
-                    MESSAGES_SUFFIX,
-                )
 
         return attributes
 
