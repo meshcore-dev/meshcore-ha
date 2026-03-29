@@ -1,6 +1,5 @@
 """Logbook integration for MeshCore."""
 import asyncio
-from calendar import c
 import logging
 from typing import  Callable
 from datetime import datetime
@@ -23,13 +22,14 @@ _LOGGER = logging.getLogger(__name__)
 # Single event type for all messages
 EVENT_MESHCORE_MESSAGE = "meshcore_message"
 
+
 @callback
 def async_describe_events(
     hass: HomeAssistant,
     async_describe_event: Callable[[str, str, Callable[[Event], dict[str, str]]], None],
 ) -> None:
     """Describe logbook events."""
-    
+
     @callback
     def process_message_event(event: Event) -> dict[str, str]:
         """Process MeshCore message events for logbook."""
@@ -37,7 +37,7 @@ def async_describe_events(
         message = data.get("message", "")
         channel = data.get("channel", "")
         sender = data.get("sender_name", "Unknown")
-        
+
         # Format description based on message type and direction
         if channel:
             # Channel message
@@ -47,14 +47,13 @@ def async_describe_events(
             # Direct message
             description = f"{sender}: {message}"
             icon = "mdi:message-text"
-        
+
         return {
-            # "name": sender,
             "message": description,
             "domain": DOMAIN,
             "icon": icon,
         }
-    
+
     async_describe_event(DOMAIN, EVENT_MESHCORE_MESSAGE, process_message_event)
 
 async def handle_channel_message(event, coordinator) -> None:

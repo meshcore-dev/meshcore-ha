@@ -58,11 +58,12 @@ class MeshCoreAPI:
         self._reconnect_task = None
         
     @property
-    def mesh_core(self) -> MeshCore:
-        """Get the underlying MeshCore instance for direct event subscription."""
-        if not self._mesh_core:
-            _LOGGER.error("MeshCore instance is not initialized")
-            raise RuntimeError("MeshCore instance is not initialized")
+    def mesh_core(self) -> Optional[MeshCore]:
+        """Get the underlying MeshCore instance, or None if not connected.
+
+        Returns None when disconnected so callers can safely check
+        'if api.mesh_core:' without raising. Avoids blocking HA startup.
+        """
         return self._mesh_core
         
     @property

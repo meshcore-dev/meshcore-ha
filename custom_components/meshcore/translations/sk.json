@@ -102,7 +102,11 @@
           "limit_discovered_contacts": "Obmedziť objavené kontakty",
           "max_discovered_contacts": "Maximálny počet objavených kontaktov",
           "self_telemetry_enabled": "Povoliť vlastnú telemetriu",
-          "self_telemetry_interval": "Interval vlastnej telemetrie (v sekundách)"
+          "self_telemetry_interval": "Interval vlastnej telemetrie (v sekundách)",
+          "map_upload_enabled": "Povoliť Map Auto Uploader (map.meshcore.dev)"
+        },
+        "data_description": {
+          "map_upload_enabled": "Ak je zapnuté, reklamy od repeaterov a room serverov, ktoré prijmete, sa nahrávajú na map.meshcore.dev. Tieto uzly sa zobrazia na oficiálnej mape MeshCore pre komunitu."
         },
         "description": "Konfigurácia globálnych nastavení integrácie",
         "title": "Globálne nastavenia"

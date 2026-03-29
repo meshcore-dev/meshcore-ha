@@ -41,6 +41,7 @@ from .binary_sensor import create_contact_sensor
 
 _LOGGER = logging.getLogger(__name__)
 
+
 # Schema for send_message service with either node_id or pubkey_prefix required
 SEND_MESSAGE_SCHEMA = vol.Schema(
     {
@@ -113,6 +114,9 @@ def _resolve_contact(arg: str, command_name: str, api: Any, coordinator: Any) ->
     """Look up a contact by pubkey prefix or name. Returns contact dict or None."""
     if len(arg) < 6:
         _LOGGER.error("Invalid pubkey prefix length: %s", arg)
+        return None
+    if not api or not api.mesh_core:
+        _LOGGER.error("Device not connected - cannot resolve contact")
         return None
     contact = api.mesh_core.get_contact_by_key_prefix(arg)
     if not contact:
@@ -654,19 +658,20 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     else:
                         _LOGGER.info("Command result: %s", result)
 
+                    coordinator.set_command_result(command_str, result)
                     # Return response data for commands that support it
                     # (e.g., export_private_key when called with return_response=True)
                     if json_safe_payload:
                         return json_safe_payload
                     return
-                    
+
                 except Exception as ex:
                     _LOGGER.error("Error executing command %s: %s", command_name, ex)
-                
+
                 # Only attempt with the first available API if no entry_id specified
                 if not entry_id:
                     return
-        
+
         _LOGGER.error("Failed to execute command on any device: %s", command_name)
     
     async def async_execute_command_ui_service(call: ServiceCall) -> None:

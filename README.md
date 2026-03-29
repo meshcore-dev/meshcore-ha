@@ -69,6 +69,14 @@ Auth-token mode is easy install by default:
 - Signing key is pulled from the connected node via `export_private_key()`.
 - If private key export is disabled/blocked on firmware, auth-token upload cannot start.
 
+## Map Auto Uploader (map.meshcore.dev)
+
+When enabled (off by default), the integration automatically uploads repeater and room server adverts to [map.meshcore.dev](https://map.meshcore.dev) when your Companion hears them. This integrates the [map.meshcore.dev-uploader](https://github.com/recrof/map.meshcore.dev-uploader) bot directly into the MeshCore Home Assistant integration—no separate bot needed. Enable in Global Settings if you want Map Auto Uploader.
+
+- Uses the same connection as Home Assistant (USB, BLE, or TCP)
+- Requires private key export on firmware (`ENABLE_PRIVATE_KEY_EXPORT=1`)
+- Replay protection and signature verification built-in
+
 ## Development
 
 ### Local Development Setup
