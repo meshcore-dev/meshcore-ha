@@ -130,7 +130,7 @@ class DeviceTrackerManager:
             }
             
         # Default to unknown contact
-        contacts = self.coordinator.data.get("contacts", [])
+        contacts = (self.coordinator.data or {}).get("contacts", [])
         for contact in contacts:
             contact_pubkey = contact.get("public_key", {}).get("hex", "")
             if contact_pubkey.startswith(pubkey_prefix):

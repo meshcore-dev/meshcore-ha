@@ -121,6 +121,9 @@ CONF_MESSAGES_INTERVAL: Final = "messages_interval"
 
 DEFAULT_UPDATE_TICK: Final = 5  # base polling interval
 
+# Repair issue IDs
+REPAIR_PUBKEY_CHANGED: Final = "pubkey_changed"
+
 # Other constants
 CONNECTION_TIMEOUT: Final = 10  # seconds
 

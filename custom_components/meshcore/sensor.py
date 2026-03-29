@@ -382,6 +382,8 @@ async def async_setup_entry(
 
     # Last CLI command result (global entity id for single-companion setups)
     entities.append(MeshCoreLastCommandSensor(coordinator))
+    # Add companion prefix sensor (first byte of public key, used in routing paths)
+    entities.append(MeshCoreCompanionPrefixSensor(coordinator))
 
     # Store the async_add_entities function for later use
     coordinator.sensor_add_entities = async_add_entities
@@ -751,6 +753,98 @@ class MeshCoreSensor(CoordinatorEntity, SensorEntity):
     @property
     def native_value(self) -> Any:
         return self._native_value
+
+class MeshCoreCompanionPrefixSensor(CoordinatorEntity, SensorEntity):
+    """Sensor displaying the device's companion prefix from its public key.
+
+    In MeshCore, the first N bytes of a node's public key are used as its
+    routing prefix — the short identifier shown in message paths to indicate
+    which repeaters a packet traversed.
+
+    The prefix length is determined by the device's path_hash_mode setting
+    (available in firmware v1.14.0+ / protocol v10+):
+      - mode 0: 1 byte  (2 hex chars)  — default
+      - mode 1: 2 bytes (4 hex chars)
+      - mode 2: 3 bytes (6 hex chars)
+    """
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+
+    def __init__(self, coordinator: MeshCoreDataUpdateCoordinator) -> None:
+        """Initialize the companion prefix sensor."""
+        super().__init__(coordinator)
+        self.coordinator = coordinator
+        public_key_short = coordinator.pubkey[:6] if coordinator.pubkey else ""
+
+        self._attr_unique_id = (
+            f"{coordinator.config_entry.entry_id}_companion_prefix_{public_key_short}"
+        )
+        self.entity_id = format_entity_id(
+            ENTITY_DOMAIN_SENSOR, public_key_short, "companion_prefix"
+        )
+        self._attr_name = "Companion Prefix"
+        self._attr_icon = "mdi:routes"
+        self._full_key = coordinator.pubkey or ""
+        # path_hash_mode: 0 = 1 byte, 1 = 2 bytes, 2 = 3 bytes
+        # Default to 0 (1 byte) for firmware versions that don't report it
+        self._path_hash_mode = 0
+
+        # Try to read initial path_hash_mode from cached SELF_INFO
+        if coordinator.api._last_self_info:
+            self._path_hash_mode = coordinator.api._last_self_info.get(
+                "path_hash_mode", 0
+            )
+
+        # Subscribe to SELF_INFO for live updates
+        if coordinator.api.mesh_core:
+            meshcore = coordinator.api.mesh_core
+
+            def update_from_self_info(event: Event):
+                changed = False
+                new_key = event.payload.get("public_key")
+                if new_key and new_key != self._full_key:
+                    self._full_key = new_key
+                    changed = True
+                new_mode = event.payload.get("path_hash_mode")
+                if new_mode is not None and new_mode != self._path_hash_mode:
+                    self._path_hash_mode = new_mode
+                    changed = True
+                if changed:
+                    self.async_write_ha_state()
+
+            meshcore.dispatcher.subscribe(
+                EventType.SELF_INFO, update_from_self_info
+            )
+
+    @property
+    def _prefix_byte_len(self) -> int:
+        """Return the prefix length in bytes based on path_hash_mode."""
+        return self._path_hash_mode + 1
+
+    @property
+    def device_info(self):
+        """Return device info."""
+        return DeviceInfo(**self.coordinator.device_info)
+
+    @property
+    def native_value(self) -> str:
+        """Return the companion prefix (N bytes of public key as hex chars)."""
+        hex_chars = self._prefix_byte_len * 2
+        if self._full_key and len(self._full_key) >= hex_chars:
+            return self._full_key[:hex_chars].upper()
+        return "Unknown"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return the full public key and path hash mode as attributes."""
+        mode_labels = {0: "1 byte", 1: "2 bytes", 2: "3 bytes"}
+        return {
+            "public_key": self._full_key,
+            "path_hash_mode": self._path_hash_mode,
+            "prefix_length": mode_labels.get(self._path_hash_mode, "unknown"),
+        }
+
 
 class MeshCoreReliabilitySensor(CoordinatorEntity, SensorEntity):
     """Sensor for tracking request successes/failures for nodes."""
