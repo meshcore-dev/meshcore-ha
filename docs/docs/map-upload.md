@@ -19,7 +19,7 @@ When enabled, the integration automatically uploads repeater and room server adv
 
 1. Go to **Settings** → **Devices & Services**
 2. Open your **MeshCore** integration → **Configure** → **Global Settings**
-3. Enable **Enable Map Upload (map.meshcore.dev)**
+3. Enable **Enable Map Auto Uploader (map.meshcore.dev)**
 
 Map Auto Uploader is **off by default**.
 
