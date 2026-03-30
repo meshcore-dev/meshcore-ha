@@ -1030,9 +1030,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 EventType.CONTACT_MSG_RECV, pubkey_filter, timeout=15
             )
             if msg and msg.type == EventType.CONTACT_MSG_RECV:
-                ver = msg.payload.get("text", "Unknown")
-                _LOGGER.info("Repeater firmware version: %s", ver)
-                return ver
+                ver = (msg.payload.get("text") or "").strip()
+                if ver:
+                    _LOGGER.info("Repeater firmware version: %s", ver)
+                    return ver
         except Exception as ex:
             _LOGGER.debug("Error querying repeater firmware: %s", ex)
 
