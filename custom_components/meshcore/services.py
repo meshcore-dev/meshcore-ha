@@ -510,7 +510,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                         "send_binary_req": ["contact", "int"],  # contact, BinaryReqType (int enum)
                         "send_path_discovery": ["contact"],
                         "send_trace": ["int", "int", "int", "bytes"],  # auth_code, tag, flags, path
-                        "set_flood_scope": ["int"],
+                        "set_flood_scope": ["str"],
 
                         # Binary commands
                         "req_telemetry": ["contact", "int"],  # contact, timeout
