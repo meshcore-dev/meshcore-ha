@@ -1007,21 +1007,52 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             return mapping.get(value, raw)
         return raw
         
+    async def _query_repeater_firmware(self, pubkey_prefix: str) -> str:
+        """Query a repeater's firmware version via the 'ver' command."""
+        coordinator = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id)
+        if not coordinator or not coordinator.api.mesh_core:
+            return "Unknown"
+
+        meshcore = coordinator.api.mesh_core
+        contact = meshcore.get_contact_by_key_prefix(pubkey_prefix)
+        if not contact:
+            _LOGGER.debug("Contact not found for firmware query: %s", pubkey_prefix)
+            return "Unknown"
+
+        try:
+            send_result = await meshcore.commands.send_cmd(contact, "ver")
+            if send_result.type == EventType.ERROR:
+                _LOGGER.debug("Failed to send ver command: %s", send_result.payload)
+                return "Unknown"
+
+            pubkey_filter = {"pubkey_prefix": contact.get("public_key")[:12]}
+            msg = await meshcore.wait_for_event(
+                EventType.CONTACT_MSG_RECV, pubkey_filter, timeout=15
+            )
+            if msg and msg.type == EventType.CONTACT_MSG_RECV:
+                ver = msg.payload.get("text", "Unknown")
+                _LOGGER.info("Repeater firmware version: %s", ver)
+                return ver
+        except Exception as ex:
+            _LOGGER.debug("Error querying repeater firmware: %s", ex)
+
+        return "Unknown"
+
     async def async_step_edit_repeater(self, user_input=None):
         """Handle editing a repeater."""
         prefix = self._edit_device_id[9:]  # Remove "repeater_" prefix
-        
+
         # Find the repeater to edit
         repeater = None
         for r in self.repeater_subscriptions:
             if r.get("pubkey_prefix") == prefix:
                 repeater = r
                 break
-        
+
         if not repeater:
             _LOGGER.error("Repeater not found for editing: %s", prefix)
             return await self.async_step_manage_devices()
-        
+
         _LOGGER.debug("User_input for editing repeater: %s", user_input)
         if user_input is not None:
             # Update repeater settings
@@ -1030,6 +1061,23 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             repeater[CONF_REPEATER_UPDATE_INTERVAL] = user_input[CONF_REPEATER_UPDATE_INTERVAL]
             repeater[CONF_REPEATER_DISABLE_PATH_RESET] = user_input[CONF_REPEATER_DISABLE_PATH_RESET]
             repeater[CONF_DEVICE_DISABLED] = user_input[CONF_DEVICE_DISABLED]
+
+            # Re-query firmware version from the repeater
+            ver = await self._query_repeater_firmware(prefix)
+            if ver != "Unknown":
+                repeater["firmware_version"] = ver
+
+                # Update device registry sw_version
+                from homeassistant.helpers.device_registry import async_get as async_get_device_registry
+                device_registry = async_get_device_registry(self.hass)
+                device_id = f"{self.config_entry.entry_id}_repeater_{prefix}"
+                for device in device_registry.devices.values():
+                    for identifier in device.identifiers:
+                        if identifier[0] == DOMAIN and identifier[1] == device_id:
+                            device_registry.async_update_device(
+                                device.id, sw_version=ver
+                            )
+                            break
 
             # Update config entry - deep copy entire data to ensure HA detects changes
             new_data = copy.deepcopy(dict(self.config_entry.data))
