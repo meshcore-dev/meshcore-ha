@@ -1057,7 +1057,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         _LOGGER.debug("User_input for editing repeater: %s", user_input)
         if user_input is not None:
             # Update repeater settings
-            repeater[CONF_REPEATER_PASSWORD] = user_input.get(CONF_REPEATER_PASSWORD, "")
+            new_password = user_input.get(CONF_REPEATER_PASSWORD, "")
+            if new_password:
+                repeater[CONF_REPEATER_PASSWORD] = new_password
             repeater[CONF_REPEATER_TELEMETRY_ENABLED] = user_input[CONF_REPEATER_TELEMETRY_ENABLED]
             repeater[CONF_REPEATER_UPDATE_INTERVAL] = user_input[CONF_REPEATER_UPDATE_INTERVAL]
             repeater[CONF_REPEATER_DISABLE_PATH_RESET] = user_input[CONF_REPEATER_DISABLE_PATH_RESET]
