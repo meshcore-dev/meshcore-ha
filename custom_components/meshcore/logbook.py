@@ -121,30 +121,45 @@ async def handle_channel_message(event, coordinator) -> None:
         if sender_pubkey:
             event_data["pubkey_prefix"] = sender_pubkey
 
-        # Correlate with RX_LOG data - delay 500ms to collect multiple receptions
+        # Fire-then-enhance: correlate with RX_LOG data without blocking the event.
+        # RX_LOG events arrive asynchronously as repeaters relay the message
+        # (~300-400ms per hop). Instead of sleeping to wait for them, we:
+        # 1. Immediately pop whatever is already in the cache (often the direct reception)
+        # 2. Fire the meshcore_message event right away
+        # 3. Start a background task to collect late-arriving repeater RX_LOGs
+        #    and fire progressive meshcore_delivery_update events
+        hash_key = None
         try:
             timestamp = payload.get("sender_timestamp")
 
             if channel_idx is not None and timestamp:
-                await asyncio.sleep(0.5)
                 hash_key = create_message_correlation_key(channel_idx, timestamp)
 
-                # Skip pop if this key is reserved for outgoing delivery tracking.
-                # When we send a channel message, the outgoing handler registers its
-                # key so re-broadcasts of our own message are left for it to consume.
+                # Skip if this key is reserved for outgoing delivery tracking.
                 if hash_key in coordinator._outgoing_correlation_keys:
                     _LOGGER.debug("Skipping RX_LOG pop for outgoing-reserved key %s", hash_key[:8])
+                    hash_key = None  # Prevent background task from running
                 else:
-                    rx_logs = coordinator._pending_rx_logs.pop(hash_key, None)
-
-                    if rx_logs:
-                        _LOGGER.debug(f"Correlated channel message with {len(rx_logs)} RX_LOG reception(s)")
-                        event_data["rx_log_data"] = rx_logs
+                    # Immediate pop — gets direct reception if it arrived before us
+                    immediate_batch = coordinator._pending_rx_logs.pop(hash_key, None)
+                    if immediate_batch:
+                        event_data["rx_log_data"] = list(immediate_batch)
+                        _LOGGER.debug(
+                            "Immediate RX_LOG correlation: %d entry(ies)", len(immediate_batch)
+                        )
         except Exception as ex:
-            _LOGGER.debug(f"Error correlating channel message with RX_LOG: {ex}")
+            _LOGGER.debug(f"Error in immediate RX_LOG correlation: {ex}")
 
-        # Fire event
+        # Fire event IMMEDIATELY — no blocking
         hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, event_data)
+
+        # Start background collection for late-arriving repeater RX_LOGs
+        if hash_key is not None:
+            hass.async_create_task(
+                _collect_incoming_rx_logs(
+                    hass, coordinator, hash_key, event_data
+                )
+            )
 
         _LOGGER.debug(
             "Logged channel message in %s from %s%s: %s",
@@ -155,6 +170,54 @@ async def handle_channel_message(event, coordinator) -> None:
         )
     except Exception as ex:
         _LOGGER.error("Error handling channel message: %s", ex, exc_info=True)
+
+
+# Background collection pass intervals (seconds to wait before each pop).
+# Repeater relays arrive ~300-400ms per hop; two passes catch 2-3 repeaters.
+_INCOMING_BG_PASS_INTERVALS = [0.5, 1.0]
+
+
+async def _collect_incoming_rx_logs(
+    hass, coordinator, hash_key: str, base_event_data: dict
+) -> None:
+    """Background task to collect late-arriving RX_LOG entries for incoming messages.
+
+    Fires meshcore_delivery_update events as new RX_LOG data arrives,
+    matching the progressive pattern used for outgoing channel messages.
+    """
+    try:
+        # Start with any RX_LOG data already attached to the initial event
+        all_rx_logs = list(base_event_data.get("rx_log_data", []))
+
+        for pass_idx, interval in enumerate(_INCOMING_BG_PASS_INTERVALS):
+            await asyncio.sleep(interval)
+
+            batch = coordinator._pending_rx_logs.pop(hash_key, None)
+            if not batch:
+                continue
+
+            all_rx_logs.extend(batch)
+            _LOGGER.debug(
+                "Background pass %d: collected %d new RX_LOG(s), total %d",
+                pass_idx + 1, len(batch), len(all_rx_logs)
+            )
+
+            # Fire progressive update event
+            update_data = {
+                "entity_id": base_event_data.get("entity_id"),
+                "domain": base_event_data.get("domain", DOMAIN),
+                "rx_log_data": list(all_rx_logs),
+                "repeater_count": len(all_rx_logs),
+                "progressive": True,
+                "message_type": "channel",
+                "sender_name": base_event_data.get("sender_name"),
+                "message": base_event_data.get("message"),
+                "timestamp": base_event_data.get("timestamp"),
+            }
+            hass.bus.async_fire(EVENT_MESHCORE_DELIVERY_UPDATE, update_data)
+
+    except Exception as ex:
+        _LOGGER.debug("Error in background RX_LOG collection: %s", ex)
 
 def handle_contact_message(event, coordinator) -> None:
     """Handle contact message event."""
