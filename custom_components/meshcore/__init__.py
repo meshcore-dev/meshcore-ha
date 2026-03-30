@@ -392,12 +392,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         sanitized_payload["decrypted"] = decrypted_data
 
                 # Store for correlation if decryption succeeded
-                if decrypted_data.get("decrypted") and decrypted_data.get("timestamp") and decrypted_data.get("text"):
+                if decrypted_data.get("decrypted") and decrypted_data.get("timestamp"):
                     channel_idx = decrypted_data["channel_idx"]
                     timestamp = decrypted_data["timestamp"]
-                    text = decrypted_data["text"]
+                    text = decrypted_data.get("text")
 
-                    hash_key = create_message_correlation_key(channel_idx, timestamp, text)
+                    hash_key = create_message_correlation_key(channel_idx, timestamp)
 
                     rx_log_entry = {
                         "channel_idx": channel_idx,

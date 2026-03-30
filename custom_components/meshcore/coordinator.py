@@ -163,6 +163,11 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             ttl=RX_LOG_CACHE_TTL_SECONDS
         )
 
+        # Track correlation keys reserved for outgoing message delivery.
+        # When we send a channel message, the outgoing handler registers its key here
+        # so the incoming handler knows not to pop() it from _pending_rx_logs.
+        self._outgoing_correlation_keys: TTLCache = TTLCache(maxsize=64, ttl=60)
+
         if not hasattr(self, "last_update_success_time"):
             self.last_update_success_time = self._current_time()
 

@@ -22,6 +22,8 @@ _LOGGER = logging.getLogger(__name__)
 
 # Single event type for all messages
 EVENT_MESHCORE_MESSAGE = "meshcore_message"
+# Lightweight event for progressive delivery sensor updates (not logged)
+EVENT_MESHCORE_DELIVERY_UPDATE = "meshcore_delivery_update"
 
 @callback
 def async_describe_events(
@@ -123,16 +125,22 @@ async def handle_channel_message(event, coordinator) -> None:
         # Correlate with RX_LOG data - delay 500ms to collect multiple receptions
         try:
             timestamp = payload.get("sender_timestamp")
-            original_text = payload.get("text", "")
 
-            if channel_idx is not None and timestamp and original_text:
+            if channel_idx is not None and timestamp:
                 await asyncio.sleep(0.5)
-                hash_key = create_message_correlation_key(channel_idx, timestamp, original_text)
-                rx_logs = coordinator._pending_rx_logs.pop(hash_key, None)
+                hash_key = create_message_correlation_key(channel_idx, timestamp)
 
-                if rx_logs:
-                    _LOGGER.debug(f"Correlated channel message with {len(rx_logs)} RX_LOG reception(s)")
-                    event_data["rx_log_data"] = rx_logs
+                # Skip pop if this key is reserved for outgoing delivery tracking.
+                # When we send a channel message, the outgoing handler registers its
+                # key so re-broadcasts of our own message are left for it to consume.
+                if hash_key in coordinator._outgoing_correlation_keys:
+                    _LOGGER.debug("Skipping RX_LOG pop for outgoing-reserved key %s", hash_key[:8])
+                else:
+                    rx_logs = coordinator._pending_rx_logs.pop(hash_key, None)
+
+                    if rx_logs:
+                        _LOGGER.debug(f"Correlated channel message with {len(rx_logs)} RX_LOG reception(s)")
+                        event_data["rx_log_data"] = rx_logs
         except Exception as ex:
             _LOGGER.debug(f"Error correlating channel message with RX_LOG: {ex}")
 
@@ -236,14 +244,17 @@ async def handle_outgoing_message(event_data, coordinator) -> None:
         # Direct message to a contact
         pubkey_prefix = event_data.get("contact_public_key", "")[:12]
         receiver_name = event_data.get("receiver", "Unknown")
-        
+
         # Generate entity ID matching MeshCoreMessageEntity
         entity_id = get_contact_entity_id(
             ENTITY_DOMAIN_BINARY_SENSOR,
             device_key[:6],
             pubkey_prefix[:6]
         )
-        
+
+        # Include ACK delivery status from the send service
+        ack_received = event_data.get("ack_received")
+
         # Create event data for logbook
         logbook_event = {
             "message": message_text,
@@ -253,17 +264,24 @@ async def handle_outgoing_message(event_data, coordinator) -> None:
             "entity_id": entity_id,
             "domain": DOMAIN,
             "timestamp": datetime.now().isoformat(),
-            "outgoing": True
+            "outgoing": True,
+            "message_type": "direct",
+            "send_id": event_data.get("send_id"),
         }
-        
+
+        # Add ACK status if available
+        if ack_received is not None:
+            logbook_event["ack_received"] = ack_received
+
         # Fire event
         hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, logbook_event)
-        
+
         _LOGGER.debug(
-            "Logged outgoing direct message to %s (%s): %s",
+            "Logged outgoing direct message to %s (%s): %s (ack: %s)",
             receiver_name,
             pubkey_prefix[:6] if pubkey_prefix else "",
-            message_text[:50] + ("..." if len(message_text) > 50 else "")
+            message_text[:50] + ("..." if len(message_text) > 50 else ""),
+            "yes" if ack_received else ("no" if ack_received is False else "n/a")
         )
         
     elif message_type == "channel":
@@ -272,14 +290,14 @@ async def handle_outgoing_message(event_data, coordinator) -> None:
         # Get actual channel name from stored channel info
         channel_info = await coordinator.get_channel_info(channel_idx)
         channel_name = channel_info.get("channel_name", "public" if channel_idx == 0 else f"{channel_idx}")
-        
+
         # Generate entity ID matching MeshCoreMessageEntity
         entity_id = get_channel_entity_id(
             ENTITY_DOMAIN_BINARY_SENSOR,
             device_key[:6],
             channel_idx
         )
-        
+
         # Create event data for logbook
         logbook_event = {
             "message": message_text,
@@ -289,14 +307,95 @@ async def handle_outgoing_message(event_data, coordinator) -> None:
             "entity_id": entity_id,
             "domain": DOMAIN,
             "timestamp": datetime.now().isoformat(),
-            "outgoing": True
+            "outgoing": True,
+            "message_type": "channel",
+            "send_id": event_data.get("send_id"),
         }
-        
-        # Fire event
-        hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, logbook_event)
-        
+
+        # Correlate with RX_LOG data for outgoing channel messages.
+        # When we send a channel message, repeaters re-broadcast it and our
+        # radio picks up those re-broadcasts as RX_LOG events. This lets us
+        # count how many repeaters relayed our message.
+        #
+        # We use rolling 1-second collection passes, firing a progressive
+        # event after each pass so the sensor updates in near-real-time.
+        # Using pop() on a match forces late arrivals into a new cache entry
+        # under the same key, which subsequent passes pick up.
+        NUM_COLLECTION_PASSES = 4
+        PASS_INTERVAL_SECONDS = 1.0
+
+        try:
+            send_timestamp = event_data.get("send_timestamp")
+
+            if channel_idx is not None and send_timestamp:
+                # Single correlation key using channel + timestamp only.
+                # Text is excluded because the HA config name may differ from
+                # the on-device advertised name prepended to broadcasts.
+                hash_key = create_message_correlation_key(channel_idx, send_timestamp)
+
+                # Reserve this key so the incoming handler doesn't pop() it.
+                # The incoming handler fires 500ms faster and would steal entries
+                # before our first collection pass at 1000ms.
+                coordinator._outgoing_correlation_keys[hash_key] = True
+
+                all_rx_logs = []
+
+                try:
+                    for pass_num in range(NUM_COLLECTION_PASSES):
+                        await asyncio.sleep(PASS_INTERVAL_SECONDS)
+
+                        batch = coordinator._pending_rx_logs.pop(hash_key, None)
+                        if batch:
+                            all_rx_logs.extend(batch)
+                            _LOGGER.debug(
+                                "Pass %d: collected %d new RX_LOG(s), total %d",
+                                pass_num + 1, len(batch), len(all_rx_logs)
+                            )
+
+                        is_final = (pass_num == NUM_COLLECTION_PASSES - 1)
+                        update_event = dict(logbook_event)
+                        update_event["rx_log_data"] = list(all_rx_logs)
+                        update_event["repeater_count"] = len(all_rx_logs)
+                        update_event["progressive"] = not is_final
+
+                        if is_final:
+                            # Final pass: fire the real logbook event (single entry)
+                            hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, update_event)
+                        else:
+                            # Intermediate: lightweight event only the sensor listens to
+                            hass.bus.async_fire(EVENT_MESHCORE_DELIVERY_UPDATE, update_event)
+                finally:
+                    # Always release the reservation so the cache key can be
+                    # reused by future messages on the same channel+timestamp.
+                    coordinator._outgoing_correlation_keys.pop(hash_key, None)
+
+                if not all_rx_logs:
+                    # Log diagnostic info to help debug correlation mismatches
+                    cache_keys = list(coordinator._pending_rx_logs.keys())
+                    _LOGGER.debug(
+                        "No RX_LOG correlated with outgoing channel message. "
+                        "ch=%s, ts=%s, hash=%s, pending_cache_keys=%s",
+                        channel_idx, send_timestamp,
+                        hash_key[:8], cache_keys[:5]
+                    )
+                else:
+                    _LOGGER.debug(
+                        "Correlated outgoing channel message with "
+                        "%d RX_LOG reception(s) total",
+                        len(all_rx_logs)
+                    )
+            else:
+                # No timestamp available for correlation, fire single event
+                logbook_event["repeater_count"] = 0
+                hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, logbook_event)
+        except Exception as ex:
+            _LOGGER.debug(f"Error correlating outgoing channel message with RX_LOG: {ex}")
+            # Fire event even on error so logbook still gets the entry
+            hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, logbook_event)
+
         _LOGGER.debug(
-            "Logged outgoing channel message to %s: %s",
+            "Logged outgoing channel message to %s: %s (repeaters: %s)",
             channel_name,
-            message_text[:50] + ("..." if len(message_text) > 50 else "")
+            message_text[:50] + ("..." if len(message_text) > 50 else ""),
+            logbook_event.get("repeater_count", "unknown")
         )
