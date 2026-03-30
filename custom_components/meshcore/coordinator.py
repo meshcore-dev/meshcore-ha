@@ -152,6 +152,10 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         # Track coordinator start time for auto-disable logic
         self._coordinator_start_time = time.time()
 
+        # Lock to serialize get_msg() calls between MESSAGES_WAITING
+        # auto-fetch and the coordinator's periodic poll
+        self._message_lock = asyncio.Lock()
+
         # RX_LOG correlation cache: auto-evicts after TTL expires
         # Key: correlation hash, Value: list of RX_LOG data (multiple receptions possible)
         self._pending_rx_logs = TTLCache(
@@ -677,7 +681,31 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 self._active_telemetry_tasks.pop(pubkey_prefix)
             await asyncio.sleep(1)  # Small delay to avoid tight loops
 
-                
+    async def async_flush_messages(self) -> Dict[str, Any]:
+        """Immediately flush pending messages from the device queue.
+
+        Called by the MESSAGES_WAITING event handler for instant message
+        delivery.  Uses _message_lock to prevent overlap with the
+        coordinator poll's own get_msg() loop.
+        """
+        async with self._message_lock:
+            try:
+                while True:
+                    result = await self.api.mesh_core.commands.get_msg()
+                    if result.type == EventType.NO_MORE_MSGS:
+                        break
+                    elif result.type == EventType.ERROR:
+                        _LOGGER.error(
+                            "Error flushing messages: %s", result.payload
+                        )
+                        break
+                    else:
+                        _LOGGER.debug(
+                            "Auto-fetched message: %s", result.type
+                        )
+            except Exception as ex:
+                _LOGGER.error("Error in async_flush_messages: %s", ex)
+
     async def _async_update_data(self) -> Dict[str, Any]:
         """Trigger commands that will generate events on schedule.
         
@@ -797,22 +825,23 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             else:
                 self.logger.debug(f"Skipping self telemetry (next in {self._self_telemetry_interval - (current_time - self._last_self_telemetry_update):.1f}s)")
             
-        # Check for messages
-        _LOGGER.info("Clearing message queue...")
-        try:
-            res = True
-            while res:
-                result = await self.api.mesh_core.commands.get_msg()
-                if result.type == EventType.NO_MORE_MSGS:
-                    res = False
-                    _LOGGER.debug("No more messages in queue")
-                elif result.type == EventType.ERROR:
-                    res = False
-                    _LOGGER.error(f"Error retrieving messages: {result.payload}")
-                else:
-                    _LOGGER.debug(f"Cleared message: {result}")
-        except Exception as ex:
-            _LOGGER.error(f"Error clearing message queue: {ex}")
+        # Check for messages (lock prevents overlap with MESSAGES_WAITING auto-fetch)
+        async with self._message_lock:
+            _LOGGER.info("Clearing message queue...")
+            try:
+                res = True
+                while res:
+                    result = await self.api.mesh_core.commands.get_msg()
+                    if result.type == EventType.NO_MORE_MSGS:
+                        res = False
+                        _LOGGER.debug("No more messages in queue")
+                    elif result.type == EventType.ERROR:
+                        res = False
+                        _LOGGER.error(f"Error retrieving messages: {result.payload}")
+                    else:
+                        _LOGGER.debug(f"Cleared message: {result}")
+            except Exception as ex:
+                _LOGGER.error(f"Error clearing message queue: {ex}")
         
         for repeater_config in self._tracked_repeaters:
             if not repeater_config.get('name') or not repeater_config.get('pubkey_prefix'):
