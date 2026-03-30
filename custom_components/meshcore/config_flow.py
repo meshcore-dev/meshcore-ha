@@ -50,6 +50,7 @@ from .const import (
     CONF_SELF_TELEMETRY_ENABLED,
     CONF_SELF_TELEMETRY_INTERVAL,
     DEFAULT_SELF_TELEMETRY_INTERVAL,
+    CONF_MAP_UPLOAD_ENABLED,
     CONF_MQTT_IATA,
     CONF_MQTT_TOKEN_TTL_SECONDS,
     CONF_MQTT_BROKERS,
@@ -184,7 +185,7 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
     @callback
     def async_get_options_flow(config_entry):
         """Get the options flow for this handler."""
-        return OptionsFlowHandler(config_entry)
+        return OptionsFlowHandler()
 
     async def async_step_user(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
         """Handle the initial step."""
@@ -221,6 +222,7 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                     CONF_PUBKEY: info.get("pubkey"),
                     CONF_REPEATER_SUBSCRIPTIONS: [],
                     CONF_TRACKED_CLIENTS: [],
+                    CONF_MAP_UPLOAD_ENABLED: False,
                 })
             except CannotConnect:
                 errors["base"] = "cannot_connect"
@@ -257,6 +259,7 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                     CONF_PUBKEY: info.get("pubkey"),
                     CONF_REPEATER_SUBSCRIPTIONS: [],
                     CONF_TRACKED_CLIENTS: [],
+                    CONF_MAP_UPLOAD_ENABLED: False,
                 })
             except CannotConnect:
                 errors["base"] = "cannot_connect"
@@ -313,6 +316,7 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                     CONF_PUBKEY: info.get("pubkey"),
                     CONF_REPEATER_SUBSCRIPTIONS: [],
                     CONF_TRACKED_CLIENTS: [],
+                    CONF_MAP_UPLOAD_ENABLED: False,
                 })
             except CannotConnect:
                 errors["base"] = "cannot_connect"
@@ -335,14 +339,24 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
 class OptionsFlowHandler(config_entries.OptionsFlow):
     """Handle options for MeshCore."""
 
-    def __init__(self, config_entry):
+    def __init__(self) -> None:
         """Initialize options flow."""
-        self.repeater_subscriptions = copy.deepcopy(config_entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, []))
-        self.tracked_clients = copy.deepcopy(config_entry.data.get(CONF_TRACKED_CLIENTS, []))
-        self.hass = None
+        self._options_initialized = False
+
+    def _ensure_options_loaded(self) -> None:
+        """Load repeater_subscriptions and tracked_clients from config_entry (provided by parent)."""
+        if not self._options_initialized:
+            self.repeater_subscriptions = copy.deepcopy(
+                self.config_entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, [])
+            )
+            self.tracked_clients = copy.deepcopy(
+                self.config_entry.data.get(CONF_TRACKED_CLIENTS, [])
+            )
+            self._options_initialized = True
 
     async def async_step_init(self, user_input=None):
         """Handle options flow main menu."""
+        self._ensure_options_loaded()
         if user_input is not None:
             action = user_input.get("action")
             
@@ -498,6 +512,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
         coordinator = self.hass.data[DOMAIN].get(self.config_entry.entry_id) # type: ignore
         meshcore = coordinator.api.mesh_core # type: ignore
+        if not meshcore:
+            errors["base"] = "Device not connected. Please ensure the MeshCore device is connected."
+            return self._show_add_repeater_form(repeater_dict, errors, user_input)
 
         # validate the repeater can be logged into
         contact = meshcore.get_contact_by_key_prefix(pubkey_prefix)
@@ -732,6 +749,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             new_data[CONF_MAX_DISCOVERED_CONTACTS] = user_input[CONF_MAX_DISCOVERED_CONTACTS]
             new_data[CONF_SELF_TELEMETRY_ENABLED] = user_input[CONF_SELF_TELEMETRY_ENABLED]
             new_data[CONF_SELF_TELEMETRY_INTERVAL] = user_input[CONF_SELF_TELEMETRY_INTERVAL]
+            new_data[CONF_MAP_UPLOAD_ENABLED] = user_input[CONF_MAP_UPLOAD_ENABLED]
             self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
 
             if new_data[CONF_LIMIT_DISCOVERED_CONTACTS]:
@@ -748,6 +766,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         current_max_contacts = self.config_entry.data.get(CONF_MAX_DISCOVERED_CONTACTS, DEFAULT_MAX_DISCOVERED_CONTACTS)
         current_telemetry_enabled = self.config_entry.data.get(CONF_SELF_TELEMETRY_ENABLED, False)
         current_telemetry_interval = self.config_entry.data.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL)
+        current_map_upload_enabled = self.config_entry.data.get(CONF_MAP_UPLOAD_ENABLED, False)
 
         return self.async_show_form(
             step_id="global_settings",
@@ -757,6 +776,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_MAX_DISCOVERED_CONTACTS, default=current_max_contacts): vol.All(cv.positive_int, vol.Range(min=1, max=10000)),
                 vol.Optional(CONF_SELF_TELEMETRY_ENABLED, default=current_telemetry_enabled): cv.boolean,
                 vol.Optional(CONF_SELF_TELEMETRY_INTERVAL, default=current_telemetry_interval): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
+                vol.Optional(CONF_MAP_UPLOAD_ENABLED, default=current_map_upload_enabled): cv.boolean,
             }),
         )
 

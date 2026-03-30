@@ -41,6 +41,7 @@ from .const import (
 )
 from .coordinator import MeshCoreDataUpdateCoordinator
 from .meshcore_api import MeshCoreAPI
+from .map_uploader import MeshCoreMapUploader
 from .mqtt_uploader import MeshCoreMqttUploader
 from .services import async_setup_services, async_unload_services
 from .utils import (
@@ -336,15 +337,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
     integration_version = await hass.async_add_executor_job(_read_integration_version)
-    mqtt_uploader = MeshCoreMqttUploader(
-        hass,
-        _LOGGER,
-        entry,
-        api=coordinator.api,
-        integration_version=integration_version,
-    )
-    await mqtt_uploader.async_start()
-    coordinator.mqtt_uploader = mqtt_uploader
+    try:
+        mqtt_uploader = MeshCoreMqttUploader(
+            hass,
+            _LOGGER,
+            entry,
+            api=coordinator.api,
+            integration_version=integration_version,
+        )
+        await mqtt_uploader.async_start()
+        coordinator.mqtt_uploader = mqtt_uploader
+    except Exception as ex:
+        _LOGGER.warning("MQTT uploader failed to start: %s - continuing without it", ex)
+        coordinator.mqtt_uploader = None
+
+    try:
+        map_uploader = MeshCoreMapUploader(hass, _LOGGER, entry, api=coordinator.api)
+        if coordinator.api.self_info:
+            map_uploader.update_self_info(coordinator.api.self_info)
+        coordinator.map_uploader = map_uploader
+    except Exception as ex:
+        _LOGGER.warning("Map Auto Uploader failed to initialize: %s - continuing without it", ex)
+        coordinator.map_uploader = None
     
     # Set up all platforms for this device
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -446,6 +460,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             None,
             forward_all_events
         )
+
+        if coordinator.map_uploader:
+
+            def map_self_info_handler(event):
+                if isinstance(event.payload, dict):
+                    coordinator.map_uploader.update_self_info(event.payload)
+
+            async def map_rx_log_handler(event):
+                await coordinator.map_uploader.async_handle_rx_log(
+                    str(event.type), event.payload
+                )
+
+            coordinator.api.mesh_core.subscribe(EventType.SELF_INFO, map_self_info_handler)
+            coordinator.api.mesh_core.subscribe(EventType.RX_LOG_DATA, map_rx_log_handler)
 
         # Subscribe to NEW_CONTACT events to track discovered contacts
         async def handle_new_contact(event):
