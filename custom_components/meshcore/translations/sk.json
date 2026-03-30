@@ -106,7 +106,7 @@
           "map_upload_enabled": "Povoliť Map Auto Uploader (map.meshcore.dev)"
         },
         "data_description": {
-          "map_upload_enabled": "Ak je zapnuté, reklamy od repeaterov a room serverov, ktoré prijmete, sa nahrávajú na map.meshcore.dev. Tieto uzly sa zobrazia na oficiálnej mape MeshCore pre komunitu."
+          "map_upload_enabled": "Ak je zapnuté, reklamy od repeaterov a room serverov, ktoré prijmete, sa nahrávajú na map.meshcore.dev. Tieto uzly sa zobrazia na oficiálnej mape MeshCore pre komunitu. Vyžaduje povolený export súkromného kľúča vo firmware (`ENABLE_PRIVATE_KEY_EXPORT=1`); bez toho nie je možné nahrávky podpísať."
         },
         "description": "Konfigurácia globálnych nastavení integrácie",
         "title": "Globálne nastavenia"

@@ -106,7 +106,7 @@
           "map_upload_enabled": "Enable Map Auto Uploader (map.meshcore.dev)"
         },
         "data_description": {
-          "map_upload_enabled": "When enabled, adverts from repeaters and room servers you receive are uploaded to map.meshcore.dev. Those nodes appear on the official MeshCore map for the community."
+          "map_upload_enabled": "When enabled, adverts from repeaters and room servers you receive are uploaded to map.meshcore.dev. Those nodes appear on the official MeshCore map for the community. Requires private key export enabled on the firmware (`ENABLE_PRIVATE_KEY_EXPORT=1`); without it, uploads cannot be signed."
         },
         "description": "Configure global integration settings",
         "title": "Global Settings"
@@ -212,7 +212,7 @@
           "map_upload_enabled": "Enable Map Auto Uploader (map.meshcore.dev)"
         },
         "data_description": {
-          "map_upload_enabled": "When enabled, adverts from repeaters and room servers you receive are uploaded to map.meshcore.dev. Those nodes appear on the official MeshCore map for the community."
+          "map_upload_enabled": "When enabled, adverts from repeaters and room servers you receive are uploaded to map.meshcore.dev. Those nodes appear on the official MeshCore map for the community. Requires private key export enabled on the firmware (`ENABLE_PRIVATE_KEY_EXPORT=1`); without it, uploads cannot be signed."
         },
         "description": "Configure global integration settings",
         "title": "Global Settings"
