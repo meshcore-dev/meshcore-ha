@@ -16,7 +16,6 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.helpers.storage import Store
 
 from meshcore.events import Event, EventType
-from meshcore.packets import BinaryReqType
 
 from .rate_limiter import TokenBucket
 from .const import (
@@ -486,18 +485,27 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                         contact,
                         repeater_config.get(CONF_REPEATER_PASSWORD, "")
                     )
-                    
-                    if login_result and login_result.type == EventType.LOGIN_SUCCESS:
-                        self.logger.info(f"Successfully logged in to repeater {repeater_name}")
-                        self._increment_success(pubkey_prefix)
-                        # Track login time and reset failure count on success
-                        self._repeater_login_times[pubkey_prefix] = self._current_time()
-                        self._repeater_consecutive_failures[pubkey_prefix] = 0
+
+                    # send_login returns MSG_SENT (login packet queued) or ERROR.
+                    # Wait for the actual LOGIN_SUCCESS event from the repeater.
+                    if login_result and login_result.type == EventType.MSG_SENT:
+                        login_event = await self.api.mesh_core.wait_for_event(
+                            EventType.LOGIN_SUCCESS,
+                            timeout=10.0,
+                        )
+                        if login_event:
+                            self.logger.info(f"Successfully logged in to repeater {repeater_name}")
+                            self._increment_success(pubkey_prefix)
+                            self._repeater_login_times[pubkey_prefix] = self._current_time()
+                            self._repeater_consecutive_failures[pubkey_prefix] = 0
+                        else:
+                            self.logger.error(f"Login to repeater {repeater_name} timed out waiting for LOGIN_SUCCESS")
+                            self._increment_failure(pubkey_prefix)
+                            self._repeater_login_times[pubkey_prefix] = self._current_time()
                     else:
-                        error_msg = login_result.payload if login_result and login_result.type == EventType.ERROR else "timeout or no response"
+                        error_msg = login_result.payload if login_result and login_result.type == EventType.ERROR else "send failed"
                         self.logger.error(f"Login to repeater {repeater_name} failed: {error_msg}")
                         self._increment_failure(pubkey_prefix)
-                        # Update login time to enforce cooldown even on failure
                         self._repeater_login_times[pubkey_prefix] = self._current_time()
 
                 except Exception as ex:
@@ -520,16 +528,13 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 self._apply_repeater_backoff(pubkey_prefix, new_failure_count, update_interval)
                 return
 
-            await self.api.mesh_core.commands.send_binary_req(contact, BinaryReqType.STATUS)
-            result = await self.api.mesh_core.wait_for_event(
-                EventType.STATUS_RESPONSE,
-                attribute_filters={"pubkey_prefix": pubkey_prefix},
-            )
+            result = await self.api.mesh_core.commands.req_status_sync(contact)
             _LOGGER.debug(f"Status response received: {result}")
-                
-            # Handle response
-            if not result or result.type == EventType.ERROR:
-                self.logger.warn(f"Error requesting status from repeater {repeater_name}: {result}")
+
+
+            # Handle response -- req_status_sync returns a payload dict or None
+            if not result:
+                self.logger.warning(f"Error requesting status from repeater {repeater_name}: no response (timeout or send failure)")
                 # Increment failure count and apply backoff
                 new_failure_count = failure_count + 1
                 self._repeater_consecutive_failures[pubkey_prefix] = new_failure_count
@@ -541,8 +546,8 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
 
                 update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
                 self._apply_repeater_backoff(pubkey_prefix, new_failure_count, update_interval)
-            elif result.payload.get('uptime', 0) == 0:
-                self.logger.warn(f"Malformed status response from repeater {repeater_name}: {result.payload}")
+            elif result.get('uptime', 0) == 0:
+                self.logger.warning(f"Malformed status response from repeater {repeater_name}: {result}")
                 new_failure_count = failure_count + 1
                 self._repeater_consecutive_failures[pubkey_prefix] = new_failure_count
                 self._increment_failure(pubkey_prefix)
@@ -563,7 +568,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 self._next_repeater_update_times[pubkey_prefix] = next_update_time
             
         except Exception as ex:
-            self.logger.warn(f"Exception updating repeater {repeater_name}: {ex}")
+            self.logger.warning(f"Exception updating repeater {repeater_name}: {ex}")
             # Increment failure count and apply backoff
             new_failure_count = self._repeater_consecutive_failures.get(pubkey_prefix, 0) + 1
             self._repeater_consecutive_failures[pubkey_prefix] = new_failure_count
@@ -650,13 +655,9 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 self._apply_backoff(pubkey_prefix, new_failure_count, update_interval, "telemetry")
                 return
 
-            await self.api.mesh_core.commands.send_binary_req(contact, BinaryReqType.TELEMETRY)
-            telemetry_result = await self.api.mesh_core.wait_for_event(
-                EventType.TELEMETRY_RESPONSE,
-                attribute_filters={"pubkey_prefix": pubkey_prefix},
-            )
+            telemetry_result = await self.api.mesh_core.commands.req_telemetry_sync(contact)
             
-            if telemetry_result and telemetry_result.type != EventType.ERROR:
+            if telemetry_result:
                 self.logger.debug(f"Telemetry response received from {node_name}: {telemetry_result}")
                 # Reset failure count on success
                 self._telemetry_consecutive_failures[pubkey_prefix] = 0
@@ -678,7 +679,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 self._apply_backoff(pubkey_prefix, new_failure_count, update_interval, "telemetry")
                 
         except Exception as ex:
-            self.logger.warn(f"Exception requesting telemetry from node {node_name}: {ex}")
+            self.logger.warning(f"Exception requesting telemetry from node {node_name}: {ex}")
             # Increment failure count and apply backoff
             new_failure_count = failure_count + 1
             self._telemetry_consecutive_failures[pubkey_prefix] = new_failure_count
