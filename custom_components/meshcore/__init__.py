@@ -561,6 +561,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             for remove_listener in coordinator._remove_listeners:
                 remove_listener()
                 
+        # Stop background scheduler loops
+        coordinator.stop_background_loops()
+
         # Disconnect from the device
         if getattr(coordinator, "mqtt_uploader", None):
             await coordinator.mqtt_uploader.async_stop()

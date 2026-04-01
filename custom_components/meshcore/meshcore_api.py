@@ -2,6 +2,7 @@
 import logging
 import asyncio
 import time
+from contextlib import asynccontextmanager
 from typing import Any, Optional
 from asyncio import Lock
 
@@ -53,7 +54,13 @@ class MeshCoreAPI:
         
         # Add a lock to prevent concurrent access to the device
         self._device_lock = Lock()
-        
+
+        # Connection generation counter — incremented on every successful
+        # connect/reconnect.  Commands capture the generation before waiting
+        # for the lock; if it changed while they waited, they raise instead
+        # of sending on a potentially inconsistent connection.
+        self._connection_gen: int = 0
+
         # Periodic reconnect after SDK gives up
         self._reconnect_task = None
         
@@ -80,6 +87,36 @@ class MeshCoreAPI:
     def self_info(self) -> dict[str, Any]:
         """Return latest known SELF_INFO payload."""
         return dict(self._last_self_info)
+
+    async def execute(self, coro):
+        """Execute a single device command under the device lock.
+
+        Captures the connection generation before acquiring the lock.
+        If a reconnect happened while waiting, raises ConnectionError
+        instead of sending on a potentially stale connection.
+        """
+        gen_before = self._connection_gen
+        async with self._device_lock:
+            if self._connection_gen != gen_before:
+                raise ConnectionError(
+                    "Connection changed while waiting for device lock"
+                )
+            return await coro
+
+    @asynccontextmanager
+    async def command_session(self):
+        """Hold the device lock across multiple sequential commands.
+
+        Use for multi-step sequences (login + command, config writes)
+        that must execute atomically on the device.
+        """
+        gen_before = self._connection_gen
+        async with self._device_lock:
+            if self._connection_gen != gen_before:
+                raise ConnectionError(
+                    "Connection changed while waiting for device lock"
+                )
+            yield
 
     def _cache_self_info_event(self, event: Any) -> None:
         """Cache SELF_INFO payload for consumers that need startup identity details."""
@@ -187,6 +224,7 @@ class MeshCoreAPI:
                 })
                 
             self._connected = True
+            self._connection_gen += 1
             # Cancel any existing reconnect task since we're now connected
             if self._reconnect_task and not self._reconnect_task.done():
                 self._reconnect_task.cancel()
@@ -287,12 +325,15 @@ class MeshCoreAPI:
                     try:
                         await self._mesh_core.connect() # type: ignore
                         self._connected = True
-                        
+                        self._connection_gen += 1
+
                         # Sync time after reconnection
                         try:
                             _LOGGER.info("Syncing time after reconnection...")
                             current_timestamp = int(time.time())
-                            await self._mesh_core.commands.set_time(current_timestamp) # type: ignore
+                            await self.execute(
+                                self._mesh_core.commands.set_time(current_timestamp)  # type: ignore
+                            )
                             _LOGGER.info(f"Time sync after reconnection completed: {current_timestamp}")
                         except Exception as time_ex:
                             _LOGGER.error(f"Failed to sync time after reconnection: {time_ex}")
