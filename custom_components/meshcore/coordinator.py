@@ -51,6 +51,10 @@ from .meshcore_api import MeshCoreAPI
 
 _LOGGER = logging.getLogger(__name__)
 
+# Seconds of message silence before the safety-net poll fires.
+# Normal message delivery is event-driven via MESSAGES_WAITING; this is a fallback.
+MSG_SAFETY_NET_INTERVAL: int = 60
+
 
 class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
     """Class to manage fetching data from the MeshCore node and trigger event-generating commands."""
@@ -155,6 +159,11 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         # Lock to serialize get_msg() calls between MESSAGES_WAITING
         # auto-fetch and the coordinator's periodic poll
         self._message_lock = asyncio.Lock()
+
+        # Conditional message polling: track last message activity so the
+        # safety-net poll only fires after MSG_SAFETY_NET_INTERVAL of silence.
+        self._last_msg_activity: float = 0.0
+        self._initial_drain_done: bool = False
 
         # RX_LOG correlation cache: auto-evicts after TTL expires
         # Key: correlation hash, Value: list of RX_LOG data (multiple receptions possible)
@@ -708,6 +717,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                         _LOGGER.debug(
                             "Auto-fetched message: %s", result.type
                         )
+                        self._last_msg_activity = time.time()
             except Exception as ex:
                 _LOGGER.error("Error in async_flush_messages: %s", ex)
 
@@ -830,24 +840,41 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             else:
                 self.logger.debug(f"Skipping self telemetry (next in {self._self_telemetry_interval - (current_time - self._last_self_telemetry_update):.1f}s)")
             
-        # Check for messages (lock prevents overlap with MESSAGES_WAITING auto-fetch)
-        async with self._message_lock:
-            _LOGGER.info("Clearing message queue...")
-            try:
-                res = True
-                while res:
-                    result = await self.api.mesh_core.commands.get_msg()
-                    if result.type == EventType.NO_MORE_MSGS:
-                        res = False
-                        _LOGGER.debug("No more messages in queue")
-                    elif result.type == EventType.ERROR:
-                        res = False
-                        _LOGGER.error(f"Error retrieving messages: {result.payload}")
-                    else:
-                        _LOGGER.debug(f"Cleared message: {result}")
-            except Exception as ex:
-                _LOGGER.error(f"Error clearing message queue: {ex}")
-        
+        # --- Message handling ---
+        # On first cycle: drain any messages queued while disconnected.
+        # After that: only poll if no message activity in MSG_SAFETY_NET_INTERVAL.
+        # Normal message delivery is event-driven via MESSAGES_WAITING -> async_flush_messages().
+        current_time_mono = time.time()
+        should_poll = (
+            not self._initial_drain_done
+            or (current_time_mono - self._last_msg_activity) >= MSG_SAFETY_NET_INTERVAL
+        )
+
+        if should_poll:
+            async with self._message_lock:
+                try:
+                    while True:
+                        result = await self.api.mesh_core.commands.get_msg()
+                        if result.type == EventType.NO_MORE_MSGS:
+                            _LOGGER.debug("No messages in device queue")
+                            break
+                        elif result.type == EventType.ERROR:
+                            _LOGGER.error("Error retrieving messages: %s", result.payload)
+                            break
+                        else:
+                            _LOGGER.debug("Drained queued message: %s", result.type)
+                            self._last_msg_activity = current_time_mono
+                except Exception as ex:
+                    _LOGGER.error("Error draining message queue: %s", ex)
+
+                if not self._initial_drain_done:
+                    self._initial_drain_done = True
+                    _LOGGER.info("Initial message drain complete")
+
+            # Update activity timestamp even if queue was empty,
+            # so we don't re-poll until another MSG_SAFETY_NET_INTERVAL elapses.
+            self._last_msg_activity = current_time_mono
+
         for repeater_config in self._tracked_repeaters:
             if not repeater_config.get('name') or not repeater_config.get('pubkey_prefix'):
                 _LOGGER.warning(f"Repeater config missing name or pubkey_prefix: {repeater_config}")
