@@ -51,6 +51,7 @@ from .const import (
     CONF_SELF_TELEMETRY_INTERVAL,
     DEFAULT_SELF_TELEMETRY_INTERVAL,
     CONF_MAP_UPLOAD_ENABLED,
+    CONF_ADAPTIVE_POLL_WAIT,
     CONF_MQTT_IATA,
     CONF_MQTT_TOKEN_TTL_SECONDS,
     CONF_MQTT_BROKERS,
@@ -880,6 +881,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             new_data[CONF_SELF_TELEMETRY_ENABLED] = user_input[CONF_SELF_TELEMETRY_ENABLED]
             new_data[CONF_SELF_TELEMETRY_INTERVAL] = user_input[CONF_SELF_TELEMETRY_INTERVAL]
             new_data[CONF_MAP_UPLOAD_ENABLED] = user_input[CONF_MAP_UPLOAD_ENABLED]
+            new_data[CONF_ADAPTIVE_POLL_WAIT] = user_input[CONF_ADAPTIVE_POLL_WAIT]
             self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
 
             if new_data[CONF_LIMIT_DISCOVERED_CONTACTS]:
@@ -897,6 +899,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         current_telemetry_enabled = self.config_entry.data.get(CONF_SELF_TELEMETRY_ENABLED, False)
         current_telemetry_interval = self.config_entry.data.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL)
         current_map_upload_enabled = self.config_entry.data.get(CONF_MAP_UPLOAD_ENABLED, False)
+        current_adaptive_poll_wait = self.config_entry.data.get(CONF_ADAPTIVE_POLL_WAIT, False)
 
         return self.async_show_form(
             step_id="global_settings",
@@ -907,6 +910,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_SELF_TELEMETRY_ENABLED, default=current_telemetry_enabled): cv.boolean,
                 vol.Optional(CONF_SELF_TELEMETRY_INTERVAL, default=current_telemetry_interval): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
                 vol.Optional(CONF_MAP_UPLOAD_ENABLED, default=current_map_upload_enabled): cv.boolean,
+                vol.Optional(CONF_ADAPTIVE_POLL_WAIT, default=current_adaptive_poll_wait): cv.boolean,
             }),
         )
 

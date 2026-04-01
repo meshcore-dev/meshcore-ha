@@ -10,6 +10,7 @@ from .const import (
     DOMAIN,
     ENTITY_DOMAIN_BINARY_SENSOR,
     DEFAULT_DEVICE_NAME,
+    CONF_ADAPTIVE_POLL_WAIT,
 )
 from .utils import (
     create_message_correlation_key,
@@ -121,13 +122,21 @@ async def handle_channel_message(event, coordinator) -> None:
         if sender_pubkey:
             event_data["pubkey_prefix"] = sender_pubkey
 
-        # Fire-then-enhance: correlate with RX_LOG data without blocking the event.
-        # RX_LOG events arrive asynchronously as repeaters relay the message
-        # (~300-400ms per hop). Instead of sleeping to wait for them, we:
-        # 1. Immediately pop whatever is already in the cache (often the direct reception)
-        # 2. Fire the meshcore_message event right away
-        # 3. Start a background task to collect late-arriving repeater RX_LOGs
-        #    and fire progressive meshcore_delivery_update events
+        # RX_LOG correlation: match incoming channel messages with radio
+        # reception data (SNR, RSSI, hop count, path) from RX_LOG events.
+        #
+        # Two modes controlled by the adaptive_poll_wait config option:
+        #
+        # Default (disabled): Wait a fixed 500ms for RX_LOG data to
+        #   accumulate, then attach whatever arrived to the event and fire.
+        #   This is the original behavior and ensures maximum RX_LOG data
+        #   is present on the initial meshcore_message event.
+        #
+        # Adaptive (enabled): Poll every 50ms up to 500ms and fire as
+        #   soon as data arrives. A background task then collects
+        #   late-arriving repeater RX_LOGs and delivers them via
+        #   progressive meshcore_delivery_update events.
+        adaptive = coordinator.config_entry.data.get(CONF_ADAPTIVE_POLL_WAIT, False)
         hash_key = None
         try:
             timestamp = payload.get("sender_timestamp")
@@ -138,23 +147,39 @@ async def handle_channel_message(event, coordinator) -> None:
                 # Skip if this key is reserved for outgoing delivery tracking.
                 if hash_key in coordinator._outgoing_correlation_keys:
                     _LOGGER.debug("Skipping RX_LOG pop for outgoing-reserved key %s", hash_key[:8])
-                    hash_key = None  # Prevent background task from running
+                    hash_key = None
+                elif adaptive:
+                    # Adaptive poll-wait: check every 50ms, fire as soon as
+                    # data arrives, with a 500ms ceiling matching the old behavior.
+                    for _ in range(_INCOMING_MAX_POLLS):
+                        await asyncio.sleep(_INCOMING_POLL_INTERVAL)
+                        batch = coordinator._pending_rx_logs.pop(hash_key, None)
+                        if batch:
+                            event_data["rx_log_data"] = list(batch)
+                            _LOGGER.debug(
+                                "Adaptive RX_LOG correlation: %d entry(ies) after poll",
+                                len(batch),
+                            )
+                            break
                 else:
-                    # Immediate pop — gets direct reception if it arrived before us
-                    immediate_batch = coordinator._pending_rx_logs.pop(hash_key, None)
-                    if immediate_batch:
-                        event_data["rx_log_data"] = list(immediate_batch)
+                    # Fixed wait: sleep 500ms then pop whatever accumulated.
+                    await asyncio.sleep(_INCOMING_FIXED_WAIT)
+                    rx_logs = coordinator._pending_rx_logs.pop(hash_key, None)
+                    if rx_logs:
+                        event_data["rx_log_data"] = list(rx_logs)
                         _LOGGER.debug(
-                            "Immediate RX_LOG correlation: %d entry(ies)", len(immediate_batch)
+                            "Fixed-wait RX_LOG correlation: %d entry(ies)",
+                            len(rx_logs),
                         )
         except Exception as ex:
-            _LOGGER.debug(f"Error in immediate RX_LOG correlation: {ex}")
+            _LOGGER.debug("Error in RX_LOG correlation: %s", ex)
 
-        # Fire event IMMEDIATELY — no blocking
+        # Fire the meshcore_message event
         hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, event_data)
 
-        # Start background collection for late-arriving repeater RX_LOGs
-        if hash_key is not None:
+        # In adaptive mode, start background collection for late-arriving
+        # repeater RX_LOGs (progressive delivery updates).
+        if adaptive and hash_key is not None:
             hass.async_create_task(
                 _collect_incoming_rx_logs(
                     hass, coordinator, hash_key, event_data
@@ -171,6 +196,13 @@ async def handle_channel_message(event, coordinator) -> None:
     except Exception as ex:
         _LOGGER.error("Error handling channel message: %s", ex, exc_info=True)
 
+
+# Fixed-wait duration (seconds) — original behavior.
+_INCOMING_FIXED_WAIT = 0.5
+
+# Adaptive poll-wait settings.
+_INCOMING_POLL_INTERVAL = 0.05   # 50ms per poll
+_INCOMING_MAX_POLLS = 10         # 10 polls × 50ms = 500ms ceiling
 
 # Background collection pass intervals (seconds to wait before each pop).
 # Repeater relays arrive ~300-400ms per hop; two passes catch 2-3 repeaters.
