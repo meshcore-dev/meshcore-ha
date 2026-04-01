@@ -47,6 +47,36 @@
         "description": "Connect to your MeshCore node over the network",
         "title": "Configure Network Connection"
       },
+      "reconfigure": {
+        "data": {
+          "connection_type": "Connection Type"
+        },
+        "description": "Change the connection type or parameters for your MeshCore node. Current connection: {current_connection}. All existing settings (repeaters, clients, MQTT) will be preserved.",
+        "title": "Reconfigure Connection"
+      },
+      "reconfigure_usb": {
+        "data": {
+          "usb_path": "USB Device Path",
+          "baudrate": "Connection Speed"
+        },
+        "description": "Update USB connection settings",
+        "title": "Reconfigure USB Connection"
+      },
+      "reconfigure_ble": {
+        "data": {
+          "ble_address": "Bluetooth Device"
+        },
+        "description": "Update Bluetooth connection settings",
+        "title": "Reconfigure Bluetooth Connection"
+      },
+      "reconfigure_tcp": {
+        "data": {
+          "tcp_host": "Host Address",
+          "tcp_port": "Port"
+        },
+        "description": "Update network connection settings",
+        "title": "Reconfigure Network Connection"
+      },
       "init": {
         "data": {
           "action": "Choose an action"
