@@ -187,6 +187,136 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
         """Get the options flow for this handler."""
         return OptionsFlowHandler()
 
+    async def async_step_reconfigure(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
+        """Handle reconfiguration of the connection type/params."""
+        if user_input is not None:
+            self.connection_type = user_input[CONF_CONNECTION_TYPE]
+
+            if self.connection_type == CONNECTION_TYPE_USB:
+                return await self.async_step_reconfigure_usb()
+            if self.connection_type == CONNECTION_TYPE_BLE:
+                return await self.async_step_reconfigure_ble()
+            if self.connection_type == CONNECTION_TYPE_TCP:
+                return await self.async_step_reconfigure_tcp()
+
+        current_type = self._get_reconfigure_entry().data.get(CONF_CONNECTION_TYPE, "unknown")
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=STEP_USER_DATA_SCHEMA,
+            description_placeholders={"current_connection": current_type},
+        )
+
+    async def _reconfigure_save(self, connection_data: Dict[str, Any], info: Dict[str, Any]) -> FlowResult:
+        """Merge new connection params into existing config entry, preserving all other settings."""
+        entry = self._get_reconfigure_entry()
+        new_data = dict(entry.data)
+        # Remove old connection-specific keys
+        for key in (CONF_USB_PATH, CONF_BAUDRATE, CONF_BLE_ADDRESS, CONF_TCP_HOST, CONF_TCP_PORT):
+            new_data.pop(key, None)
+        new_data.update(connection_data)
+        new_data[CONF_NAME] = info.get("name", new_data.get(CONF_NAME))
+        # Don't update CONF_PUBKEY here — if the device changed, __init__.py
+        # will detect the mismatch on reload and run entity migration.
+        return self.async_update_reload_and_abort(entry, data=new_data, title=info["title"])
+
+    async def async_step_reconfigure_usb(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
+        """Handle USB reconfiguration."""
+        errors: Dict[str, str] = {}
+        entry = self._get_reconfigure_entry()
+
+        if user_input is not None:
+            try:
+                info = await validate_usb_input(self.hass, user_input)
+                return await self._reconfigure_save({
+                    CONF_CONNECTION_TYPE: CONNECTION_TYPE_USB,
+                    CONF_USB_PATH: user_input[CONF_USB_PATH],
+                    CONF_BAUDRATE: user_input[CONF_BAUDRATE],
+                }, info)
+            except CannotConnect:
+                errors["base"] = "cannot_connect"
+            except Exception:
+                _LOGGER.exception("Unexpected exception during USB reconfigure")
+                errors["base"] = "unknown"
+
+        current_path = entry.data.get(CONF_USB_PATH, "")
+        current_baud = entry.data.get(CONF_BAUDRATE, DEFAULT_BAUDRATE)
+        return self.async_show_form(
+            step_id="reconfigure_usb",
+            data_schema=vol.Schema({
+                vol.Required(CONF_USB_PATH, default=current_path): str,
+                vol.Optional(CONF_BAUDRATE, default=current_baud): cv.positive_int,
+            }),
+            errors=errors,
+        )
+
+    async def async_step_reconfigure_ble(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
+        """Handle BLE reconfiguration."""
+        errors: Dict[str, str] = {}
+        entry = self._get_reconfigure_entry()
+
+        if user_input is not None:
+            try:
+                info = await validate_ble_input(self.hass, user_input)
+                return await self._reconfigure_save({
+                    CONF_CONNECTION_TYPE: CONNECTION_TYPE_BLE,
+                    CONF_BLE_ADDRESS: user_input[CONF_BLE_ADDRESS],
+                }, info)
+            except CannotConnect:
+                errors["base"] = "cannot_connect"
+            except Exception:
+                _LOGGER.exception("Unexpected exception during BLE reconfigure")
+                errors["base"] = "unknown"
+
+        current_addr = entry.data.get(CONF_BLE_ADDRESS, "")
+        devices = {}
+        try:
+            scanner = BleakScanner()
+            discovered_devices = await scanner.discover(timeout=5.0)
+            for device in discovered_devices:
+                if device.name and "MeshCore" in device.name:
+                    devices[device.address] = f"{device.name} ({device.address})"
+        except Exception as ex:
+            _LOGGER.warning("Failed to scan for BLE devices: %s", ex)
+
+        if devices:
+            schema = vol.Schema({vol.Required(CONF_BLE_ADDRESS): vol.In(devices)})
+        else:
+            schema = vol.Schema({vol.Required(CONF_BLE_ADDRESS, default=current_addr): str})
+
+        return self.async_show_form(
+            step_id="reconfigure_ble", data_schema=schema, errors=errors,
+        )
+
+    async def async_step_reconfigure_tcp(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
+        """Handle TCP reconfiguration."""
+        errors: Dict[str, str] = {}
+        entry = self._get_reconfigure_entry()
+
+        if user_input is not None:
+            try:
+                info = await validate_tcp_input(self.hass, user_input)
+                return await self._reconfigure_save({
+                    CONF_CONNECTION_TYPE: CONNECTION_TYPE_TCP,
+                    CONF_TCP_HOST: user_input[CONF_TCP_HOST],
+                    CONF_TCP_PORT: user_input[CONF_TCP_PORT],
+                }, info)
+            except CannotConnect:
+                errors["base"] = "cannot_connect"
+            except Exception:
+                _LOGGER.exception("Unexpected exception during TCP reconfigure")
+                errors["base"] = "unknown"
+
+        current_host = entry.data.get(CONF_TCP_HOST, "")
+        current_port = entry.data.get(CONF_TCP_PORT, DEFAULT_TCP_PORT)
+        return self.async_show_form(
+            step_id="reconfigure_tcp",
+            data_schema=vol.Schema({
+                vol.Required(CONF_TCP_HOST, default=current_host): str,
+                vol.Optional(CONF_TCP_PORT, default=current_port): cv.port,
+            }),
+            errors=errors,
+        )
+
     async def async_step_user(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
         """Handle the initial step."""
         errors: Dict[str, str] = {}
