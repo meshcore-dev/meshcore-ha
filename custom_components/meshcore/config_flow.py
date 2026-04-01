@@ -189,8 +189,6 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
 
     async def async_step_reconfigure(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
         """Handle reconfiguration of the connection type/params."""
-        errors: Dict[str, str] = {}
-
         if user_input is not None:
             self.connection_type = user_input[CONF_CONNECTION_TYPE]
 
@@ -205,7 +203,6 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
         return self.async_show_form(
             step_id="reconfigure",
             data_schema=STEP_USER_DATA_SCHEMA,
-            errors=errors,
             description_placeholders={"current_connection": current_type},
         )
 
@@ -216,10 +213,10 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
         # Remove old connection-specific keys
         for key in (CONF_USB_PATH, CONF_BAUDRATE, CONF_BLE_ADDRESS, CONF_TCP_HOST, CONF_TCP_PORT):
             new_data.pop(key, None)
-        # Merge new connection params + updated identity
         new_data.update(connection_data)
         new_data[CONF_NAME] = info.get("name", new_data.get(CONF_NAME))
-        new_data[CONF_PUBKEY] = info.get("pubkey", new_data.get(CONF_PUBKEY))
+        # Don't update CONF_PUBKEY here — if the device changed, __init__.py
+        # will detect the mismatch on reload and run entity migration.
         return self.async_update_reload_and_abort(entry, data=new_data, title=info["title"])
 
     async def async_step_reconfigure_usb(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
