@@ -139,6 +139,31 @@ LPP_TYPE_MAPPINGS: dict[int | str, dict] = {
     },
 }
 
+# The meshcore SDK's lpp_json_encoder converts integer LPP type codes to string
+# names (e.g. 103 -> "temperature") during JSON serialization. Add string aliases
+# so the lookup works regardless of whether the type arrives as int or str.
+# String names sourced from meshcore.lpp_json_encoder.my_lpp_types.
+_LPP_STRING_TO_INT: dict[str, int] = {
+    "digital input": 0,
+    "digital output": 1,
+    "analog input": 2,
+    "analog output": 3,
+    "generic sensor": 100,
+    "illuminance": 101,
+    "presence": 102,
+    "temperature": 103,
+    "humidity": 104,
+    "accelerometer": 113,
+    "voltage": 116,
+    "current": 117,
+    "power": 128,
+    "colour": 135,
+}
+
+for _str_name, _int_key in _LPP_STRING_TO_INT.items():
+    if _int_key in LPP_TYPE_MAPPINGS:
+        LPP_TYPE_MAPPINGS[_str_name] = LPP_TYPE_MAPPINGS[_int_key]
+
 
 class TelemetrySensorManager:
     """Manages dynamic creation and updates of telemetry sensors."""
@@ -294,7 +319,7 @@ class TelemetrySensorManager:
         self,
         pubkey_prefix: str,
         channel: int,
-        lpp_type: int,
+        lpp_type: int | str,
         value: Any,
         node_info: Dict[str, Any],
     ) -> list[MeshCoreTelemetrySensor]:
@@ -448,7 +473,7 @@ class MeshCoreTelemetrySensor(CoordinatorEntity, SensorEntity):
         description: SensorEntityDescription,
         pubkey_prefix: str,
         channel: int,
-        lpp_type: int,
+        lpp_type: int | str,
         node_info: Dict[str, Any],
         field: str = None,  # type: ignore
     ) -> None:
