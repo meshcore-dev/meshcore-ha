@@ -26,6 +26,7 @@ from homeassistant.helpers import issue_registry as ir
 from .const import (
     DOMAIN,
     CONF_CONNECTION_TYPE,
+    CONF_NAME,
     CONF_USB_PATH,
     CONF_BLE_ADDRESS,
     CONF_TCP_HOST,
@@ -38,6 +39,7 @@ from .const import (
     DEFAULT_MAX_DISCOVERED_CONTACTS,
     CONF_MESSAGES_INTERVAL,
     DEFAULT_UPDATE_TICK,
+    REPAIR_PUBKEY_CHANGED,
 )
 from .coordinator import MeshCoreDataUpdateCoordinator
 from .meshcore_api import MeshCoreAPI
@@ -161,6 +163,90 @@ def _migrate_entity_ids(
     )
 
 
+def _migrate_unique_ids_remove_name(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+) -> None:
+    """One-time migration: remove device name from unique_ids.
+
+    Entity unique_ids previously included the device name, which made them
+    unstable across name changes. This migration strips the name suffix
+    so unique_ids use only stable identifiers (entry_id, key, pubkey).
+    """
+    entity_registry = er.async_get(hass)
+    migrated = 0
+
+    # Get the current companion name from config entry
+    companion_name = entry.data.get(CONF_NAME, "")
+
+    # Build list of all names that might appear in unique_ids
+    # (companion + all tracked repeaters + all tracked clients).
+    # Sorted longest-first so that if one name is a suffix of another
+    # (e.g., "mytest" vs "test"), the longer name matches first via
+    # endswith(), preventing partial stripping.
+    names_raw: set[str] = set()
+    if companion_name:
+        names_raw.add(companion_name)
+    for sub in entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, []):
+        name = sub.get("name", "")
+        if name:
+            names_raw.add(name)
+    for sub in entry.data.get(CONF_TRACKED_CLIENTS, []):
+        name = sub.get("name", "")
+        if name:
+            names_raw.add(name)
+
+    names_to_strip = sorted(names_raw, key=len, reverse=True)
+
+    if not names_to_strip:
+        return
+
+    for entity in list(entity_registry.entities.values()):
+        if entity.config_entry_id != entry.entry_id:
+            continue
+
+        new_unique_id = entity.unique_id
+        for name in names_to_strip:
+            # unique_ids have the name appended with underscore separator
+            suffix = f"_{name}"
+            if new_unique_id.endswith(suffix):
+                new_unique_id = new_unique_id[: -len(suffix)]
+                break
+
+        if new_unique_id == entity.unique_id:
+            continue
+
+        # Verify the new unique_id doesn't already exist
+        existing = entity_registry.async_get_entity_id(
+            entity.domain, DOMAIN, new_unique_id
+        )
+        if existing and existing != entity.entity_id:
+            _LOGGER.warning(
+                "Cannot migrate unique_id for %s: target %s already exists (%s)",
+                entity.entity_id, new_unique_id, existing,
+            )
+            continue
+
+        try:
+            entity_registry.async_update_entity(
+                entity.entity_id,
+                new_unique_id=new_unique_id,
+            )
+            _LOGGER.info(
+                "Stabilized unique_id: %s -> %s",
+                entity.unique_id, new_unique_id,
+            )
+            migrated += 1
+        except Exception as ex:
+            _LOGGER.error(
+                "Failed to stabilize unique_id for %s: %s",
+                entity.entity_id, ex,
+            )
+
+    if migrated:
+        _LOGGER.info("Stabilized %d entity unique_ids (removed name)", migrated)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up MeshCore from a config entry."""
     # Home Assistant can trigger a duplicate setup during rapid reload/update cycles.
@@ -254,7 +340,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             is_fixable=False,
             is_persistent=True,
             severity=ir.IssueSeverity.WARNING,
-            translation_key="pubkey_changed",
+            translation_key=REPAIR_PUBKEY_CHANGED,
             translation_placeholders={
                 "old_key": stored_pubkey[:12],
                 "new_key": live_pubkey[:12],
@@ -266,6 +352,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         new_data[CONF_PUBKEY] = live_pubkey
         hass.config_entries.async_update_entry(entry, data=new_data)
         _LOGGER.info("Stored initial public key: %s...", live_pubkey[:12])
+
+    # One-time migration: remove device name from unique_ids
+    _migrate_unique_ids_remove_name(hass, entry)
 
     # TODO: remove this with contact refresh interval migration?
     # Get the messages interval for base update frequency
