@@ -6,7 +6,7 @@ import logging
 import random
 import time
 from datetime import timedelta
-from typing import Any, Dict
+from typing import Any, Callable, Coroutine, Dict
 
 from cachetools import TTLCache
 
@@ -81,6 +81,10 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self._contacts = {}  # Dict keyed by 12-char public_key prefix
         self._discovered_contacts = {}  # Dict keyed by public_key
         self._manual_mode_initialized = False
+
+        # Callback for tracked node name changes — set by __init__.py
+        # Signature: async (old_name: str, new_name: str, pubkey_prefix: str) -> None
+        self.on_tracked_node_name_change: Callable[[str, str, str], Coroutine[Any, Any, None]] | None = None
 
         # Storage for discovered contacts
         self._store = Store[dict[str, dict]](hass, 1, f"meshcore.{config_entry.entry_id}.discovered_contacts")
@@ -213,6 +217,65 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         if pubkey_prefix:
             normalized = pubkey_prefix[:12]
             self._dirty_contacts.discard(normalized)
+
+    async def _async_check_tracked_node_name_changes(self) -> None:
+        """Check if any tracked repeater/client has a new advertised name.
+
+        Compares current advertised names from discovered/synced contacts
+        against stored subscription names. When a mismatch is found, updates
+        the subscription in-memory and fires the on_tracked_node_name_change
+        callback so __init__.py can handle entity migration and config
+        persistence.
+        """
+        changes: list[tuple[str, str, str]] = []  # (old_name, new_name, pubkey_prefix)
+
+        for sub_list in (self._tracked_repeaters, self._tracked_clients):
+            for sub in sub_list:
+                pubkey_prefix = sub.get("pubkey_prefix", "")
+                stored_name = sub.get("name", "")
+                if not pubkey_prefix or not stored_name:
+                    continue
+
+                # Check discovered contacts and synced contacts for current name
+                current_name = None
+                for contacts_dict in (self._discovered_contacts, self._contacts):
+                    for key, contact in contacts_dict.items():
+                        contact_pubkey = contact.get("public_key", "")
+                        if (
+                            contact_pubkey
+                            and len(contact_pubkey) >= 12
+                            and len(pubkey_prefix) >= 12
+                            and contact_pubkey[:12] == pubkey_prefix[:12]
+                        ):
+                            adv_name = contact.get("adv_name") or contact.get("name") or ""
+                            if adv_name:
+                                current_name = adv_name
+                                break
+                    if current_name:
+                        break
+
+                if not current_name or current_name == stored_name:
+                    continue
+
+                self.logger.info(
+                    "Tracked node name changed: '%s' -> '%s' (pubkey: %s)",
+                    stored_name, current_name, pubkey_prefix[:12],
+                )
+
+                # Update subscription name in-memory
+                sub["name"] = current_name
+                changes.append((stored_name, current_name, pubkey_prefix))
+
+        # Fire async callback for each change — __init__.py handles migration
+        if changes and self.on_tracked_node_name_change:
+            for old_name, new_name, pubkey_prefix in changes:
+                try:
+                    await self.on_tracked_node_name_change(old_name, new_name, pubkey_prefix)
+                except Exception as ex:
+                    self.logger.error(
+                        "Error in name change callback for '%s' -> '%s': %s",
+                        old_name, new_name, ex,
+                    )
 
     def get_all_contacts(self) -> list:
         """Get deduplicated list of all contacts (added + discovered).
@@ -821,6 +884,9 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                         self._contacts[prefix] = contact
         except Exception as ex:
             self.logger.error(f"Error syncing contacts: {ex}")
+
+        # Check for tracked node name changes after contacts are refreshed
+        await self._async_check_tracked_node_name_changes()
 
         # Store combined contacts (added + discovered) in result data
         result_data["contacts"] = self.get_all_contacts()

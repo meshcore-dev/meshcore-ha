@@ -415,6 +415,14 @@
     "pubkey_changed": {
       "title": "MeshCore public key changed",
       "description": "The MeshCore device's public key has changed from `{old_key}...` to `{new_key}...`. All entity IDs have been automatically migrated to use the new key prefix.\n\nIf you have automations, scripts, or dashboards referencing the old entity IDs (containing `{old_key}`), you will need to update them manually to use the new prefix (`{new_key}`).\n\nThis issue can be dismissed once you have verified your configuration."
+    },
+    "name_changed": {
+      "title": "MeshCore companion device renamed",
+      "description": "The companion device name has changed from **{old_name}** to **{new_name}**. All entity IDs have been automatically migrated to use the new name.\n\nIf you have automations, scripts, or dashboards referencing the old entity IDs (containing `{old_name}`), you will need to update them manually to use the new name (`{new_name}`).\n\nThis issue can be dismissed once you have verified your configuration."
+    },
+    "tracked_node_name_changed": {
+      "title": "MeshCore tracked node renamed",
+      "description": "A tracked node has changed its name from **{old_name}** to **{new_name}** (public key: `{pubkey}...`). All entity IDs for this node have been automatically migrated to use the new name.\n\nIf you have automations, scripts, or dashboards referencing the old entity IDs (containing `{old_name}`), you will need to update them manually to use the new name (`{new_name}`).\n\nThis issue can be dismissed once you have verified your configuration."
     }
   },
   "entity": {

@@ -26,6 +26,7 @@ from homeassistant.helpers import issue_registry as ir
 from .const import (
     DOMAIN,
     CONF_CONNECTION_TYPE,
+    CONF_NAME,
     CONF_USB_PATH,
     CONF_BLE_ADDRESS,
     CONF_TCP_HOST,
@@ -38,6 +39,9 @@ from .const import (
     DEFAULT_MAX_DISCOVERED_CONTACTS,
     CONF_MESSAGES_INTERVAL,
     DEFAULT_UPDATE_TICK,
+    REPAIR_PUBKEY_CHANGED,
+    REPAIR_NAME_CHANGED,
+    REPAIR_TRACKED_NODE_NAME_CHANGED,
 )
 from .coordinator import MeshCoreDataUpdateCoordinator
 from .meshcore_api import MeshCoreAPI
@@ -49,6 +53,7 @@ from .utils import (
     parse_and_decrypt_rx_log,
     parse_rx_log_data,
     sanitize_event_data,
+    sanitize_name,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -161,6 +166,155 @@ def _migrate_entity_ids(
     )
 
 
+async def _async_migrate_entity_name(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    old_name_slug: str,
+    new_name_slug: str,
+    batch_size: int = 10,
+) -> None:
+    """Migrate entity IDs when the device name changes.
+
+    Entity IDs are built by format_entity_id() with the sanitized name
+    as the final segment: sensor.meshcore_{pubkey}_{key}_{name}.
+    This function matches on the trailing _{old_name} suffix and replaces
+    it with _{new_name}, avoiding false positives from substring matches
+    in pubkey or sensor key segments.
+
+    Does NOT modify unique_ids — those are stabilized separately
+    to no longer include the name.
+
+    Processes updates in batches, yielding to the event loop between
+    each batch so HA remains responsive during large migrations.
+    """
+    entity_registry = er.async_get(hass)
+
+    # Phase 1: Collect all entities that need migration
+    old_suffix = f"_{old_name_slug}"
+    to_migrate: list[tuple[str, str]] = []  # (old_entity_id, new_entity_id)
+    for entity in list(entity_registry.entities.values()):
+        if entity.config_entry_id != entry.entry_id:
+            continue
+        if not entity.entity_id.endswith(old_suffix):
+            continue
+        new_entity_id = entity.entity_id[:-len(old_suffix)] + f"_{new_name_slug}"
+        to_migrate.append((entity.entity_id, new_entity_id))
+
+    if not to_migrate:
+        return
+
+    _LOGGER.info(
+        "Migrating %d entity IDs from name '%s' to '%s'",
+        len(to_migrate), old_name_slug, new_name_slug,
+    )
+
+    # Phase 2: Apply in batches, yielding to event loop between batches
+    migrated = 0
+    for i, (old_entity_id, new_entity_id) in enumerate(to_migrate):
+        try:
+            entity_registry.async_update_entity(
+                old_entity_id,
+                new_entity_id=new_entity_id,
+            )
+            _LOGGER.debug("Migrated entity name: %s -> %s", old_entity_id, new_entity_id)
+            migrated += 1
+        except Exception as ex:
+            _LOGGER.error("Failed to migrate entity %s: %s", old_entity_id, ex)
+
+        # Yield to event loop every batch_size entities so HA stays responsive
+        if (i + 1) % batch_size == 0:
+            await asyncio.sleep(0)
+
+    _LOGGER.info(
+        "Migrated %d/%d entity IDs from name '%s' to '%s'",
+        migrated, len(to_migrate), old_name_slug, new_name_slug,
+    )
+
+
+def _migrate_unique_ids_remove_name(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+) -> None:
+    """One-time migration: remove device name from unique_ids.
+
+    Entity unique_ids previously included the device name, which made them
+    unstable across name changes. This migration strips the name suffix
+    so unique_ids use only stable identifiers (entry_id, key, pubkey).
+    """
+    entity_registry = er.async_get(hass)
+    migrated = 0
+
+    # Get the current companion name from config entry
+    companion_name = entry.data.get(CONF_NAME, "")
+
+    # Build list of all names that might appear in unique_ids
+    # (companion + all tracked repeaters + all tracked clients).
+    # Sorted longest-first so that if one name is a suffix of another
+    # (e.g., "mytest" vs "test"), the longer name matches first via
+    # endswith(), preventing partial stripping.
+    names_raw: set[str] = set()
+    if companion_name:
+        names_raw.add(companion_name)
+    for sub in entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, []):
+        name = sub.get("name", "")
+        if name:
+            names_raw.add(name)
+    for sub in entry.data.get(CONF_TRACKED_CLIENTS, []):
+        name = sub.get("name", "")
+        if name:
+            names_raw.add(name)
+
+    names_to_strip = sorted(names_raw, key=len, reverse=True)
+
+    if not names_to_strip:
+        return
+
+    for entity in list(entity_registry.entities.values()):
+        if entity.config_entry_id != entry.entry_id:
+            continue
+
+        new_unique_id = entity.unique_id
+        for name in names_to_strip:
+            # unique_ids have the name appended with underscore separator
+            suffix = f"_{name}"
+            if new_unique_id.endswith(suffix):
+                new_unique_id = new_unique_id[: -len(suffix)]
+                break
+
+        if new_unique_id == entity.unique_id:
+            continue
+
+        # Verify the new unique_id doesn't already exist
+        existing = entity_registry.async_get_entity_id(
+            entity.domain, DOMAIN, new_unique_id
+        )
+        if existing and existing != entity.entity_id:
+            _LOGGER.warning(
+                "Cannot migrate unique_id for %s: target %s already exists (%s)",
+                entity.entity_id, new_unique_id, existing,
+            )
+            continue
+
+        try:
+            entity_registry.async_update_entity(
+                entity.entity_id,
+                new_unique_id=new_unique_id,
+            )
+            _LOGGER.info(
+                "Stabilized unique_id: %s -> %s",
+                entity.unique_id, new_unique_id,
+            )
+            migrated += 1
+        except Exception as ex:
+            _LOGGER.error(
+                "Failed to stabilize unique_id for %s: %s",
+                entity.entity_id, ex,
+            )
+
+    if migrated:
+        _LOGGER.info("Stabilized %d entity unique_ids (removed name)", migrated)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up MeshCore from a config entry."""
     # Home Assistant can trigger a duplicate setup during rapid reload/update cycles.
@@ -254,7 +408,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             is_fixable=False,
             is_persistent=True,
             severity=ir.IssueSeverity.WARNING,
-            translation_key="pubkey_changed",
+            translation_key=REPAIR_PUBKEY_CHANGED,
             translation_placeholders={
                 "old_key": stored_pubkey[:12],
                 "new_key": live_pubkey[:12],
@@ -266,6 +420,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         new_data[CONF_PUBKEY] = live_pubkey
         hass.config_entries.async_update_entry(entry, data=new_data)
         _LOGGER.info("Stored initial public key: %s...", live_pubkey[:12])
+
+    # One-time migration: remove device name from unique_ids
+    _migrate_unique_ids_remove_name(hass, entry)
 
     # TODO: remove this with contact refresh interval migration?
     # Get the messages interval for base update frequency
@@ -474,6 +631,103 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
             coordinator.api.mesh_core.subscribe(EventType.SELF_INFO, map_self_info_handler)
             coordinator.api.mesh_core.subscribe(EventType.RX_LOG_DATA, map_rx_log_handler)
+
+        # Subscribe to SELF_INFO to detect companion name changes
+        async def _handle_self_info_name_change(event):
+            """Detect companion name changes and propagate to config/entities."""
+            if not isinstance(event.payload, dict):
+                return
+            new_name = str(event.payload.get("name", "") or "").strip()
+            if not new_name:
+                return
+            stored_name = entry.data.get(CONF_NAME, "")
+            if new_name == stored_name:
+                return
+
+            _LOGGER.info(
+                "Companion name changed: '%s' -> '%s'. Updating config and entities.",
+                stored_name, new_name,
+            )
+
+            # Migrate entity IDs (old sanitized name -> new sanitized name)
+            old_suffix = sanitize_name(stored_name)
+            new_suffix = sanitize_name(new_name)
+            if old_suffix and new_suffix and old_suffix != new_suffix:
+                await _async_migrate_entity_name(hass, entry, old_suffix, new_suffix)
+
+            # Update config entry
+            new_data = dict(entry.data)
+            new_data[CONF_NAME] = new_name
+            hass.config_entries.async_update_entry(entry, data=new_data)
+
+            # Update coordinator live values
+            coordinator.name = new_name
+            pubkey_short = coordinator.pubkey[:6] if coordinator.pubkey else ""
+            coordinator.device_info["name"] = f"MeshCore {new_name} ({pubkey_short})"
+
+            # Create persistent repair issue to warn about automation/dashboard references
+            ir.async_create_issue(
+                hass,
+                DOMAIN,
+                f"name_changed_{entry.entry_id}_{sanitize_name(stored_name)}",
+                is_fixable=False,
+                is_persistent=True,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key=REPAIR_NAME_CHANGED,
+                translation_placeholders={
+                    "old_name": stored_name,
+                    "new_name": new_name,
+                },
+            )
+
+        coordinator.api.mesh_core.dispatcher.subscribe(
+            EventType.SELF_INFO, _handle_self_info_name_change
+        )
+
+        # Register callback for tracked node name changes detected by coordinator
+        async def _on_tracked_node_name_change(old_name: str, new_name: str, pubkey_prefix: str) -> None:
+            """Handle tracked node name change reported by coordinator.
+
+            Migrates entity IDs (batched to keep HA responsive) and persists
+            updated subscription names to config_entry.data.
+            """
+            old_slug = sanitize_name(old_name)
+            new_slug = sanitize_name(new_name)
+            if old_slug and new_slug and old_slug != new_slug:
+                await _async_migrate_entity_name(hass, entry, old_slug, new_slug)
+
+            # Persist updated subscription names from coordinator to config entry
+            new_data = dict(entry.data)
+            new_data[CONF_REPEATER_SUBSCRIPTIONS] = [
+                dict(s) for s in coordinator._tracked_repeaters
+            ]
+            new_data[CONF_TRACKED_CLIENTS] = [
+                dict(s) for s in coordinator._tracked_clients
+            ]
+            hass.config_entries.async_update_entry(entry, data=new_data)
+
+            # Create persistent repair issue to warn about automation/dashboard references
+            ir.async_create_issue(
+                hass,
+                DOMAIN,
+                f"name_changed_{pubkey_prefix[:12]}_{sanitize_name(old_name)}",
+                is_fixable=False,
+                is_persistent=True,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key=REPAIR_TRACKED_NODE_NAME_CHANGED,
+                translation_placeholders={
+                    "old_name": old_name,
+                    "new_name": new_name,
+                    "pubkey": pubkey_prefix[:12],
+                },
+            )
+
+            _LOGGER.info(
+                "Persisted name change for tracked node %s: '%s' -> '%s'",
+                pubkey_prefix[:12], old_name, new_name,
+            )
+
+        coordinator.on_tracked_node_name_change = _on_tracked_node_name_change
 
         # Subscribe to NEW_CONTACT events to track discovered contacts
         async def handle_new_contact(event):

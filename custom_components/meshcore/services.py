@@ -16,6 +16,24 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.const import MAJOR_VERSION
 from meshcore.events import EventType
 
+# Commands that modify values reported in SELF_INFO.
+# After these succeed, send_appstart() refreshes cached self_info
+# so sensors and name-change detection pick up the new values.
+_SELF_INFO_COMMANDS = frozenset({
+    "set_radio",
+    "set_tx_power",
+    "set_name",
+    "set_coords",
+    "set_multi_acks",
+    "set_advert_loc_policy",
+    "set_path_hash_mode",
+    "set_telemetry_mode_base",
+    "set_telemetry_mode_loc",
+    "set_telemetry_mode_env",
+    "set_manual_add_contacts",
+    "import_private_key",
+})
+
 from .const import (
     ATTR_PUBKEY_PREFIX,
     DOMAIN,
@@ -628,6 +646,18 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
                     _LOGGER.debug("Executing %s args=%s kwargs=%s", command_name, prepared_args, prepared_kwargs)
                     result = await command_method(*prepared_args, **prepared_kwargs)
+
+                    # Refresh SELF_INFO after commands that modify config values
+                    # so HA sensors immediately reflect the new state.
+                    if command_name in _SELF_INFO_COMMANDS and result.type != EventType.ERROR:
+                        try:
+                            appstart_result = await api.mesh_core.commands.send_appstart()
+                            api._cache_self_info_event(appstart_result)
+                        except Exception as ex:
+                            _LOGGER.warning(
+                                "Failed to refresh SELF_INFO after %s: %s",
+                                command_name, ex,
+                            )
 
                     # Update coordinator channel info after set_channel
                     if command_name == "set_channel" and result.type != EventType.ERROR:
