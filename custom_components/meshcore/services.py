@@ -712,7 +712,6 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     else:
                         _LOGGER.info("Command result: %s", result)
 
-                    coordinator.set_command_result(command_str, result)
                     # Return response data for commands that support it
                     # (e.g., export_private_key when called with return_response=True)
                     if json_safe_payload:
