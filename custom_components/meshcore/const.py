@@ -36,6 +36,7 @@ SERVICE_REMOVE_SELECTED_CONTACT: Final = "remove_selected_contact"
 SERVICE_REMOVE_DISCOVERED_CONTACT: Final = "remove_discovered_contact"
 SERVICE_CLEANUP_UNAVAILABLE_CONTACTS: Final = "cleanup_unavailable_contacts"
 SERVICE_CLEAR_DISCOVERED_CONTACTS: Final = "clear_discovered_contacts"
+SERVICE_CLEANUP_STALE_DISCOVERED_CONTACTS: Final = "cleanup_stale_discovered_contacts"
 
 # Select entity placeholders
 SELECT_NO_CONTACTS: Final = "Select a contact..."
@@ -94,6 +95,11 @@ DEFAULT_SELF_TELEMETRY_INTERVAL: Final = 300  # 5 minutes in seconds
 
 # Map Auto Uploader settings
 CONF_MAP_UPLOAD_ENABLED: Final = "map_upload_enabled"
+
+# Stale contact cleanup settings
+CONF_AUTO_CLEANUP_STALE_CONTACTS: Final = "auto_cleanup_stale_contacts"
+CONF_STALE_CONTACT_DAYS: Final = "stale_contact_days"
+DEFAULT_STALE_CONTACT_DAYS: Final = 30
 
 # MQTT upload settings
 CONF_MQTT_IATA: Final = "mqtt_iata"

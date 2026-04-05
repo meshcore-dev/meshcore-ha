@@ -29,6 +29,9 @@ from .const import (
     SERVICE_REMOVE_DISCOVERED_CONTACT,
     SERVICE_CLEANUP_UNAVAILABLE_CONTACTS,
     SERVICE_CLEAR_DISCOVERED_CONTACTS,
+    SERVICE_CLEANUP_STALE_DISCOVERED_CONTACTS,
+    CONF_STALE_CONTACT_DAYS,
+    DEFAULT_STALE_CONTACT_DAYS,
     SELECT_NO_CONTACTS,
     SELECT_NO_DISCOVERED,
     SELECT_NO_ADDED,
@@ -1108,6 +1111,44 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         schema=UI_MESSAGE_SCHEMA,
     )
 
+    async def async_cleanup_stale_discovered_contacts_service(call: ServiceCall) -> None:
+        """Remove discovered contacts whose last advert exceeds the age threshold."""
+        entry_id = call.data.get(ATTR_ENTRY_ID)
+
+        coordinator = None
+        if entry_id:
+            coordinator = hass.data[DOMAIN].get(entry_id)
+        else:
+            for config_entry_id, coord in hass.data[DOMAIN].items():
+                if hasattr(coord, "api"):
+                    coordinator = coord
+                    break
+
+        if not coordinator:
+            _LOGGER.error("Could not find coordinator")
+            return
+
+        # Use days_threshold from call data, falling back to the Global Settings
+        # value, then to the hardcoded default
+        configured_days = coordinator.config_entry.data.get(
+            CONF_STALE_CONTACT_DAYS, DEFAULT_STALE_CONTACT_DAYS
+        )
+        days_threshold = call.data.get("days_threshold", configured_days)
+
+        await coordinator._cleanup_stale_discovered_contacts(days_threshold)
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CLEANUP_STALE_DISCOVERED_CONTACTS,
+        async_cleanup_stale_discovered_contacts_service,
+        schema=vol.Schema({
+            vol.Optional(ATTR_ENTRY_ID): cv.string,
+            vol.Optional("days_threshold"): vol.All(
+                vol.Coerce(int), vol.Range(min=1, max=365)
+            ),
+        }),
+    )
+
     # Create CLI command execution service from UI helper
     # async def async_execute_cli_command_ui(call: ServiceCall) -> None:
     #     """Execute CLI command from the text helper entity."""
@@ -1188,6 +1229,9 @@ async def async_unload_services(hass: HomeAssistant) -> None:
 
     if hass.services.has_service(DOMAIN, SERVICE_CLEAR_DISCOVERED_CONTACTS):
         hass.services.async_remove(DOMAIN, SERVICE_CLEAR_DISCOVERED_CONTACTS)
+
+    if hass.services.has_service(DOMAIN, SERVICE_CLEANUP_STALE_DISCOVERED_CONTACTS):
+        hass.services.async_remove(DOMAIN, SERVICE_CLEANUP_STALE_DISCOVERED_CONTACTS)
 
 
 def create_service_call(

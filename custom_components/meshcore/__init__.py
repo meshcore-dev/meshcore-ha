@@ -14,6 +14,9 @@ from .const import (
     CONF_TRACKED_CLIENTS,
 )
 
+import voluptuous as vol
+
+from homeassistant.components import websocket_api
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
@@ -375,7 +378,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     
     # Set up services
     await async_setup_services(hass)
-    
+
+    # Register WebSocket API commands (once, not per entry)
+    if "websocket_api_registered" not in hass.data.get(DOMAIN, {}):
+        websocket_api.async_register_command(hass, ws_get_archived_contacts)
+        websocket_api.async_register_command(hass, ws_archived_contacts_stats)
+        websocket_api.async_register_command(hass, ws_clear_archived_contacts)
+        hass.data[DOMAIN]["websocket_api_registered"] = True
+
     # Register update listener for config entry updates
     entry.async_on_unload(entry.add_update_listener(async_update_options))
     
@@ -544,6 +554,125 @@ async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Update options for a config entry."""
     # Reload the entry to apply the new options
     await hass.config_entries.async_reload(entry.entry_id)
+
+
+def _get_coordinator(hass: HomeAssistant, entry_id: str | None = None):
+    """Get the MeshCore coordinator for an entry_id, or the first available."""
+    if entry_id:
+        return hass.data.get(DOMAIN, {}).get(entry_id)
+    for coord in hass.data.get(DOMAIN, {}).values():
+        if hasattr(coord, "api"):
+            return coord
+    return None
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "meshcore/archived_contacts",
+        vol.Optional("entry_id"): str,
+        vol.Optional("limit", default=100): vol.All(
+            int, vol.Range(min=1, max=1000)
+        ),
+        vol.Optional("offset", default=0): vol.All(int, vol.Range(min=0)),
+        vol.Optional("search"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_get_archived_contacts(hass, connection, msg):
+    """Return paginated archived contacts."""
+    coordinator = _get_coordinator(hass, msg.get("entry_id"))
+    if not coordinator:
+        connection.send_error(msg["id"], "not_found", "No MeshCore coordinator found")
+        return
+
+    contacts = coordinator._archived_contacts
+    search = msg.get("search", "").lower()
+    if search:
+        contacts = [
+            c
+            for c in contacts
+            if search in c.get("adv_name", "").lower()
+            or search in c.get("public_key", "").lower()
+        ]
+
+    total = len(contacts)
+    # Most recent first
+    contacts_sorted = sorted(
+        contacts, key=lambda c: c.get("archived_at", 0), reverse=True
+    )
+    offset = msg["offset"]
+    limit = msg["limit"]
+    page = contacts_sorted[offset : offset + limit]
+
+    connection.send_result(
+        msg["id"],
+        {
+            "contacts": page,
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+        },
+    )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "meshcore/archived_contacts_stats",
+        vol.Optional("entry_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_archived_contacts_stats(hass, connection, msg):
+    """Return summary statistics about the archived contacts."""
+    coordinator = _get_coordinator(hass, msg.get("entry_id"))
+    if not coordinator:
+        connection.send_error(msg["id"], "not_found", "No MeshCore coordinator found")
+        return
+
+    contacts = coordinator._archived_contacts
+    if not contacts:
+        connection.send_result(
+            msg["id"],
+            {"total": 0, "oldest_archived_at": None, "newest_archived_at": None, "by_reason": {}},
+        )
+        return
+
+    by_reason: dict[str, int] = {}
+    for c in contacts:
+        reason = c.get("reason", "unknown")
+        by_reason[reason] = by_reason.get(reason, 0) + 1
+
+    archived_times = [c.get("archived_at", 0) for c in contacts]
+    connection.send_result(
+        msg["id"],
+        {
+            "total": len(contacts),
+            "oldest_archived_at": min(archived_times),
+            "newest_archived_at": max(archived_times),
+            "by_reason": by_reason,
+        },
+    )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "meshcore/clear_archived_contacts",
+        vol.Optional("entry_id"): str,
+        vol.Optional("older_than_days"): vol.All(int, vol.Range(min=1)),
+    }
+)
+@websocket_api.async_response
+async def ws_clear_archived_contacts(hass, connection, msg):
+    """Clear archived contacts, optionally only old entries."""
+    coordinator = _get_coordinator(hass, msg.get("entry_id"))
+    if not coordinator:
+        connection.send_error(msg["id"], "not_found", "No MeshCore coordinator found")
+        return
+
+    removed = await coordinator.async_clear_archived_contacts(
+        msg.get("older_than_days")
+    )
+    connection.send_result(msg["id"], {"removed": removed})
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

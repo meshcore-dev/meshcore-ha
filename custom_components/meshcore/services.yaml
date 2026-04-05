@@ -190,3 +190,28 @@ clear_discovered_contacts:
       example: "abc123def456"
       selector:
         text:
+
+cleanup_stale_discovered_contacts:
+  name: Cleanup Stale Discovered Contacts
+  description: >-
+    Remove discovered contacts whose last advertisement is older than the specified threshold.
+    Contacts that have been saved to the node (added_to_node) are always preserved.
+    If days_threshold is not specified, the value from Global Settings is used (default: 30 days).
+  fields:
+    days_threshold:
+      name: Days Threshold
+      description: Remove discovered contacts whose last advert is older than this many days. If omitted, uses the value configured in Global Settings.
+      required: false
+      example: "21"
+      selector:
+        number:
+          min: 1
+          max: 365
+          unit_of_measurement: days
+    entry_id:
+      name: Config Entry ID
+      description: The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device.
+      required: false
+      example: "abc123def456"
+      selector:
+        text:

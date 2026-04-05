@@ -133,7 +133,9 @@
           "max_discovered_contacts": "Maximum Discovered Contacts",
           "self_telemetry_enabled": "Enable Self Telemetry",
           "self_telemetry_interval": "Self Telemetry Interval (seconds)",
-          "map_upload_enabled": "Enable Map Auto Uploader (map.meshcore.dev)"
+          "map_upload_enabled": "Enable Map Auto Uploader (map.meshcore.dev)",
+          "auto_cleanup_stale_contacts": "Auto-Cleanup Stale Discovered Contacts (runs daily)",
+          "stale_contact_days": "Stale Contact Threshold (days)"
         },
         "data_description": {
           "map_upload_enabled": "When enabled, adverts from repeaters and room servers you receive are uploaded to map.meshcore.dev. Those nodes appear on the official MeshCore map for the community. Requires private key export enabled on the firmware (`ENABLE_PRIVATE_KEY_EXPORT=1`); without it, uploads cannot be signed."
@@ -239,7 +241,9 @@
           "max_discovered_contacts": "Maximum Discovered Contacts",
           "self_telemetry_enabled": "Enable Self Telemetry",
           "self_telemetry_interval": "Self Telemetry Interval (seconds)",
-          "map_upload_enabled": "Enable Map Auto Uploader (map.meshcore.dev)"
+          "map_upload_enabled": "Enable Map Auto Uploader (map.meshcore.dev)",
+          "auto_cleanup_stale_contacts": "Auto-Cleanup Stale Discovered Contacts (runs daily)",
+          "stale_contact_days": "Stale Contact Threshold (days)"
         },
         "data_description": {
           "map_upload_enabled": "When enabled, adverts from repeaters and room servers you receive are uploaded to map.meshcore.dev. Those nodes appear on the official MeshCore map for the community. Requires private key export enabled on the firmware (`ENABLE_PRIVATE_KEY_EXPORT=1`); without it, uploads cannot be signed."
@@ -403,6 +407,20 @@
         "entry_id": {
           "name": "Config Entry ID",
           "description": "The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device."
+        }
+      }
+    },
+    "cleanup_stale_discovered_contacts": {
+      "name": "Cleanup Stale Discovered Contacts",
+      "description": "Remove discovered contacts whose last advertisement is older than the specified threshold. Contacts saved to the node are always preserved. Uses the Global Settings threshold if not specified.",
+      "fields": {
+        "days_threshold": {
+          "name": "Days Threshold",
+          "description": "Remove contacts older than this many days. If omitted, uses the Global Settings value."
+        },
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "Config entry ID for multi-device setups. Leave empty for first available device."
         }
       }
     }
