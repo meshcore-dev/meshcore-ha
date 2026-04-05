@@ -642,7 +642,7 @@ class MeshCoreMqttUploader:
 
         try:
             self.logger.info("[%s] Attempting to fetch private key from device (export_private_key)", broker.name)
-            result = await mesh_core.commands.export_private_key()
+            result = await self.api.execute(mesh_core.commands.export_private_key())
         except Exception as ex:
             self.logger.warning("[%s] Private key export command failed: %s", broker.name, ex)
             return None

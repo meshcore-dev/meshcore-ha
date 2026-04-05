@@ -119,7 +119,7 @@ BAT_VMAX: Final = 4200
 CONF_INFO_INTERVAL: Final = "info_interval"  # For both node info and contacts
 CONF_MESSAGES_INTERVAL: Final = "messages_interval"
 
-DEFAULT_UPDATE_TICK: Final = 5  # base polling interval
+DEFAULT_UPDATE_TICK: Final = 30  # base polling interval (raised from 5 for command serialization)
 
 # Repair issue IDs
 REPAIR_PUBKEY_CHANGED: Final = "pubkey_changed"

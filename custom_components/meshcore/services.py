@@ -190,7 +190,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                             continue
                     
                     # Send the message using the new API
-                    result = await api.mesh_core.commands.send_msg(contact, message)
+                    result = await api.execute(api.mesh_core.commands.send_msg(contact, message))
 
                     if result.type == EventType.ERROR:
                         _LOGGER.warning(
@@ -283,7 +283,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     fallback_timestamp = int(time.time())
 
                     # Send the channel message using the new API
-                    result = await api.mesh_core.commands.send_chan_msg(channel_idx, message, timestamp=fallback_timestamp)
+                    result = await api.execute(api.mesh_core.commands.send_chan_msg(channel_idx, message, timestamp=fallback_timestamp))
 
                     if result.type == EventType.ERROR:
                         _LOGGER.warning(
@@ -627,18 +627,19 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                                 prepared_args.append(arg)
 
                     _LOGGER.debug("Executing %s args=%s kwargs=%s", command_name, prepared_args, prepared_kwargs)
-                    result = await command_method(*prepared_args, **prepared_kwargs)
+                    async with api.command_session():
+                        result = await command_method(*prepared_args, **prepared_kwargs)
 
-                    # Update coordinator channel info after set_channel
-                    if command_name == "set_channel" and result.type != EventType.ERROR:
-                        channel_idx = prepared_args[0]
-                        # Fetch updated channel info
-                        channel_info_result = await api.mesh_core.commands.get_channel(channel_idx)
-                        if channel_info_result.type != EventType.ERROR:
-                            coordinator._channel_info[channel_idx] = channel_info_result.payload
-                            _LOGGER.info(f"Updated channel {channel_idx} info: {channel_info_result.payload}")
-                            # Trigger coordinator update to refresh select entities
-                            coordinator.async_set_updated_data(coordinator.data)
+                        # Update coordinator channel info after set_channel
+                        if command_name == "set_channel" and result.type != EventType.ERROR:
+                            channel_idx = prepared_args[0]
+                            # Fetch updated channel info
+                            channel_info_result = await api.mesh_core.commands.get_channel(channel_idx)
+                            if channel_info_result.type != EventType.ERROR:
+                                coordinator._channel_info[channel_idx] = channel_info_result.payload
+                                _LOGGER.info(f"Updated channel {channel_idx} info: {channel_info_result.payload}")
+                                # Trigger coordinator update to refresh select entities
+                                coordinator.async_set_updated_data(coordinator.data)
 
                     # Mark contacts as dirty after add_contact or remove_contact so next ensure_contacts() will sync
                     if command_name == "add_contact" and result.type != EventType.ERROR:

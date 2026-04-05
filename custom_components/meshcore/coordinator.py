@@ -149,15 +149,16 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         # Initialization tracking flags
         self._device_info_initialized = False
 
+        # Independent background loops for repeater/telemetry scheduling
+        self._repeater_loop_task: asyncio.Task | None = None
+        self._telemetry_loop_task: asyncio.Task | None = None
+        self._background_loops_started: bool = False
+
         # Telemetry sensor manager - will be initialized when sensors are set up
         self.telemetry_manager = None
 
         # Track coordinator start time for auto-disable logic
         self._coordinator_start_time = time.time()
-
-        # Lock to serialize get_msg() calls between MESSAGES_WAITING
-        # auto-fetch and the coordinator's periodic poll
-        self._message_lock = asyncio.Lock()
 
         # Conditional message polling: track last message activity so the
         # safety-net poll only fires after MSG_SAFETY_NET_INTERVAL of silence.
@@ -366,7 +367,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         for channel_idx in range(self._max_channels):
             try:
                 # Use get_channel command
-                channel_info_result = await self.api.mesh_core.commands.get_channel(channel_idx)
+                channel_info_result = await self.api.execute(self.api.mesh_core.commands.get_channel(channel_idx))
                 if channel_info_result and channel_info_result.type == EventType.CHANNEL_INFO:
                     self._channel_info[channel_idx] = channel_info_result.payload
                     self.logger.debug(f"Fetched channel info for channel {channel_idx}: {channel_info_result.payload}")
@@ -374,7 +375,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     self.logger.warning(f"Failed to get channel info for channel {channel_idx}")
             except Exception as ex:
                 self.logger.error(f"Error fetching channel info for channel {channel_idx}: {ex}")
-        
+
         self.logger.info(f"Completed channel info fetch - got info for {len(self._channel_info)} channels")
     
     async def get_channel_info(self, channel_idx: int) -> dict:
@@ -383,7 +384,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             self.logger.debug(f"Channel {channel_idx} info not cached, attempting to fetch")
             try:
                 if self.api.mesh_core:
-                    channel_info_result = await self.api.mesh_core.commands.get_channel(channel_idx)
+                    channel_info_result = await self.api.execute(self.api.mesh_core.commands.get_channel(channel_idx))
                     if channel_info_result and channel_info_result.payload:
                         self._channel_info[channel_idx] = channel_info_result.payload
                         self.logger.debug(f"Successfully fetched channel {channel_idx} info")
@@ -407,7 +408,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             return False
             
         try:
-            result = await self.api.mesh_core.commands.reset_path(contact)
+            result = await self.api.execute(self.api.mesh_core.commands.reset_path(contact))
             if result and result.type != EventType.ERROR:
                 self.logger.info(f"Successfully reset path for {node_name}")
                 return True
@@ -481,32 +482,33 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     return
 
                 try:
-                    login_result = await self.api.mesh_core.commands.send_login(
-                        contact,
-                        repeater_config.get(CONF_REPEATER_PASSWORD, "")
-                    )
-
-                    # send_login returns MSG_SENT (login packet queued) or ERROR.
-                    # Wait for the actual LOGIN_SUCCESS event from the repeater.
-                    if login_result and login_result.type == EventType.MSG_SENT:
-                        login_event = await self.api.mesh_core.wait_for_event(
-                            EventType.LOGIN_SUCCESS,
-                            timeout=10.0,
+                    async with self.api.command_session():
+                        login_result = await self.api.mesh_core.commands.send_login(
+                            contact,
+                            repeater_config.get(CONF_REPEATER_PASSWORD, "")
                         )
-                        if login_event:
-                            self.logger.info(f"Successfully logged in to repeater {repeater_name}")
-                            self._increment_success(pubkey_prefix)
-                            self._repeater_login_times[pubkey_prefix] = self._current_time()
-                            self._repeater_consecutive_failures[pubkey_prefix] = 0
+
+                        # send_login returns MSG_SENT (login packet queued) or ERROR.
+                        # Wait for the actual LOGIN_SUCCESS event from the repeater.
+                        if login_result and login_result.type == EventType.MSG_SENT:
+                            login_event = await self.api.mesh_core.wait_for_event(
+                                EventType.LOGIN_SUCCESS,
+                                timeout=10.0,
+                            )
+                            if login_event:
+                                self.logger.info(f"Successfully logged in to repeater {repeater_name}")
+                                self._increment_success(pubkey_prefix)
+                                self._repeater_login_times[pubkey_prefix] = self._current_time()
+                                self._repeater_consecutive_failures[pubkey_prefix] = 0
+                            else:
+                                self.logger.error(f"Login to repeater {repeater_name} timed out waiting for LOGIN_SUCCESS")
+                                self._increment_failure(pubkey_prefix)
+                                self._repeater_login_times[pubkey_prefix] = self._current_time()
                         else:
-                            self.logger.error(f"Login to repeater {repeater_name} timed out waiting for LOGIN_SUCCESS")
+                            error_msg = login_result.payload if login_result and login_result.type == EventType.ERROR else "send failed"
+                            self.logger.error(f"Login to repeater {repeater_name} failed: {error_msg}")
                             self._increment_failure(pubkey_prefix)
                             self._repeater_login_times[pubkey_prefix] = self._current_time()
-                    else:
-                        error_msg = login_result.payload if login_result and login_result.type == EventType.ERROR else "send failed"
-                        self.logger.error(f"Login to repeater {repeater_name} failed: {error_msg}")
-                        self._increment_failure(pubkey_prefix)
-                        self._repeater_login_times[pubkey_prefix] = self._current_time()
 
                 except Exception as ex:
                     self.logger.error(f"Exception during login to repeater {repeater_name}: {ex}")
@@ -528,7 +530,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 self._apply_repeater_backoff(pubkey_prefix, new_failure_count, update_interval)
                 return
 
-            result = await self.api.mesh_core.commands.req_status_sync(contact)
+            result = await self.api.execute(self.api.mesh_core.commands.req_status_sync(contact))
             _LOGGER.debug(f"Status response received: {result}")
 
 
@@ -616,6 +618,182 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         """Apply exponential backoff delay for failed repeater updates."""
         self._apply_backoff(pubkey_prefix, failure_count, update_interval, "repeater")
 
+    def _start_background_loops(self) -> None:
+        """Start independent background loops for repeater and telemetry scheduling.
+
+        Called once from _async_update_data() after the first successful connection.
+        Each loop runs on a 10-second check interval, independent of the main
+        coordinator update cycle.  Individual update tasks still acquire the
+        device lock per-command, interleaving naturally with the main loop.
+        """
+        if self._background_loops_started:
+            return
+        self._background_loops_started = True
+
+        self._repeater_loop_task = asyncio.create_task(self._repeater_scheduler_loop())
+        self._repeater_loop_task.set_name("meshcore_repeater_scheduler")
+
+        self._telemetry_loop_task = asyncio.create_task(self._telemetry_scheduler_loop())
+        self._telemetry_loop_task.set_name("meshcore_telemetry_scheduler")
+
+        _LOGGER.info("Started independent repeater and telemetry scheduler loops")
+
+    async def _repeater_scheduler_loop(self) -> None:
+        """Persistent loop that checks and spawns repeater update tasks."""
+        while True:
+            try:
+                await asyncio.sleep(10)  # Check every 10 seconds
+
+                if not self.api.connected:
+                    continue
+
+                current_time = self._current_time()
+
+                for repeater_config in self._tracked_repeaters:
+                    if not repeater_config.get('name') or not repeater_config.get('pubkey_prefix'):
+                        continue
+
+                    pubkey_prefix = repeater_config.get("pubkey_prefix")
+                    repeater_name = repeater_config.get("name")
+
+                    # Check if device is disabled (either in config or auto-disabled)
+                    if repeater_config.get(CONF_DEVICE_DISABLED, False) or pubkey_prefix in self._auto_disabled_devices:
+                        continue
+
+                    # Check if repeater has had no successful requests in AUTO_DISABLE_HOURS
+                    last_success_time = self._last_successful_request.get(pubkey_prefix, self._coordinator_start_time)
+                    hours_since_success = (current_time - last_success_time) / 3600
+
+                    if hours_since_success >= AUTO_DISABLE_HOURS:
+                        _LOGGER.warning(
+                            f"Repeater {repeater_name} has had no successful requests in {hours_since_success:.1f} hours. "
+                            f"Automatically disabling to reduce network traffic. This will reset on restart."
+                        )
+                        self._auto_disabled_devices.add(pubkey_prefix)
+                        continue
+
+                    # Clean up completed or failed tasks
+                    if pubkey_prefix in self._active_repeater_tasks:
+                        task = self._active_repeater_tasks[pubkey_prefix]
+                        if task.done():
+                            self._active_repeater_tasks.pop(pubkey_prefix)
+                            if task.exception():
+                                _LOGGER.error(f"Repeater update task for {repeater_name} failed with exception: {task.exception()}")
+                        else:
+                            continue  # Task is still running
+
+                    # Check if it's time to update this repeater
+                    next_update_time = self._next_repeater_update_times.get(pubkey_prefix, 0)
+                    if current_time >= next_update_time:
+                        _LOGGER.debug(f"Starting repeater update task for {repeater_name}")
+                        update_task = asyncio.create_task(self._update_repeater(repeater_config))
+                        self._active_repeater_tasks[pubkey_prefix] = update_task
+                        update_task.set_name(f"update_repeater_{repeater_name}")
+
+            except asyncio.CancelledError:
+                _LOGGER.info("Repeater scheduler loop cancelled")
+                break
+            except Exception as ex:
+                _LOGGER.error(f"Error in repeater scheduler loop: {ex}")
+                await asyncio.sleep(10)
+
+    async def _telemetry_scheduler_loop(self) -> None:
+        """Persistent loop that checks and spawns telemetry update tasks."""
+        while True:
+            try:
+                await asyncio.sleep(10)  # Check every 10 seconds
+
+                if not self.api.connected:
+                    continue
+
+                current_time = self._current_time()
+
+                # Telemetry for tracked repeaters
+                for repeater_config in self._tracked_repeaters:
+                    if not repeater_config.get('name') or not repeater_config.get('pubkey_prefix'):
+                        continue
+
+                    if repeater_config.get(CONF_DEVICE_DISABLED, False):
+                        continue
+
+                    telemetry_enabled = repeater_config.get(CONF_REPEATER_TELEMETRY_ENABLED, False)
+                    if not telemetry_enabled:
+                        continue
+
+                    pubkey_prefix = repeater_config.get("pubkey_prefix")
+                    repeater_name = repeater_config.get("name")
+
+                    if pubkey_prefix in self._active_telemetry_tasks:
+                        task = self._active_telemetry_tasks[pubkey_prefix]
+                        if task.done():
+                            self._active_telemetry_tasks.pop(pubkey_prefix)
+                            if task.exception():
+                                _LOGGER.error(f"Telemetry update task for {repeater_name} failed with exception: {task.exception()}")
+                        else:
+                            continue  # Task is still running
+
+                    next_telemetry_time = self._next_telemetry_update_times.get(pubkey_prefix, 0)
+                    if current_time >= next_telemetry_time:
+                        contact = self.api.mesh_core.get_contact_by_key_prefix(pubkey_prefix)
+                        if contact:
+                            _LOGGER.debug(f"Starting telemetry update task for {repeater_name}")
+                            update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
+                            telemetry_task = asyncio.create_task(
+                                self._update_node_telemetry(contact, repeater_config)
+                            )
+                            self._active_telemetry_tasks[pubkey_prefix] = telemetry_task
+                            telemetry_task.set_name(f"telemetry_{repeater_name}")
+                        else:
+                            _LOGGER.warning(f"Could not find contact for telemetry request: {pubkey_prefix}")
+
+                # Telemetry for tracked clients
+                for client_config in self._tracked_clients:
+                    if not client_config.get('name') or not client_config.get('pubkey_prefix'):
+                        continue
+
+                    pubkey_prefix = client_config.get("pubkey_prefix")
+                    client_name = client_config.get("name")
+
+                    if client_config.get(CONF_DEVICE_DISABLED, False) or pubkey_prefix in self._auto_disabled_devices:
+                        continue
+
+                    if pubkey_prefix in self._active_telemetry_tasks:
+                        task = self._active_telemetry_tasks[pubkey_prefix]
+                        if task.done():
+                            self._active_telemetry_tasks.pop(pubkey_prefix)
+                            if task.exception():
+                                _LOGGER.error(f"Client telemetry update task for {client_name} failed with exception: {task.exception()}")
+                        else:
+                            continue
+
+                    next_telemetry_time = self._next_telemetry_update_times.get(pubkey_prefix, 0)
+                    if current_time >= next_telemetry_time:
+                        contact = self.api.mesh_core.get_contact_by_key_prefix(pubkey_prefix)
+                        if contact:
+                            _LOGGER.debug(f"Starting telemetry update task for client {client_name}")
+                            update_interval = client_config.get(CONF_CLIENT_UPDATE_INTERVAL, DEFAULT_CLIENT_UPDATE_INTERVAL)
+                            telemetry_task = asyncio.create_task(
+                                self._update_node_telemetry(contact, client_config)
+                            )
+                            self._active_telemetry_tasks[pubkey_prefix] = telemetry_task
+                            telemetry_task.set_name(f"client_telemetry_{client_name}")
+                        else:
+                            _LOGGER.warning(f"Could not find contact for client telemetry request: {pubkey_prefix}")
+
+            except asyncio.CancelledError:
+                _LOGGER.info("Telemetry scheduler loop cancelled")
+                break
+            except Exception as ex:
+                _LOGGER.error(f"Error in telemetry scheduler loop: {ex}")
+                await asyncio.sleep(10)
+
+    def stop_background_loops(self) -> None:
+        """Cancel background scheduler loops. Called during integration unload."""
+        if self._repeater_loop_task and not self._repeater_loop_task.done():
+            self._repeater_loop_task.cancel()
+        if self._telemetry_loop_task and not self._telemetry_loop_task.done():
+            self._telemetry_loop_task.cancel()
+
     async def _update_node_telemetry(self, contact, node_config: dict):
         """Update telemetry for a node (repeater or client).
         
@@ -655,7 +833,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 self._apply_backoff(pubkey_prefix, new_failure_count, update_interval, "telemetry")
                 return
 
-            telemetry_result = await self.api.mesh_core.commands.req_telemetry_sync(contact)
+            telemetry_result = await self.api.execute(self.api.mesh_core.commands.req_telemetry_sync(contact))
             
             if telemetry_result:
                 self.logger.debug(f"Telemetry response received from {node_name}: {telemetry_result}")
@@ -700,10 +878,9 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         """Immediately flush pending messages from the device queue.
 
         Called by the MESSAGES_WAITING event handler for instant message
-        delivery.  Uses _message_lock to prevent overlap with the
-        coordinator poll's own get_msg() loop.
+        delivery.  Uses _device_lock to serialize with all other commands.
         """
-        async with self._message_lock:
+        async with self.api._device_lock:
             try:
                 while True:
                     result = await self.api.mesh_core.commands.get_msg()
@@ -759,13 +936,13 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 raise UpdateFailed("Failed to connect to MeshCore device")
         
         # Always get battery status
-        await self.api.mesh_core.commands.get_bat()
+        await self.api.execute(self.api.mesh_core.commands.get_bat())
         
         # Initialize manual contact mode on first run
         if not self._manual_mode_initialized:
             try:
                 self.logger.info("Setting manual contact mode...")
-                result = await self.api.mesh_core.commands.set_manual_add_contacts(True)
+                result = await self.api.execute(self.api.mesh_core.commands.set_manual_add_contacts(True))
                 if result and result.type != EventType.ERROR:
                     self.logger.info("Manual contact mode enabled")
                     self._manual_mode_initialized = True
@@ -784,7 +961,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         if not self._device_info_initialized:
             try:
                 self.logger.info("Fetching device info...")
-                device_query_result = await self.api.mesh_core.commands.send_device_query()
+                device_query_result = await self.api.execute(self.api.mesh_core.commands.send_device_query())
                 if device_query_result.type is EventType.DEVICE_INFO:
                     self._firmware_version = device_query_result.payload.get("ver")
                     self._hardware_model = device_query_result.payload.get("model")
@@ -810,7 +987,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         
         # Sync contacts if dirty (uses SDK's internal dirty flag)
         try:
-            contacts_changed = await self.api.mesh_core.ensure_contacts(follow=True)
+            contacts_changed = await self.api.execute(self.api.mesh_core.ensure_contacts(follow=True))
             if contacts_changed:
                 self.logger.info("Contacts synced from node")
                 self._contacts = {}
@@ -830,7 +1007,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             if current_time - self._last_self_telemetry_update >= self._self_telemetry_interval:
                 self.logger.debug(f"Getting self telemetry (interval: {self._self_telemetry_interval}s)")
                 try:
-                    telemetry_result = await self.api.mesh_core.commands.get_self_telemetry()
+                    telemetry_result = await self.api.execute(self.api.mesh_core.commands.get_self_telemetry())
                     if telemetry_result.type == EventType.TELEMETRY_RESPONSE:
                         self.logger.debug(f"Self telemetry received: {telemetry_result.payload}")
                         self._last_self_telemetry_update = current_time
@@ -852,7 +1029,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         )
 
         if should_poll:
-            async with self._message_lock:
+            async with self.api._device_lock:
                 try:
                     while True:
                         result = await self.api.mesh_core.commands.get_msg()
@@ -876,143 +1053,9 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             # so we don't re-poll until another MSG_SAFETY_NET_INTERVAL elapses.
             self._last_msg_activity = current_time_mono
 
-        for repeater_config in self._tracked_repeaters:
-            if not repeater_config.get('name') or not repeater_config.get('pubkey_prefix'):
-                _LOGGER.warning(f"Repeater config missing name or pubkey_prefix: {repeater_config}")
-                continue
-
-            pubkey_prefix = repeater_config.get("pubkey_prefix")
-            repeater_name = repeater_config.get("name")
-
-            # Check if device is disabled (either in config or auto-disabled)
-            if repeater_config.get(CONF_DEVICE_DISABLED, False) or pubkey_prefix in self._auto_disabled_devices:
-                continue
-
-            # Check if repeater has had no successful requests in AUTO_DISABLE_HOURS
-            # Use last success time, or coordinator start time if never succeeded
-            last_success_time = self._last_successful_request.get(pubkey_prefix, self._coordinator_start_time)
-            hours_since_success = (current_time - last_success_time) / 3600  # Convert to hours
-
-            if hours_since_success >= AUTO_DISABLE_HOURS:
-                _LOGGER.warning(
-                    f"Repeater {repeater_name} has had no successful requests in {hours_since_success:.1f} hours. "
-                    f"Automatically disabling to reduce network traffic. This will reset on restart."
-                )
-                # Add to auto-disabled set (will reset on restart)
-                self._auto_disabled_devices.add(pubkey_prefix)
-                continue
-
-            # Clean c completed or failed tasks
-            if pubkey_prefix in self._active_repeater_tasks:
-                task = self._active_repeater_tasks[pubkey_prefix]
-                if task.done():
-                    # Remove completed task
-                    self._active_repeater_tasks.pop(pubkey_prefix)
-                    # Handle exceptions
-                    if task.exception():
-                        _LOGGER.error(f"Repeater update task for {repeater_name} failed with exception: {task.exception()}")
-                else:
-                    # Task is still running, skip this repeater
-                    _LOGGER.debug(f"Update task for repeater {repeater_name} still running, skipping")
-                    continue
-                
-            # Check if it's time to update this repeater
-            next_update_time = self._next_repeater_update_times.get(pubkey_prefix, 0)
-            if current_time >= next_update_time:
-                _LOGGER.debug(f"Starting repeater update task for {repeater_name}")
-                
-                # Create and start a new task for this repeater
-                update_task = asyncio.create_task(self._update_repeater(repeater_config))
-                self._active_repeater_tasks[pubkey_prefix] = update_task
-                
-                # Set a name for the task for better debugging
-                update_task.set_name(f"update_repeater_{repeater_name}")
-
-        # Check and update telemetry for nodes that have it enabled
-        _LOGGER.debug("Checking telemetry for tracked repeaters: %s", self._next_telemetry_update_times)
-        for repeater_config in self._tracked_repeaters:
-            if not repeater_config.get('name') or not repeater_config.get('pubkey_prefix'):
-                continue
-
-            if repeater_config.get(CONF_DEVICE_DISABLED, False):
-                continue
-
-            telemetry_enabled = repeater_config.get(CONF_REPEATER_TELEMETRY_ENABLED, False)
-            if not telemetry_enabled:
-                continue
-
-            pubkey_prefix = repeater_config.get("pubkey_prefix")
-            repeater_name = repeater_config.get("name")
-            
-            # Clean up completed telemetry tasks
-            if pubkey_prefix in self._active_telemetry_tasks:
-                task = self._active_telemetry_tasks[pubkey_prefix]
-                if task.done():
-                    self._active_telemetry_tasks.pop(pubkey_prefix)
-                    if task.exception():
-                        _LOGGER.error(f"Telemetry update task for {repeater_name} failed with exception: {task.exception()}")
-                else:
-                    # Task is still running, skip this node
-                    _LOGGER.debug(f"Telemetry task for {repeater_name} still running, skipping")
-                    continue
-            
-            # Check if it's time to update telemetry for this node
-            next_telemetry_time = self._next_telemetry_update_times.get(pubkey_prefix, 0)
-            if current_time >= next_telemetry_time:
-                # Find the contact for this node
-                contact = self.api.mesh_core.get_contact_by_key_prefix(pubkey_prefix)
-                if contact:
-                    _LOGGER.debug(f"Starting telemetry update task for {repeater_name}")
-                    
-                    # Use same interval as repeater update for telemetry
-                    update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
-                    
-                    # Create and start telemetry task
-                    telemetry_task = asyncio.create_task(
-                        self._update_node_telemetry(contact, repeater_config)
-                    )
-                    self._active_telemetry_tasks[pubkey_prefix] = telemetry_task
-                    telemetry_task.set_name(f"telemetry_{repeater_name}")
-                else:
-                    _LOGGER.warning(f"Could not find contact for telemetry request: {pubkey_prefix}")
-        
-        _LOGGER.debug("Checking telemetry for tracked clients")
-        for client_config in self._tracked_clients:
-            if not client_config.get('name') or not client_config.get('pubkey_prefix'):
-                _LOGGER.warning(f"Client config missing name or pubkey_prefix: {client_config}")
-                continue
-
-            pubkey_prefix = client_config.get("pubkey_prefix")
-            client_name = client_config.get("name")
-
-            # Check if device is disabled (either in config or auto-disabled)
-            if client_config.get(CONF_DEVICE_DISABLED, False) or pubkey_prefix in self._auto_disabled_devices:
-                continue
-            
-            if pubkey_prefix in self._active_telemetry_tasks:
-                task = self._active_telemetry_tasks[pubkey_prefix]
-                if task.done():
-                    self._active_telemetry_tasks.pop(pubkey_prefix)
-                    if task.exception():
-                        _LOGGER.error(f"Client telemetry update task for {client_name} failed with exception: {task.exception()}")
-                else:
-                    _LOGGER.debug(f"Client telemetry task for {client_name} still running, skipping")
-                    continue
-            
-            next_telemetry_time = self._next_telemetry_update_times.get(pubkey_prefix, 0)
-            if current_time >= next_telemetry_time:
-                contact = self.api.mesh_core.get_contact_by_key_prefix(pubkey_prefix)
-                if contact:
-                    _LOGGER.debug(f"Starting telemetry update task for client {client_name}")
-                    
-                    update_interval = client_config.get(CONF_CLIENT_UPDATE_INTERVAL, DEFAULT_CLIENT_UPDATE_INTERVAL)
-                    
-                    telemetry_task = asyncio.create_task(
-                        self._update_node_telemetry(contact, client_config)
-                    )
-                    self._active_telemetry_tasks[pubkey_prefix] = telemetry_task
-                    telemetry_task.set_name(f"client_telemetry_{client_name}")
-                else:
-                    _LOGGER.warning(f"Could not find contact for client telemetry request: {pubkey_prefix}")
+        # Start independent background loops for repeater/telemetry scheduling.
+        # These run on their own 10-second check interval, decoupled from
+        # the main coordinator update cycle.
+        self._start_background_loops()
 
         return result_data
