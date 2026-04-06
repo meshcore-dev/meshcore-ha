@@ -103,10 +103,10 @@
           "max_discovered_contacts": "Maximum aantal Ontdekte Contacten",
           "self_telemetry_enabled": "Schakel Zelf-telemetrie in",
           "self_telemetry_interval": "Zelf-telemetrie-interval (seconden)",
-          "map_upload_enabled": "Schakel Map Auto Uploader in (map.meshcore.dev)"
+          "map_upload_enabled": "Schakel Map Auto Uploader in (map.meshcore.io)"
         },
         "data_description": {
-          "map_upload_enabled": "Als dit is ingeschakeld, worden advertenties van repeaters en room servers die u ontvangt geüpload naar map.meshcore.dev. Die knooppunten verschijnen op de officiële MeshCore-kaart voor de community. Vereist dat export van de privésleutel op de firmware is ingeschakeld (`ENABLE_PRIVATE_KEY_EXPORT=1`); anders kunnen uploads niet worden ondertekend."
+          "map_upload_enabled": "Als dit is ingeschakeld, worden advertenties van repeaters en room servers die u ontvangt geüpload naar map.meshcore.io. Die knooppunten verschijnen op de officiële MeshCore-kaart voor de community. Vereist dat export van de privésleutel op de firmware is ingeschakeld (`ENABLE_PRIVATE_KEY_EXPORT=1`); anders kunnen uploads niet worden ondertekend."
         },
         "description": "Configureer algemene integratie-instellingen",
         "title": "Algemene Instellingen"
@@ -209,10 +209,10 @@
           "max_discovered_contacts": "Maximum aantal Ontdekte Contacten",
           "self_telemetry_enabled": "Schakel Zelf-telemetrie in",
           "self_telemetry_interval": "Zelf-telemetrie-interval (seconden)",
-          "map_upload_enabled": "Schakel Map Auto Uploader in (map.meshcore.dev)"
+          "map_upload_enabled": "Schakel Map Auto Uploader in (map.meshcore.io)"
         },
         "data_description": {
-          "map_upload_enabled": "Als dit is ingeschakeld, worden advertenties van repeaters en room servers die u ontvangt geüpload naar map.meshcore.dev. Die knooppunten verschijnen op de officiële MeshCore-kaart voor de community. Vereist dat export van de privésleutel op de firmware is ingeschakeld (`ENABLE_PRIVATE_KEY_EXPORT=1`); anders kunnen uploads niet worden ondertekend."
+          "map_upload_enabled": "Als dit is ingeschakeld, worden advertenties van repeaters en room servers die u ontvangt geüpload naar map.meshcore.io. Die knooppunten verschijnen op de officiële MeshCore-kaart voor de community. Vereist dat export van de privésleutel op de firmware is ingeschakeld (`ENABLE_PRIVATE_KEY_EXPORT=1`); anders kunnen uploads niet worden ondertekend."
         },
         "description": "Configureer algemene integratie-instellingen",
         "title": "Algemene Instellingen"
