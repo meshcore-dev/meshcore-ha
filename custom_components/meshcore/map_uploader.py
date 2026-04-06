@@ -20,7 +20,9 @@ except ImportError:
     HAS_NACL = False
 
 MAP_API_URL = "https://map.meshcore.io/api/v1/uploader/node"
-ADVERT_TYPE_CHAT = 0
+
+# MeshCore AdvertDataHelpers.h — low 4 bits of advert flags (meshcore_py meshcore_parser.py)
+ADV_TYPE_CHAT = 1
 
 REPLAY_COOLDOWN_SECONDS = 3600
 _SEEN_ADVERTS_MAX_SIZE = 1000
@@ -279,8 +281,8 @@ class MeshCoreMapUploader:
         payload_type = payload.get("payload_type")
         if payload_type != 4:
             return
-        adv_type = payload.get("adv_type", 0)
-        if adv_type == ADVERT_TYPE_CHAT:
+        adv_type = int(payload.get("adv_type", 0))
+        if adv_type == ADV_TYPE_CHAT:
             return
         adv_key = payload.get("adv_key")
         adv_timestamp = payload.get("adv_timestamp")
