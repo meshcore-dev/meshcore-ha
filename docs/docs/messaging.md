@@ -31,6 +31,65 @@ When messages are received:
 4. The message is logged to the Home Assistant logbook
 5. Binary sensor entities track message activity
 
+### RX_LOG Correlation
+
+When a channel message is received over the mesh network, it may arrive via multiple paths — directly from the sender and relayed through one or more repeaters. Each reception generates an RX_LOG entry containing radio metrics: signal-to-noise ratio (SNR), received signal strength (RSSI), hop count, and the routing path taken.
+
+The integration automatically correlates these RX_LOG entries with the corresponding `meshcore_message` event and attaches them as `rx_log_data`. This gives automations and bots visibility into how a message traveled through the mesh.
+
+#### Default Mode (Fixed Wait)
+
+By default, the integration waits a fixed 500ms after receiving a channel message before firing the `meshcore_message` event. During this window, RX_LOG entries from repeater relays accumulate. After 500ms, all collected entries are attached to the event as `rx_log_data`.
+
+This mode is simple and predictable. All available path data is present on the initial event, which is what most bots and automations expect.
+
+#### Adaptive Mode (Opt-In)
+
+When **Adaptive Channel Message Delivery** is enabled in Global Settings, the integration polls for RX_LOG data every 50ms instead of waiting the full 500ms. As soon as data arrives, the `meshcore_message` event fires immediately.
+
+After the initial event, a background task makes two additional collection passes (at 0.5s and 1.0s) to pick up late-arriving repeater RX_LOGs. These are delivered via `meshcore_delivery_update` events — the same progressive pattern used for outgoing message delivery tracking.
+
+In testing, RX_LOG data consistently arrived within the first 50ms poll, even for messages routed through 5 repeaters. This reduces typical message delivery latency from 500ms to ~50ms.
+
+#### Tradeoffs
+
+| | Default (Fixed Wait) | Adaptive |
+|---|---|---|
+| Latency | Always 500ms | ~50ms typical, 500ms ceiling |
+| `rx_log_data` on initial event | All available paths | First path(s) only |
+| Late-arriving repeater data | Missed if >500ms | Delivered via `meshcore_delivery_update` |
+| Automation complexity | Listen to one event | May need to handle progressive updates |
+
+#### When to Enable Adaptive Mode
+
+Enable adaptive mode if:
+
+- You want lower-latency message delivery for dashboards or notifications
+- Your automations don't depend on having all paths present on the initial event
+- You're willing to listen for `meshcore_delivery_update` events to get complete path data
+
+Keep the default if:
+
+- Your bots or automations report total path counts from the initial event
+- You want the simplest integration with no progressive events to handle
+- The 500ms delay is acceptable for your use case
+
+#### Enabling Adaptive Mode
+
+1. Go to **Settings** → **Devices & Services** → **Meshcore**
+2. Click **Configure** → **Global Settings**
+3. Enable **Adaptive Channel Message Delivery**
+
+No restart required. The change takes effect on the next received channel message.
+
+#### Outgoing Message Delivery Tracking
+
+Outgoing channel messages also use progressive RX_LOG collection, regardless of the adaptive mode setting. When you send a channel message, the integration makes 4 collection passes over 4 seconds, firing `meshcore_delivery_update` events as repeater reception data arrives. The final pass includes `"progressive": false` to signal that collection is complete.
+
+This allows dashboards and bots to show delivery status updates in real time — for example, displaying how many repeaters relayed your message and which paths it took.
+
+See [Events — meshcore_delivery_update](./events#meshcore_delivery_update) for the full event field reference.
+
 ## Logbook Integration
 
 All messages automatically appear in the Home Assistant logbook with appropriate formatting and icons.
