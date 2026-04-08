@@ -250,7 +250,7 @@ Discovered contacts are persisted to Home Assistant's `.storage` directory:
 - Automatically saved when new contacts are discovered
 - Loaded on integration startup
 
-#### Clearing All Discovered Contacts
+#### Clearing Discovered Contacts
 
 To remove all discovered contacts at once:
 
@@ -260,20 +260,62 @@ service: meshcore.clear_discovered_contacts
 
 This removes all discovered contacts and their binary sensor entities from Home Assistant. It does **NOT** remove contacts from your node's contact list.
 
+##### Clearing Only Stale Contacts
+
+To remove only contacts whose last update is older than a threshold, pass `days_threshold`. Contacts saved to the node (`added_to_node`) are always preserved:
+
+```yaml
+service: meshcore.clear_discovered_contacts
+data:
+  days_threshold: 30
+```
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `days_threshold` | No | — (clears all) | Remove contacts whose last update is older than this many days (1–365). When omitted, all discovered contacts are removed. |
+| `entry_id` | No | First available | Config entry ID for multi-device setups. |
+
+##### Automatic Cleanup
+
+Enable automatic daily cleanup in **Integration Options → Global Settings**:
+
+- **Auto-Cleanup Stale Discovered Contacts** — toggle to enable/disable
+- **Stale Contact Threshold (days)** — age threshold for removal (default: 30)
+
+When enabled, stale contacts are removed once per day during the coordinator update cycle.
+
+##### Recommended Automation
+
+If you prefer to control timing via an automation instead of the built-in auto-cleanup:
+
+```yaml
+alias: "Clear stale discovered MeshCore contacts"
+trigger:
+  - trigger: time
+    at: "03:00:00"
+action:
+  - action: meshcore.clear_discovered_contacts
+    data:
+      days_threshold: 30
+```
+
 **Dashboard Button:**
 ```yaml
 type: button
-name: Clear All Discovered
-icon: mdi:delete-sweep
+name: Clear Stale Contacts
+icon: mdi:account-clock
 tap_action:
-  action: call-service
-  service: meshcore.clear_discovered_contacts
+  action: perform-action
+  perform_action: meshcore.clear_discovered_contacts
+  data:
+    days_threshold: 30
 ```
 
 For multiple devices, specify the entry_id:
 ```yaml
 service: meshcore.clear_discovered_contacts
 data:
+  days_threshold: 30
   entry_id: "abc123def456"
 ```
 
