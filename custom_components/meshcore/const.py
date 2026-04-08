@@ -123,6 +123,8 @@ DEFAULT_UPDATE_TICK: Final = 5  # base polling interval
 
 # Repair issue IDs
 REPAIR_PUBKEY_CHANGED: Final = "pubkey_changed"
+REPAIR_NAME_CHANGED: Final = "name_changed"
+REPAIR_TRACKED_NODE_NAME_CHANGED: Final = "tracked_node_name_changed"
 
 # Other constants
 CONNECTION_TIMEOUT: Final = 10  # seconds

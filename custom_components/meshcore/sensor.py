@@ -552,7 +552,6 @@ class RateLimiterSensor(CoordinatorEntity, SensorEntity):
             coordinator.config_entry.entry_id,
             "rate_limiter_tokens",
             public_key_short,
-            raw_device_name
         ])
 
         self.entity_id = format_entity_id(
@@ -622,7 +621,6 @@ class LastMessageDeliverySensor(CoordinatorEntity, SensorEntity):
             coordinator.config_entry.entry_id,
             "last_message_delivery",
             public_key_short,
-            raw_device_name
         ])
 
         self.entity_id = format_entity_id(
@@ -814,7 +812,7 @@ class MeshCoreSensor(CoordinatorEntity, SensorEntity):
         public_key_short = coordinator.pubkey[:6] if coordinator.pubkey else ""
 
         # Set unique ID using consistent format - filter out any empty parts
-        parts = [part for part in [coordinator.config_entry.entry_id, description.key, public_key_short, raw_device_name] if part]
+        parts = [part for part in [coordinator.config_entry.entry_id, description.key, public_key_short] if part]
         self._attr_unique_id = "_".join(parts)
 
         self.entity_id = format_entity_id(
@@ -888,47 +886,52 @@ class MeshCoreSensor(CoordinatorEntity, SensorEntity):
         elif key == "tx_power":
             def update_tx(event: Event):
                 self._native_value = event.payload.get("tx_power")
+                self.async_write_ha_state()
             meshcore.dispatcher.subscribe(
                 EventType.SELF_INFO,
                 update_tx,
             )
-            
+
         elif key == "latitude":
             def update_lat(event: Event):
                 self._native_value = event.payload.get("adv_lat")
+                self.async_write_ha_state()
             meshcore.dispatcher.subscribe(
                 EventType.SELF_INFO,
                 update_lat,
             )
-            
+
         elif key == "longitude":
             def update_lon(event: Event):
                 self._native_value = event.payload.get("adv_lon")
+                self.async_write_ha_state()
             meshcore.dispatcher.subscribe(
                 EventType.SELF_INFO,
                 update_lon,
             )
-            
+
         elif key == "frequency":
             def update_freq(event: Event):
                 self._native_value = event.payload.get("radio_freq")
+                self.async_write_ha_state()
             meshcore.dispatcher.subscribe(
                 EventType.SELF_INFO,
                 update_freq,
             )
-            
-            
+
         elif key == "bandwidth":
             def update_bw(event: Event):
                 self._native_value = event.payload.get("radio_bw")
+                self.async_write_ha_state()
             meshcore.dispatcher.subscribe(
                 EventType.SELF_INFO,
                 update_bw,
             )
-            
+
         elif key == "spreading_factor":
             def update_sf(event: Event):
                 self._native_value = event.payload.get("radio_sf")
+                self.async_write_ha_state()
             meshcore.dispatcher.subscribe(
                 EventType.SELF_INFO,
                 update_sf,
@@ -1056,8 +1059,8 @@ class MeshCoreReliabilitySensor(CoordinatorEntity, SensorEntity):
 
         self.device_id = f"{coordinator.config_entry.entry_id}_{node_type}_{self.pubkey_prefix}"
         device_name = f"MeshCore {node_type.title()}: {self.node_name} ({self.public_key_short})"
-        self._attr_unique_id = f"{self.device_id}_{description.key}_{self.public_key_short}_{self.node_name}"
-        
+        self._attr_unique_id = f"{self.device_id}_{description.key}_{self.public_key_short}"
+
         self.entity_id = format_entity_id(
             ENTITY_DOMAIN_SENSOR,
             self.pubkey_prefix[:10],
@@ -1123,8 +1126,8 @@ class MeshCorePathSensor(CoordinatorEntity, SensorEntity):
         device_name = f"MeshCore {node_type.title()}: {self.node_name} ({self.public_key_short})"
         
         # Set unique ID
-        self._attr_unique_id = f"{self.device_id}_{description.key}_{self.public_key_short}_{self.node_name}"
-        
+        self._attr_unique_id = f"{self.device_id}_{description.key}_{self.public_key_short}"
+
         # Set entity ID
         self.entity_id = format_entity_id(
             ENTITY_DOMAIN_SENSOR,
@@ -1222,7 +1225,7 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
         device_name = f"MeshCore Repeater: {self.repeater_name} ({self.public_key_short})"
         
         # Set unique ID
-        self._attr_unique_id = f"{self.device_id}_{description.key}_{self.public_key_short}_{self.repeater_name}"
+        self._attr_unique_id = f"{self.device_id}_{description.key}_{self.public_key_short}"
         
         # Set entity ID
         self.entity_id = format_entity_id(
