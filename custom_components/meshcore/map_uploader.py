@@ -1,7 +1,4 @@
-"""Map Auto Uploader for MeshCore integration - uploads repeater/room server adverts to map.meshcore.dev.
-
-Matches working of recrof/map.meshcore.dev-uploader.
-"""
+"""Map Auto Uploader for MeshCore integration — uploads repeater and room server adverts to map.meshcore.io."""
 from __future__ import annotations
 
 import hashlib
@@ -22,8 +19,11 @@ try:
 except ImportError:
     HAS_NACL = False
 
-MAP_API_URL = "https://map.meshcore.dev/api/v1/uploader/node"
-ADVERT_TYPE_CHAT = 0
+MAP_API_URL = "https://map.meshcore.io/api/v1/uploader/node"
+
+# MeshCore AdvertDataHelpers.h — low 4 bits of advert flags (meshcore_py meshcore_parser.py)
+ADV_TYPE_CHAT = 1
+
 REPLAY_COOLDOWN_SECONDS = 3600
 _SEEN_ADVERTS_MAX_SIZE = 1000
 
@@ -105,7 +105,7 @@ def _verify_advert_signature(log_data: dict, logger=None) -> bool:
 
 
 class MeshCoreMapUploader:
-    """Upload repeater/room server adverts to map.meshcore.dev."""
+    """Upload repeater and room server adverts to map.meshcore.io."""
 
     def __init__(
         self,
@@ -281,8 +281,8 @@ class MeshCoreMapUploader:
         payload_type = payload.get("payload_type")
         if payload_type != 4:
             return
-        adv_type = payload.get("adv_type", 0)
-        if adv_type == ADVERT_TYPE_CHAT:
+        adv_type = int(payload.get("adv_type", 0))
+        if adv_type == ADV_TYPE_CHAT:
             return
         adv_key = payload.get("adv_key")
         adv_timestamp = payload.get("adv_timestamp")

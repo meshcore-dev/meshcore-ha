@@ -3,9 +3,9 @@ sidebar_position: 9
 title: Map Auto Uploader
 ---
 
-# Map Auto Uploader (map.meshcore.dev)
+# Map Auto Uploader (map.meshcore.io)
 
-When enabled, the integration automatically uploads repeater and room server adverts to [map.meshcore.dev](https://map.meshcore.dev) when your Companion hears them. No separate companion node or map uploader bot is required. This integrates the [map.meshcore.dev-uploader](https://github.com/recrof/map.meshcore.dev-uploader) bot directly into Home Assistant.
+When enabled, the integration automatically uploads repeater and room server adverts to [map.meshcore.io](https://map.meshcore.io) when your Companion hears them. No separate companion node or map uploader bot is required.
 
 ## Overview
 
@@ -19,7 +19,7 @@ When enabled, the integration automatically uploads repeater and room server adv
 
 1. Go to **Settings** → **Devices & Services**
 2. Open your **MeshCore** integration → **Configure** → **Global Settings**
-3. Enable **Enable Map Auto Uploader (map.meshcore.dev)**
+3. Enable **Enable Map Auto Uploader (map.meshcore.io)**
 
 Map Auto Uploader is **off by default**.
 
@@ -31,14 +31,14 @@ Map Auto Uploader is **off by default**.
 
 1. Your Companion receives adverts from repeaters and room servers on the mesh
 2. The integration verifies each advert and checks for replay
-3. Valid adverts are signed and uploaded to map.meshcore.dev
-4. Nodes appear on the [official map](https://map.meshcore.dev) for the community
+3. Valid adverts are signed and uploaded to map.meshcore.io
+4. Nodes appear on the [official map](https://map.meshcore.io) for the community
 
 ## Troubleshooting
 
 1. **Enable in Global Settings** — Ensure the option is enabled (see above)
 2. **Check private key export** — Firmware must have `ENABLE_PRIVATE_KEY_EXPORT=1`
-3. **Verify connectivity** — Your node must receive adverts from repeaters/room servers
+3. **Verify connectivity** — Your node must receive adverts from repeaters or room servers
 4. **Check logs** — Look for `meshcore` or Map Auto Uploader messages
 
 Common log messages:
@@ -49,7 +49,8 @@ Common log messages:
 
 ## For more info
 
-- [map.meshcore.dev-uploader](https://github.com/recrof/map.meshcore.dev-uploader) — Standalone bot (Node.js)
-- [map.meshcore.dev](https://github.com/meshcore-dev/map.meshcore.dev) — Official map (frontend)
+- [map.meshcore.io-uploader](https://github.com/recrof/map.meshcore.io-uploader) — Standalone bot (Node.js)
+- [map.meshcore.io](https://map.meshcore.io) — Official map (live site)
+- [meshcore-dev/map.meshcore.io](https://github.com/meshcore-dev/map.meshcore.io) — Map frontend source (GitHub)
 
 Many thanks to [recrof](https://github.com/recrof) for both projects.
