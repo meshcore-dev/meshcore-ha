@@ -134,10 +134,13 @@
           "self_telemetry_enabled": "Enable Self Telemetry",
           "self_telemetry_interval": "Self Telemetry Interval (seconds)",
           "map_upload_enabled": "Enable Map Auto Uploader (map.meshcore.dev)",
+          "auto_cleanup_stale_contacts": "Auto-Cleanup Stale Discovered Contacts (runs daily)",
+          "stale_contact_days": "Stale Contact Threshold (days)",
           "adaptive_poll_wait": "Adaptive Channel Message Delivery"
         },
         "data_description": {
           "map_upload_enabled": "When enabled, adverts from repeaters and room servers you receive are uploaded to map.meshcore.dev. Those nodes appear on the official MeshCore map for the community. Requires private key export enabled on the firmware (`ENABLE_PRIVATE_KEY_EXPORT=1`); without it, uploads cannot be signed.",
+          "auto_cleanup_stale_contacts": "When enabled, discovered contacts whose last update is older than the configured threshold are automatically removed once per day. Contacts saved to the node are always preserved.",
           "adaptive_poll_wait": "When enabled, incoming channel messages fire as soon as RX_LOG data arrives (typically ~50ms) instead of always waiting the full 500ms. Late-arriving repeater data is delivered progressively. Disable if bots or automations depend on having all paths in the initial event."
         },
         "description": "Configure global integration settings",
@@ -242,10 +245,13 @@
           "self_telemetry_enabled": "Enable Self Telemetry",
           "self_telemetry_interval": "Self Telemetry Interval (seconds)",
           "map_upload_enabled": "Enable Map Auto Uploader (map.meshcore.dev)",
+          "auto_cleanup_stale_contacts": "Auto-Cleanup Stale Discovered Contacts (runs daily)",
+          "stale_contact_days": "Stale Contact Threshold (days)",
           "adaptive_poll_wait": "Adaptive Channel Message Delivery"
         },
         "data_description": {
           "map_upload_enabled": "When enabled, adverts from repeaters and room servers you receive are uploaded to map.meshcore.dev. Those nodes appear on the official MeshCore map for the community. Requires private key export enabled on the firmware (`ENABLE_PRIVATE_KEY_EXPORT=1`); without it, uploads cannot be signed.",
+          "auto_cleanup_stale_contacts": "When enabled, discovered contacts whose last update is older than the configured threshold are automatically removed once per day. Contacts saved to the node are always preserved.",
           "adaptive_poll_wait": "When enabled, incoming channel messages fire as soon as RX_LOG data arrives (typically ~50ms) instead of always waiting the full 500ms. Late-arriving repeater data is delivered progressively. Disable if bots or automations depend on having all paths in the initial event."
         },
         "description": "Configure global integration settings",
@@ -401,9 +407,13 @@
       }
     },
     "clear_discovered_contacts": {
-      "name": "Clear All Discovered Contacts",
-      "description": "Remove all discovered contacts and their associated binary sensor entities from Home Assistant. This does NOT remove contacts from your node's contact list.",
+      "name": "Clear Discovered Contacts",
+      "description": "Remove discovered contacts and their associated binary sensor entities from Home Assistant. When days_threshold is specified, only contacts whose last update is older than the threshold are removed and contacts saved to the node are preserved. Without days_threshold, all discovered contacts are removed. This does NOT remove contacts from your node's contact list.",
       "fields": {
+        "days_threshold": {
+          "name": "Days Threshold",
+          "description": "Only remove contacts whose last update is older than this many days. Contacts saved to the node are always preserved. If omitted, all discovered contacts are removed."
+        },
         "entry_id": {
           "name": "Config Entry ID",
           "description": "The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device."
