@@ -98,6 +98,7 @@ Configure integration-wide settings:
 - **Enable Self Telemetry**: Collect telemetry from this node
 - **Self Telemetry Interval** (60-3600 seconds): How often to collect self telemetry data
 - **Enable Map Upload (map.meshcore.dev)**: When enabled, adverts from repeaters and room servers you receive are uploaded to [map.meshcore.dev](https://map.meshcore.dev). Those nodes appear on the official MeshCore map for the community. See [Map Auto Uploader](./map-upload) for details.
+- **Adaptive Channel Message Delivery**: When enabled, incoming channel messages fire as soon as RX_LOG radio reception data arrives (typically ~50ms) instead of always waiting the full 500ms. Late-arriving repeater data is delivered progressively via `meshcore_delivery_update` events. Disabled by default. See [Messaging — RX_LOG Correlation](./messaging#rx_log-correlation) for details.
 
 **Note:** Disabling contact discovery is recommended if you have 50+ contacts and only need to monitor specific tracked repeaters/clients.
 
