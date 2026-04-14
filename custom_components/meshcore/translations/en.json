@@ -133,11 +133,11 @@
           "max_discovered_contacts": "Maximum Discovered Contacts",
           "self_telemetry_enabled": "Enable Self Telemetry",
           "self_telemetry_interval": "Self Telemetry Interval (seconds)",
-          "map_upload_enabled": "Enable Map Auto Uploader (map.meshcore.dev)",
+          "map_upload_enabled": "Enable Map Auto Uploader (map.meshcore.io)",
           "adaptive_poll_wait": "Adaptive Channel Message Delivery"
         },
         "data_description": {
-          "map_upload_enabled": "When enabled, adverts from repeaters and room servers you receive are uploaded to map.meshcore.dev. Those nodes appear on the official MeshCore map for the community. Requires private key export enabled on the firmware (`ENABLE_PRIVATE_KEY_EXPORT=1`); without it, uploads cannot be signed.",
+          "map_upload_enabled": "When enabled, adverts from repeaters and room servers you receive are uploaded to map.meshcore.io. Those nodes appear on the official MeshCore map for the community. Requires private key export enabled on the firmware (`ENABLE_PRIVATE_KEY_EXPORT=1`); without it, uploads cannot be signed.",
           "adaptive_poll_wait": "When enabled, incoming channel messages fire as soon as RX_LOG data arrives (typically ~50ms) instead of always waiting the full 500ms. Late-arriving repeater data is delivered progressively. Disable if bots or automations depend on having all paths in the initial event."
         },
         "description": "Configure global integration settings",
@@ -241,11 +241,11 @@
           "max_discovered_contacts": "Maximum Discovered Contacts",
           "self_telemetry_enabled": "Enable Self Telemetry",
           "self_telemetry_interval": "Self Telemetry Interval (seconds)",
-          "map_upload_enabled": "Enable Map Auto Uploader (map.meshcore.dev)",
+          "map_upload_enabled": "Enable Map Auto Uploader (map.meshcore.io)",
           "adaptive_poll_wait": "Adaptive Channel Message Delivery"
         },
         "data_description": {
-          "map_upload_enabled": "When enabled, adverts from repeaters and room servers you receive are uploaded to map.meshcore.dev. Those nodes appear on the official MeshCore map for the community. Requires private key export enabled on the firmware (`ENABLE_PRIVATE_KEY_EXPORT=1`); without it, uploads cannot be signed.",
+          "map_upload_enabled": "When enabled, adverts from repeaters and room servers you receive are uploaded to map.meshcore.io. Those nodes appear on the official MeshCore map for the community. Requires private key export enabled on the firmware (`ENABLE_PRIVATE_KEY_EXPORT=1`); without it, uploads cannot be signed.",
           "adaptive_poll_wait": "When enabled, incoming channel messages fire as soon as RX_LOG data arrives (typically ~50ms) instead of always waiting the full 500ms. Late-arriving repeater data is delivered progressively. Disable if bots or automations depend on having all paths in the initial event."
         },
         "description": "Configure global integration settings",
