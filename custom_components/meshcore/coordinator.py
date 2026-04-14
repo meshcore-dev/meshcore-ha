@@ -14,6 +14,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.helpers.storage import Store
+from homeassistant.helpers import entity_registry as er
 
 from meshcore.events import Event, EventType
 
@@ -39,6 +40,9 @@ from .const import (
     CONF_SELF_TELEMETRY_ENABLED,
     CONF_SELF_TELEMETRY_INTERVAL,
     DEFAULT_SELF_TELEMETRY_INTERVAL,
+    CONF_AUTO_CLEANUP_STALE_CONTACTS,
+    CONF_STALE_CONTACT_DAYS,
+    DEFAULT_STALE_CONTACT_DAYS,
     CONF_DEVICE_DISABLED,
     AUTO_DISABLE_HOURS,
     RATE_LIMITER_CAPACITY,
@@ -140,7 +144,16 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self._last_self_telemetry_update = 0
         self._self_telemetry_enabled = config_entry.data.get(CONF_SELF_TELEMETRY_ENABLED, False)
         self._self_telemetry_interval = config_entry.data.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL)
-        
+
+        # Auto-cleanup of stale discovered contacts (daily)
+        self._auto_cleanup_stale_contacts = config_entry.data.get(
+            CONF_AUTO_CLEANUP_STALE_CONTACTS, False
+        )
+        self._stale_contact_days = config_entry.data.get(
+            CONF_STALE_CONTACT_DAYS, DEFAULT_STALE_CONTACT_DAYS
+        )
+        self._last_stale_cleanup: float = 0.0
+
         # Telemetry tracking - separate from repeater/client specific logic
         self._next_telemetry_update_times = {}  # Track when each node should have telemetry updated
         self._active_telemetry_tasks = {}  # Track active telemetry tasks by pubkey_prefix
@@ -290,6 +303,98 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
 
         return True
 
+    async def _cleanup_stale_discovered_contacts(self, days_threshold: int) -> int:
+        """Remove discovered contacts whose lastmod exceeds the age threshold.
+
+        Uses lastmod (companion device's local clock, synced by HA) instead of
+        last_advert (which may contain timestamps from advertising nodes with
+        incorrect clocks).
+
+        Contacts with added_to_node=True are always preserved.
+
+        Removals are batched to avoid flooding the event bus with state_changed
+        events, which can overwhelm WebSocket clients and block the main thread.
+
+        Returns the number of contacts removed.
+        """
+        if not self._discovered_contacts:
+            return 0
+
+        now = time.time()
+        threshold_seconds = days_threshold * 86400
+        entity_registry = er.async_get(self.hass)
+        skipped_node_contacts = 0
+
+        # Phase 1: Collect stale contacts (no side effects)
+        stale_keys: list[str] = []
+        for public_key, contact in self._discovered_contacts.items():
+            if contact.get("added_to_node", False):
+                skipped_node_contacts += 1
+                continue
+            lastmod = contact.get("lastmod", 0)
+            if not lastmod or (now - lastmod) > threshold_seconds:
+                stale_keys.append(public_key)
+
+        if not stale_keys:
+            _LOGGER.info(
+                "Stale contact cleanup: 0 contacts older than %d days "
+                "(%d node contacts skipped)",
+                days_threshold, skipped_node_contacts,
+            )
+            return 0
+
+        # Phase 2: Remove in batches, yielding the event loop between each
+        # batch so WebSocket clients can drain their message queues.
+        batch_size = 10
+        removed_count = 0
+
+        for i, public_key in enumerate(stale_keys):
+            contact = self._discovered_contacts.get(public_key)
+            if contact is None:
+                continue
+
+            pubkey_prefix = public_key[:12]
+            contact_name = contact.get("adv_name", pubkey_prefix)
+            lastmod = contact.get("lastmod", 0)
+
+            del self._discovered_contacts[public_key]
+            self.tracked_diagnostic_binary_contacts.discard(pubkey_prefix)
+
+            # O(1) entity registry lookup instead of scanning all entities
+            entity_id = entity_registry.async_get_entity_id(
+                "binary_sensor", DOMAIN, pubkey_prefix
+            )
+            if entity_id:
+                entity_registry.async_remove(entity_id)
+
+            removed_count += 1
+            _LOGGER.debug(
+                "Removed stale discovered contact: %s (%s) — last updated %.0f days ago",
+                contact_name, pubkey_prefix, (now - lastmod) / 86400 if lastmod else 0,
+            )
+
+            # Yield the event loop every batch_size removals
+            if (i + 1) % batch_size == 0:
+                await asyncio.sleep(0)
+
+        # Phase 3: Save and refresh once after all removals
+        if removed_count > 0:
+            try:
+                await self._store.async_save(self._discovered_contacts)
+            except Exception as ex:
+                _LOGGER.error("Error saving discovered contacts: %s", ex)
+
+            updated_data = dict(self.data) if self.data else {}
+            updated_data["contacts"] = self.get_all_contacts()
+            self.async_set_updated_data(updated_data)
+
+        _LOGGER.info(
+            "Stale contact cleanup: removed %d contacts older than %d days "
+            "(%d node contacts skipped)",
+            removed_count, days_threshold, skipped_node_contacts,
+        )
+        return removed_count
+
     def get_contact_by_prefix(self, prefix: str) -> Dict[str, Any]:
         """Get a contact by its public key prefix.
 
@@ -425,6 +530,12 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self._self_telemetry_interval = config_entry.data.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL)
         self._tracked_repeaters = config_entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, [])
         self._tracked_clients = config_entry.data.get(CONF_TRACKED_CLIENTS, [])
+        self._auto_cleanup_stale_contacts = config_entry.data.get(
+            CONF_AUTO_CLEANUP_STALE_CONTACTS, False
+        )
+        self._stale_contact_days = config_entry.data.get(
+            CONF_STALE_CONTACT_DAYS, DEFAULT_STALE_CONTACT_DAYS
+        )
         _LOGGER.debug(f"Updated telemetry settings - Enabled: {self._self_telemetry_enabled}, Interval: {self._self_telemetry_interval}, Tracked clients: {len(self._tracked_clients)}")
 
     def _current_time(self) -> int:
@@ -824,6 +935,23 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
 
         # Store combined contacts (added + discovered) in result data
         result_data["contacts"] = self.get_all_contacts()
+
+        # Auto-cleanup stale discovered contacts (once per day)
+        if self._auto_cleanup_stale_contacts and self._stale_contact_days > 0:
+            now_ts = time.time()
+            if now_ts - self._last_stale_cleanup >= 86400:  # 24 hours
+                self._last_stale_cleanup = now_ts
+                removed = await self._cleanup_stale_discovered_contacts(
+                    self._stale_contact_days
+                )
+                if removed > 0:
+                    _LOGGER.info(
+                        "Auto-cleanup removed %d stale discovered contacts "
+                        "(older than %d days)",
+                        removed, self._stale_contact_days,
+                    )
+                    # Refresh contacts in result_data after cleanup
+                    result_data["contacts"] = self.get_all_contacts()
 
         # Check for self telemetry updates if enabled
         if self._self_telemetry_enabled:

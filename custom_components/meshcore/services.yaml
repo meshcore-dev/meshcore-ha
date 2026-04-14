@@ -180,9 +180,23 @@ cleanup_unavailable_contacts:
         text:
 
 clear_discovered_contacts:
-  name: Clear All Discovered Contacts
-  description: Remove all discovered contacts and their associated binary sensor entities from Home Assistant. This does NOT remove contacts from your node's contact list.
+  name: Clear Discovered Contacts
+  description: >-
+    Remove discovered contacts and their associated binary sensor entities from Home Assistant.
+    When days_threshold is specified, only contacts whose last update is older than the threshold
+    are removed and contacts saved to the node are preserved. Without days_threshold, all
+    discovered contacts are removed. This does NOT remove contacts from your node's contact list.
   fields:
+    days_threshold:
+      name: Days Threshold
+      description: Only remove contacts whose last update is older than this many days. Contacts saved to the node are always preserved. If omitted, all discovered contacts are removed.
+      required: false
+      example: "30"
+      selector:
+        number:
+          min: 1
+          max: 365
+          unit_of_measurement: days
     entry_id:
       name: Config Entry ID
       description: The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device.

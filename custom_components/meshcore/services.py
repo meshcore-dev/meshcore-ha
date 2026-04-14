@@ -1055,7 +1055,13 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     )
 
     async def async_clear_discovered_contacts_service(call: ServiceCall) -> None:
-        """Remove all discovered contacts and their binary sensor entities."""
+        """Remove discovered contacts, optionally filtered by age.
+
+        When days_threshold is provided, only contacts whose lastmod is older
+        than the threshold are removed and contacts with added_to_node=True
+        are preserved. When omitted, all discovered contacts are removed
+        (original behavior).
+        """
         entry_id = call.data.get(ATTR_ENTRY_ID)
 
         coordinator = None
@@ -1075,37 +1081,48 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             _LOGGER.info("No discovered contacts to clear")
             return
 
-        entity_registry = er.async_get(hass)
-        removed_count = len(coordinator._discovered_contacts)
+        days_threshold = call.data.get("days_threshold")
+        if days_threshold:
+            # Threshold-based cleanup: only remove stale contacts
+            await coordinator._cleanup_stale_discovered_contacts(days_threshold)
+        else:
+            # Original behavior: clear all discovered contacts
+            entity_registry = er.async_get(hass)
+            removed_count = len(coordinator._discovered_contacts)
 
-        for public_key in list(coordinator._discovered_contacts.keys()):
-            pubkey_prefix = public_key[:12]
-            coordinator.tracked_diagnostic_binary_contacts.discard(pubkey_prefix)
+            for public_key in list(coordinator._discovered_contacts.keys()):
+                pubkey_prefix = public_key[:12]
+                coordinator.tracked_diagnostic_binary_contacts.discard(pubkey_prefix)
 
-            for entity in list(entity_registry.entities.values()):
-                if entity.platform == DOMAIN and entity.domain == "binary_sensor":
-                    if entity.unique_id == pubkey_prefix:
-                        entity_registry.async_remove(entity.entity_id)
-                        break
+                for entity in list(entity_registry.entities.values()):
+                    if entity.platform == DOMAIN and entity.domain == "binary_sensor":
+                        if entity.unique_id == pubkey_prefix:
+                            entity_registry.async_remove(entity.entity_id)
+                            break
 
-        coordinator._discovered_contacts.clear()
+            coordinator._discovered_contacts.clear()
 
-        try:
-            await coordinator._store.async_save(coordinator._discovered_contacts)
-        except Exception as ex:
-            _LOGGER.error(f"Error saving discovered contacts: {ex}")
+            try:
+                await coordinator._store.async_save(coordinator._discovered_contacts)
+            except Exception as ex:
+                _LOGGER.error(f"Error saving discovered contacts: {ex}")
 
-        updated_data = dict(coordinator.data) if coordinator.data else {}
-        updated_data["contacts"] = coordinator.get_all_contacts()
-        coordinator.async_set_updated_data(updated_data)
+            updated_data = dict(coordinator.data) if coordinator.data else {}
+            updated_data["contacts"] = coordinator.get_all_contacts()
+            coordinator.async_set_updated_data(updated_data)
 
-        _LOGGER.info(f"Cleared {removed_count} discovered contacts")
+            _LOGGER.info(f"Cleared {removed_count} discovered contacts")
 
     hass.services.async_register(
         DOMAIN,
         SERVICE_CLEAR_DISCOVERED_CONTACTS,
         async_clear_discovered_contacts_service,
-        schema=UI_MESSAGE_SCHEMA,
+        schema=vol.Schema({
+            vol.Optional(ATTR_ENTRY_ID): cv.string,
+            vol.Optional("days_threshold"): vol.All(
+                vol.Coerce(int), vol.Range(min=1, max=365)
+            ),
+        }),
     )
 
     # Create CLI command execution service from UI helper

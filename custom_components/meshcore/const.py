@@ -95,6 +95,11 @@ DEFAULT_SELF_TELEMETRY_INTERVAL: Final = 300  # 5 minutes in seconds
 # Map Auto Uploader settings
 CONF_MAP_UPLOAD_ENABLED: Final = "map_upload_enabled"
 
+# Stale contact cleanup settings
+CONF_AUTO_CLEANUP_STALE_CONTACTS: Final = "auto_cleanup_stale_contacts"
+CONF_STALE_CONTACT_DAYS: Final = "stale_contact_days"
+DEFAULT_STALE_CONTACT_DAYS: Final = 30
+
 # MQTT upload settings
 CONF_MQTT_IATA: Final = "mqtt_iata"
 CONF_MQTT_DECODER_CMD: Final = "mqtt_decoder_cmd"
