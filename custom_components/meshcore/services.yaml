@@ -204,3 +204,72 @@ clear_discovered_contacts:
       example: "abc123def456"
       selector:
         text:
+
+get_messages:
+  name: Get Messages
+  description: Retrieve stored messages for a conversation entity. Returns structured message data including sender, text, timestamp, delivery status, and RX log data.
+  fields:
+    entity_id:
+      name: Entity ID
+      description: The binary sensor entity ID of the conversation (contact or channel).
+      required: true
+      example: "binary_sensor.meshcore_abc123_def456_messages"
+      selector:
+        entity:
+          domain: binary_sensor
+    limit:
+      name: Limit
+      description: Maximum number of messages to return (default 50).
+      required: false
+      default: 50
+      selector:
+        number:
+          min: 1
+          max: 500
+          mode: box
+    before:
+      name: Before Cursor
+      description: Message ID to paginate before (returns messages older than this ID).
+      required: false
+      selector:
+        text:
+    entry_id:
+      name: Config Entry ID
+      description: The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device.
+      required: false
+      selector:
+        text:
+
+search_messages:
+  name: Search Messages
+  description: Search stored messages across conversations by text content or sender name.
+  fields:
+    query:
+      name: Search Query
+      description: Text to search for in message content and sender names.
+      required: true
+      selector:
+        text:
+    entity_id:
+      name: Entity ID
+      description: Optionally limit search to a specific conversation entity.
+      required: false
+      selector:
+        entity:
+          domain: binary_sensor
+    limit:
+      name: Limit
+      description: Maximum number of results to return (default 20).
+      required: false
+      default: 20
+      selector:
+        number:
+          min: 1
+          max: 100
+          mode: box
+    entry_id:
+      name: Config Entry ID
+      description: The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device.
+      required: false
+      selector:
+        text:

@@ -16,6 +16,15 @@ from .const import BAT_VMAX, BAT_VMIN, CHANNEL_PREFIX, DOMAIN, MESSAGES_SUFFIX, 
 _LOGGER = logging.getLogger(__name__)
 
 
+def generate_message_id(timestamp: str, sender: str, text: str) -> str:
+    """Generate deterministic message ID matching frontend generateId().
+
+    Creates a 12-char hex ID from SHA256 of timestamp|sender|text.
+    """
+    raw = f"{timestamp}|{sender}|{text}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:12]
+
+
 def extract_pubkey_from_selection(selection: str) -> str | None:
     """Extract pubkey from selection format 'Name (pubkey)'.
 

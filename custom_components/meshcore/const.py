@@ -146,6 +146,12 @@ CONF_ADAPTIVE_POLL_WAIT: Final = "adaptive_poll_wait"
 # Sensor availability timeout multiplier
 SENSOR_AVAILABILITY_TIMEOUT_MULTIPLIER: Final = 3
 
+# Message store settings
+DEFAULT_MESSAGE_RETENTION_DAYS: Final = 90
+DEFAULT_MAX_MESSAGES_PER_CONVERSATION: Final = 500
+MESSAGE_STORE_SAVE_DELAY_SECONDS: Final = 5.0
+MESSAGE_STORE_IDLE_EVICTION_SECONDS: Final = 300  # 5 minutes
+
 
 class NodeType(IntEnum):
     CLIENT = 1

@@ -44,6 +44,7 @@ from .meshcore_api import MeshCoreAPI
 from .map_uploader import MeshCoreMapUploader
 from .mqtt_uploader import MeshCoreMqttUploader
 from .services import async_setup_services, async_unload_services
+from .ws_api import async_register_ws_commands
 from .utils import (
     create_message_correlation_key,
     parse_and_decrypt_rx_log,
@@ -362,7 +363,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     
     # Set up all platforms for this device
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    
+
+    # Initialize persistent message store
+    await coordinator.message_store_startup()
+    await coordinator.cleanup_old_messages()
+
+    # Register WebSocket commands for message store
+    async_register_ws_commands(hass)
+
     # Register static paths for icons
     should_cache = False
     icons_path = Path(__file__).parent / "www" / "icons"
@@ -561,6 +569,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             for remove_listener in coordinator._remove_listeners:
                 remove_listener()
                 
+        # Flush message store before disconnect
+        await coordinator.flush_message_stores()
+
         # Disconnect from the device
         if getattr(coordinator, "mqtt_uploader", None):
             await coordinator.mqtt_uploader.async_stop()

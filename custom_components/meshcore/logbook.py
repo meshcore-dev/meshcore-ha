@@ -14,6 +14,7 @@ from .const import (
 )
 from .utils import (
     create_message_correlation_key,
+    generate_message_id,
     get_channel_entity_id,
     get_contact_entity_id
 )
@@ -186,6 +187,22 @@ async def handle_channel_message(event, coordinator) -> None:
                 )
             )
 
+        # Store in persistent message store
+        msg_id = generate_message_id(event_data["timestamp"], sender_name, message_text)
+        await coordinator.store_message(entity_id, {
+            "id": msg_id,
+            "sender": sender_name,
+            "text": message_text,
+            "timestamp": event_data["timestamp"],
+            "message_type": "channel",
+            "channel": channel_name,
+            "channel_idx": channel_idx,
+            "pubkey_prefix": sender_pubkey or "",
+            "outgoing": False,
+            "rx_log_data": event_data.get("rx_log_data", []),
+            "delivery_status": "sent",
+        })
+
         _LOGGER.debug(
             "Logged channel message in %s from %s%s: %s",
             channel_name,
@@ -308,6 +325,22 @@ def handle_contact_message(event, coordinator) -> None:
         # Fire event
         hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, event_data)
 
+        # Store in persistent message store (sync handler — wrap in task)
+        msg_id = generate_message_id(event_data["timestamp"], contact_name, message_text)
+        hass.async_create_task(
+            coordinator.store_message(entity_id, {
+                "id": msg_id,
+                "sender": contact_name,
+                "text": message_text,
+                "timestamp": event_data["timestamp"],
+                "message_type": "direct",
+                "pubkey_prefix": pubkey_prefix,
+                "outgoing": False,
+                "rx_log_data": [],
+                "delivery_status": "sent",
+            })
+        )
+
         _LOGGER.debug(
             "Logged direct message from %s (%s): %s",
             contact_name,
@@ -370,6 +403,21 @@ async def handle_outgoing_message(event_data, coordinator) -> None:
         # Fire event
         hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, logbook_event)
 
+        # Store in persistent message store
+        msg_id = generate_message_id(logbook_event["timestamp"], device_name, message_text)
+        await coordinator.store_message(entity_id, {
+            "id": msg_id,
+            "sender": device_name,
+            "text": message_text,
+            "timestamp": logbook_event["timestamp"],
+            "message_type": "direct",
+            "pubkey_prefix": pubkey_prefix,
+            "outgoing": True,
+            "rx_log_data": [],
+            "delivery_status": "acked" if ack_received else ("failed" if ack_received is False else "sent"),
+            "ack_received": ack_received,
+        })
+
         _LOGGER.debug(
             "Logged outgoing direct message to %s (%s): %s (ack: %s)",
             receiver_name,
@@ -405,6 +453,22 @@ async def handle_outgoing_message(event_data, coordinator) -> None:
             "message_type": "channel",
             "send_id": event_data.get("send_id"),
         }
+
+        # Store in persistent message store immediately with "pending" status
+        msg_id = generate_message_id(logbook_event["timestamp"], device_name, message_text)
+        await coordinator.store_message(entity_id, {
+            "id": msg_id,
+            "sender": device_name,
+            "text": message_text,
+            "timestamp": logbook_event["timestamp"],
+            "message_type": "channel",
+            "channel": channel_name,
+            "channel_idx": channel_idx,
+            "pubkey_prefix": "",
+            "outgoing": True,
+            "rx_log_data": [],
+            "delivery_status": "pending",
+        })
 
         # Correlate with RX_LOG data for outgoing channel messages.
         # When we send a channel message, repeaters re-broadcast it and our
@@ -478,14 +542,26 @@ async def handle_outgoing_message(event_data, coordinator) -> None:
                         "%d RX_LOG reception(s) total",
                         len(all_rx_logs)
                     )
+
+                # Update stored message with collected RX_LOG data
+                await coordinator.update_message_rx_data(entity_id, msg_id, all_rx_logs)
+                await coordinator.update_message_delivery(
+                    entity_id, msg_id,
+                    "delivered" if all_rx_logs else "sent",
+                    repeater_count=len(all_rx_logs),
+                )
             else:
                 # No timestamp available for correlation, fire single event
                 logbook_event["repeater_count"] = 0
                 hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, logbook_event)
+                # Update stored message delivery status
+                await coordinator.update_message_delivery(entity_id, msg_id, "sent")
         except Exception as ex:
             _LOGGER.debug(f"Error correlating outgoing channel message with RX_LOG: {ex}")
             # Fire event even on error so logbook still gets the entry
             hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, logbook_event)
+            # Update stored message delivery status on error
+            await coordinator.update_message_delivery(entity_id, msg_id, "sent")
 
         _LOGGER.debug(
             "Logged outgoing channel message to %s: %s (repeaters: %s)",

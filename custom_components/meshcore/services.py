@@ -1171,6 +1171,98 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     #     schema=UI_MESSAGE_SCHEMA,
     # )
 
+    # ── Message Store Services ──
+
+    SERVICE_GET_MESSAGES = "get_messages"
+    SERVICE_SEARCH_MESSAGES = "search_messages"
+
+    GET_MESSAGES_SCHEMA = vol.Schema(
+        {
+            vol.Required("entity_id"): cv.string,
+            vol.Optional("limit", default=50): vol.Coerce(int),
+            vol.Optional("before"): cv.string,
+            vol.Optional("entry_id"): cv.string,
+        }
+    )
+
+    SEARCH_MESSAGES_SCHEMA = vol.Schema(
+        {
+            vol.Required("query"): cv.string,
+            vol.Optional("entity_id"): cv.string,
+            vol.Optional("limit", default=20): vol.Coerce(int),
+            vol.Optional("entry_id"): cv.string,
+        }
+    )
+
+    async def async_get_messages_service(call: ServiceCall) -> dict:
+        """Get stored messages for a conversation."""
+        entry_id = call.data.get("entry_id")
+        coordinator = None
+        for eid, entry_data in hass.data[DOMAIN].items():
+            if isinstance(entry_data, dict) and "coordinator" in entry_data:
+                if entry_id is None or eid == entry_id:
+                    coordinator = entry_data["coordinator"]
+                    break
+
+        if not coordinator:
+            return {"messages": [], "error": "No MeshCore coordinator found"}
+
+        entity_id = call.data["entity_id"]
+        limit = call.data.get("limit", 50)
+        before = call.data.get("before")
+
+        messages = await coordinator.get_messages(entity_id, limit=limit, before=before)
+        return {"messages": messages}
+
+    async def async_search_messages_service(call: ServiceCall) -> dict:
+        """Search stored messages across conversations."""
+        entry_id = call.data.get("entry_id")
+        coordinator = None
+        for eid, entry_data in hass.data[DOMAIN].items():
+            if isinstance(entry_data, dict) and "coordinator" in entry_data:
+                if entry_id is None or eid == entry_id:
+                    coordinator = entry_data["coordinator"]
+                    break
+
+        if not coordinator:
+            return {"results": [], "error": "No MeshCore coordinator found"}
+
+        query = call.data["query"].lower()
+        limit = call.data.get("limit", 20)
+        filter_entity = call.data.get("entity_id")
+        results = []
+
+        index = coordinator.get_message_index()
+        entity_ids = [filter_entity] if filter_entity else list(index.keys())
+
+        for eid in entity_ids:
+            messages = await coordinator.get_messages(eid, limit=500)
+            for m in messages:
+                if query in (m.get("text", "") or "").lower() or query in (m.get("sender", "") or "").lower():
+                    results.append({**m, "entity_id": eid})
+                    if len(results) >= limit:
+                        break
+            if len(results) >= limit:
+                break
+
+        return {"results": results}
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_MESSAGES,
+        async_get_messages_service,
+        schema=GET_MESSAGES_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SEARCH_MESSAGES,
+        async_search_messages_service,
+        schema=SEARCH_MESSAGES_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
+
 async def async_unload_services(hass: HomeAssistant) -> None:
     """Unload MeshCore services."""
     if hass.services.has_service(DOMAIN, SERVICE_SEND_MESSAGE):
@@ -1205,6 +1297,12 @@ async def async_unload_services(hass: HomeAssistant) -> None:
 
     if hass.services.has_service(DOMAIN, SERVICE_CLEAR_DISCOVERED_CONTACTS):
         hass.services.async_remove(DOMAIN, SERVICE_CLEAR_DISCOVERED_CONTACTS)
+
+    if hass.services.has_service(DOMAIN, "get_messages"):
+        hass.services.async_remove(DOMAIN, "get_messages")
+
+    if hass.services.has_service(DOMAIN, "search_messages"):
+        hass.services.async_remove(DOMAIN, "search_messages")
 
 
 def create_service_call(

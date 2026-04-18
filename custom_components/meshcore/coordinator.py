@@ -5,7 +5,7 @@ import asyncio
 import logging
 import random
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, Dict
 
 from cachetools import TTLCache
@@ -49,8 +49,13 @@ from .const import (
     RATE_LIMITER_REFILL_RATE_SECONDS,
     RX_LOG_CACHE_MAX_SIZE,
     RX_LOG_CACHE_TTL_SECONDS,
+    DEFAULT_MESSAGE_RETENTION_DAYS,
+    DEFAULT_MAX_MESSAGES_PER_CONVERSATION,
+    MESSAGE_STORE_SAVE_DELAY_SECONDS,
+    MESSAGE_STORE_IDLE_EVICTION_SECONDS,
 )
 from .meshcore_api import MeshCoreAPI
+from .utils import generate_message_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -198,6 +203,22 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         # Dirty contacts tracking for performance optimization
         # Set of pubkey prefixes that have been updated and need sensor refresh
         self._dirty_contacts = set()
+
+        # === Message Store (per-conversation lazy loading) ===
+        # Lightweight index — always in memory after startup
+        self._message_index_store = Store[dict](
+            hass, 1, f"meshcore.{config_entry.entry_id}.message_index"
+        )
+        self._message_index: dict[str, dict] = {}
+        # Per-conversation data — loaded on demand, evicted when idle
+        self._loaded_conversations: dict[str, list[dict]] = {}
+        self._conversation_stores: dict[str, Store] = {}
+        self._conversation_dirty: set[str] = set()
+        self._conversation_last_access: dict[str, float] = {}
+        # Timers for debounced saves and idle eviction
+        self._msg_save_timers: dict[str, asyncio.TimerHandle | None] = {}
+        self._index_save_timer: asyncio.TimerHandle | None = None
+        self._eviction_timer: asyncio.TimerHandle | None = None
 
     def mark_contact_dirty(self, pubkey_prefix: str):
         """Mark a contact as needing update (for performance optimization).
@@ -1144,3 +1165,325 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     _LOGGER.warning(f"Could not find contact for client telemetry request: {pubkey_prefix}")
 
         return result_data
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Message Store — per-conversation persistent storage
+    # ═══════════════════════════════════════════════════════════════════════
+
+    async def message_store_startup(self) -> None:
+        """Load the lightweight message index at integration startup.
+
+        Called from async_setup_entry. Only loads the index (~100 bytes per
+        conversation), not any conversation message data.
+        """
+        stored = await self._message_index_store.async_load()
+        self._message_index = stored or {}
+        _LOGGER.debug(
+            "Message store index loaded: %d conversations tracked",
+            len(self._message_index),
+        )
+
+    async def _ensure_loaded(self, entity_id: str) -> list[dict]:
+        """Load a conversation's messages into memory if not already cached."""
+        if entity_id in self._loaded_conversations:
+            self._conversation_last_access[entity_id] = time.time()
+            return self._loaded_conversations[entity_id]
+
+        # Create Store instance if needed
+        if entity_id not in self._conversation_stores:
+            safe_id = entity_id.replace(".", "_")
+            self._conversation_stores[entity_id] = Store[list](
+                self.hass, 1,
+                f"meshcore.{self.config_entry.entry_id}.msgs.{safe_id}",
+            )
+
+        stored = await self._conversation_stores[entity_id].async_load()
+        messages = stored or []
+        self._loaded_conversations[entity_id] = messages
+        self._conversation_last_access[entity_id] = time.time()
+        self._schedule_eviction()
+        return messages
+
+    async def _load_for_search(self, entity_id: str) -> list[dict]:
+        """Load a conversation for read-only search without caching.
+
+        If the conversation is already cached (user has it open), returns the
+        cached copy. Otherwise loads from disk and returns a transient copy
+        that is NOT stored in _loaded_conversations — preventing search from
+        inflating memory with idle conversations.
+        """
+        # If already in memory, return the cached copy (no side effects)
+        if entity_id in self._loaded_conversations:
+            return self._loaded_conversations[entity_id]
+
+        # Load from disk without caching
+        if entity_id not in self._conversation_stores:
+            safe_id = entity_id.replace(".", "_")
+            self._conversation_stores[entity_id] = Store[list](
+                self.hass, 1,
+                f"meshcore.{self.config_entry.entry_id}.msgs.{safe_id}",
+            )
+
+        stored = await self._conversation_stores[entity_id].async_load()
+        return stored or []
+
+    async def store_message(self, entity_id: str, message: dict) -> None:
+        """Store a message record for a conversation."""
+        messages = await self._ensure_loaded(entity_id)
+
+        # Dedup by ID (check recent messages only)
+        msg_id = message.get("id", "")
+        if msg_id and any(m.get("id") == msg_id for m in messages[-50:]):
+            return
+
+        messages.append(message)
+
+        # Enforce per-conversation limit
+        max_per_conv = self.config_entry.options.get(
+            "max_messages_per_conversation",
+            DEFAULT_MAX_MESSAGES_PER_CONVERSATION,
+        )
+        if len(messages) > max_per_conv:
+            messages[:] = messages[-max_per_conv:]
+
+        self._conversation_dirty.add(entity_id)
+        self._schedule_conversation_save(entity_id)
+
+        # Update lightweight index
+        self._message_index[entity_id] = {
+            "message_count": len(messages),
+            "last_message_ts": message.get("timestamp", ""),
+            "last_sender": message.get("sender", ""),
+            "last_preview": (message.get("text", "") or "")[:50],
+        }
+        self._schedule_index_save()
+
+    async def update_message_rx_data(
+        self, entity_id: str, message_id: str, rx_log_data: list
+    ) -> None:
+        """Update rx_log_data on an existing stored message."""
+        messages = await self._ensure_loaded(entity_id)
+        for m in reversed(messages):  # search newest first
+            if m.get("id") == message_id:
+                m["rx_log_data"] = rx_log_data
+                m["repeater_count"] = len(rx_log_data)
+                self._conversation_dirty.add(entity_id)
+                self._schedule_conversation_save(entity_id)
+                return
+
+    async def update_message_delivery(
+        self, entity_id: str, message_id: str, status: str, **kwargs
+    ) -> None:
+        """Update delivery status on a stored message (ACK, round trip, etc.)."""
+        messages = await self._ensure_loaded(entity_id)
+        for m in reversed(messages):
+            if m.get("id") == message_id:
+                m["delivery_status"] = status
+                m.update(kwargs)
+                self._conversation_dirty.add(entity_id)
+                self._schedule_conversation_save(entity_id)
+                return
+
+    async def get_messages(
+        self, entity_id: str, limit: int = 50,
+        before: str | None = None, after: str | None = None
+    ) -> list[dict]:
+        """Get messages for a conversation with cursor pagination.
+
+        Args:
+            before: Return messages older than this message ID (for lazy-load scrollback).
+            after: Return messages newer than this message ID (for incremental poll).
+        """
+        messages = await self._ensure_loaded(entity_id)
+        if before:
+            idx = next(
+                (i for i, m in enumerate(messages) if m.get("id") == before),
+                len(messages),
+            )
+            messages = messages[:idx]
+        if after:
+            idx = next(
+                (i for i, m in enumerate(messages) if m.get("id") == after),
+                -1,
+            )
+            if idx >= 0:
+                messages = messages[idx + 1:]
+            # For 'after' queries, return oldest-first (up to limit)
+            return messages[:limit]
+        return messages[-limit:]
+
+    def get_message_index(self) -> dict[str, dict]:
+        """Return the lightweight message index (always in memory)."""
+        return self._message_index
+
+    # --- Save scheduling (debounced) ---
+
+    def _schedule_conversation_save(self, entity_id: str) -> None:
+        """Debounce per-conversation store writes."""
+        existing = self._msg_save_timers.get(entity_id)
+        if existing is not None:
+            existing.cancel()
+        self._msg_save_timers[entity_id] = self.hass.loop.call_later(
+            MESSAGE_STORE_SAVE_DELAY_SECONDS,
+            lambda eid=entity_id: self.hass.async_create_task(
+                self._save_conversation(eid)
+            ),
+        )
+
+    async def _save_conversation(self, entity_id: str) -> None:
+        """Save a single conversation to disk."""
+        self._msg_save_timers.pop(entity_id, None)
+        if entity_id not in self._loaded_conversations:
+            return
+        if entity_id not in self._conversation_stores:
+            return
+        try:
+            await self._conversation_stores[entity_id].async_save(
+                self._loaded_conversations[entity_id]
+            )
+            self._conversation_dirty.discard(entity_id)
+        except Exception as ex:
+            _LOGGER.error("Error saving conversation %s: %s", entity_id, ex)
+
+    def _schedule_index_save(self) -> None:
+        """Debounce index store writes."""
+        if self._index_save_timer is not None:
+            self._index_save_timer.cancel()
+        self._index_save_timer = self.hass.loop.call_later(
+            MESSAGE_STORE_SAVE_DELAY_SECONDS,
+            lambda: self.hass.async_create_task(self._save_index()),
+        )
+
+    async def _save_index(self) -> None:
+        """Save the message index to disk."""
+        self._index_save_timer = None
+        try:
+            await self._message_index_store.async_save(self._message_index)
+        except Exception as ex:
+            _LOGGER.error("Error saving message index: %s", ex)
+
+    # --- Idle eviction ---
+
+    def _schedule_eviction(self) -> None:
+        """Schedule idle conversation eviction check."""
+        if self._eviction_timer is not None:
+            self._eviction_timer.cancel()
+        self._eviction_timer = self.hass.loop.call_later(
+            MESSAGE_STORE_IDLE_EVICTION_SECONDS,
+            lambda: self.hass.async_create_task(self._evict_idle()),
+        )
+
+    async def _evict_idle(self) -> None:
+        """Save and unload conversations not accessed in 5+ minutes."""
+        self._eviction_timer = None
+        cutoff = time.time() - MESSAGE_STORE_IDLE_EVICTION_SECONDS
+        evicted = []
+        for entity_id in list(self._loaded_conversations):
+            if self._conversation_last_access.get(entity_id, 0) < cutoff:
+                # Save if dirty
+                if entity_id in self._conversation_dirty:
+                    await self._save_conversation(entity_id)
+                # Unload from memory
+                del self._loaded_conversations[entity_id]
+                self._conversation_last_access.pop(entity_id, None)
+                evicted.append(entity_id)
+
+        if evicted:
+            _LOGGER.debug("Evicted %d idle conversation(s) from memory", len(evicted))
+
+        # Reschedule if there are still loaded conversations
+        if self._loaded_conversations:
+            self._schedule_eviction()
+
+    # --- Flush / cleanup ---
+
+    async def flush_message_stores(self) -> None:
+        """Save all dirty conversations and the index to disk.
+
+        Called at integration unload to ensure no data is lost.
+        """
+        # Cancel pending timers
+        for timer in self._msg_save_timers.values():
+            if timer is not None:
+                timer.cancel()
+        self._msg_save_timers.clear()
+        if self._index_save_timer is not None:
+            self._index_save_timer.cancel()
+            self._index_save_timer = None
+        if self._eviction_timer is not None:
+            self._eviction_timer.cancel()
+            self._eviction_timer = None
+
+        # Save all dirty conversations
+        for entity_id in list(self._conversation_dirty):
+            if entity_id in self._loaded_conversations:
+                store = self._conversation_stores.get(entity_id)
+                if store:
+                    try:
+                        await store.async_save(self._loaded_conversations[entity_id])
+                    except Exception as ex:
+                        _LOGGER.error("Error flushing conversation %s: %s", entity_id, ex)
+        self._conversation_dirty.clear()
+
+        # Save index
+        try:
+            await self._message_index_store.async_save(self._message_index)
+        except Exception as ex:
+            _LOGGER.error("Error flushing message index: %s", ex)
+
+    async def cleanup_old_messages(self) -> None:
+        """Remove messages older than retention period.
+
+        Called at integration startup and can be scheduled daily.
+        Uses transient loading to avoid caching all conversations in memory.
+        """
+        retention_days = self.config_entry.options.get(
+            "message_retention_days", DEFAULT_MESSAGE_RETENTION_DAYS
+        )
+        cutoff = datetime.now() - timedelta(days=retention_days)
+        cutoff_iso = cutoff.isoformat()
+        total_pruned = 0
+
+        for entity_id in list(self._message_index.keys()):
+            # If already cached (user has conversation open), prune in-place
+            if entity_id in self._loaded_conversations:
+                messages = self._loaded_conversations[entity_id]
+                original_count = len(messages)
+                messages[:] = [m for m in messages if m.get("timestamp", "") > cutoff_iso]
+                trimmed = original_count - len(messages)
+                if trimmed > 0:
+                    total_pruned += trimmed
+                    self._conversation_dirty.add(entity_id)
+                    if messages:
+                        self._message_index[entity_id]["message_count"] = len(messages)
+                    else:
+                        del self._message_index[entity_id]
+                continue
+
+            # Not cached — load transiently, prune, save, discard
+            if entity_id not in self._conversation_stores:
+                safe_id = entity_id.replace(".", "_")
+                self._conversation_stores[entity_id] = Store[list](
+                    self.hass, 1,
+                    f"meshcore.{self.config_entry.entry_id}.msgs.{safe_id}",
+                )
+            stored = await self._conversation_stores[entity_id].async_load()
+            messages = stored or []
+            original_count = len(messages)
+            messages = [m for m in messages if m.get("timestamp", "") > cutoff_iso]
+            trimmed = original_count - len(messages)
+
+            if trimmed > 0:
+                total_pruned += trimmed
+                await self._conversation_stores[entity_id].async_save(messages)
+                if messages:
+                    self._message_index[entity_id]["message_count"] = len(messages)
+                else:
+                    del self._message_index[entity_id]
+
+        if total_pruned > 0:
+            _LOGGER.info(
+                "Message retention cleanup: pruned %d messages older than %d days",
+                total_pruned, retention_days,
+            )
+            self._schedule_index_save()
