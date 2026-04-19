@@ -35,6 +35,7 @@ from .const import (
     CONF_REPEATER_UPDATE_INTERVAL,
     CONF_REPEATER_TELEMETRY_ENABLED,
     CONF_REPEATER_DISABLE_PATH_RESET,
+    CONF_REPEATER_NEIGHBORS_ENABLED,
     DEFAULT_REPEATER_UPDATE_INTERVAL,
     MIN_UPDATE_INTERVAL,
     CONF_TRACKED_CLIENTS,
@@ -55,6 +56,9 @@ from .const import (
     CONF_STALE_CONTACT_DAYS,
     DEFAULT_STALE_CONTACT_DAYS,
     CONF_ADAPTIVE_POLL_WAIT,
+    CONF_AUTO_CLEANUP_STALE_NEIGHBORS,
+    CONF_STALE_NEIGHBOR_DAYS,
+    DEFAULT_STALE_NEIGHBOR_DAYS,
     CONF_MQTT_IATA,
     CONF_MQTT_TOKEN_TTL_SECONDS,
     CONF_MQTT_BROKERS,
@@ -574,19 +578,22 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         default_interval = DEFAULT_REPEATER_UPDATE_INTERVAL
         default_telemetry = False
         default_disable_path_reset = False
-        
+        default_neighbors_enabled = False
+
         if user_input:
             default_password = user_input.get(CONF_REPEATER_PASSWORD, "")
             default_interval = user_input.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
             default_telemetry = user_input.get(CONF_REPEATER_TELEMETRY_ENABLED, False)
             default_disable_path_reset = user_input.get(CONF_REPEATER_DISABLE_PATH_RESET, False)
-            
+            default_neighbors_enabled = user_input.get(CONF_REPEATER_NEIGHBORS_ENABLED, False)
+
         return self.async_show_form(
             step_id="add_repeater",
             data_schema=vol.Schema({
                 vol.Required(CONF_REPEATER_NAME): vol.In(repeater_dict.keys()),
                 vol.Optional(CONF_REPEATER_PASSWORD, default=default_password): str,
                 vol.Optional(CONF_REPEATER_TELEMETRY_ENABLED, default=default_telemetry): bool,
+                vol.Optional(CONF_REPEATER_NEIGHBORS_ENABLED, default=default_neighbors_enabled): bool,
                 vol.Optional(CONF_REPEATER_UPDATE_INTERVAL, default=default_interval): vol.All(cv.positive_int, vol.Range(min=MIN_UPDATE_INTERVAL)),
                 vol.Optional(CONF_REPEATER_DISABLE_PATH_RESET, default=default_disable_path_reset): bool,
             }),
@@ -628,6 +635,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         update_interval = user_input.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
         telemetry_enabled = user_input.get(CONF_REPEATER_TELEMETRY_ENABLED, True)
         disable_path_reset = user_input.get(CONF_REPEATER_DISABLE_PATH_RESET, False)
+        neighbors_enabled = user_input.get(CONF_REPEATER_NEIGHBORS_ENABLED, False)
 
         # The selected_repeater has format: "Name (prefix)"
         selected_str = selected_repeater
@@ -703,6 +711,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             "firmware_version": ver,
             CONF_REPEATER_PASSWORD: password,
             CONF_REPEATER_TELEMETRY_ENABLED: telemetry_enabled,
+            CONF_REPEATER_NEIGHBORS_ENABLED: neighbors_enabled,
             CONF_REPEATER_UPDATE_INTERVAL: update_interval,
             CONF_REPEATER_DISABLE_PATH_RESET: disable_path_reset,
         })
@@ -887,6 +896,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             new_data[CONF_AUTO_CLEANUP_STALE_CONTACTS] = user_input[CONF_AUTO_CLEANUP_STALE_CONTACTS]
             new_data[CONF_STALE_CONTACT_DAYS] = user_input[CONF_STALE_CONTACT_DAYS]
             new_data[CONF_ADAPTIVE_POLL_WAIT] = user_input[CONF_ADAPTIVE_POLL_WAIT]
+            new_data[CONF_AUTO_CLEANUP_STALE_NEIGHBORS] = user_input[CONF_AUTO_CLEANUP_STALE_NEIGHBORS]
+            new_data[CONF_STALE_NEIGHBOR_DAYS] = user_input[CONF_STALE_NEIGHBOR_DAYS]
             self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
 
             if new_data[CONF_LIMIT_DISCOVERED_CONTACTS]:
@@ -907,6 +918,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         current_auto_cleanup = self.config_entry.data.get(CONF_AUTO_CLEANUP_STALE_CONTACTS, False)
         current_stale_days = self.config_entry.data.get(CONF_STALE_CONTACT_DAYS, DEFAULT_STALE_CONTACT_DAYS)
         current_adaptive_poll_wait = self.config_entry.data.get(CONF_ADAPTIVE_POLL_WAIT, False)
+        current_auto_cleanup_neighbors = self.config_entry.data.get(CONF_AUTO_CLEANUP_STALE_NEIGHBORS, False)
+        current_stale_neighbor_days = self.config_entry.data.get(CONF_STALE_NEIGHBOR_DAYS, DEFAULT_STALE_NEIGHBOR_DAYS)
 
         return self.async_show_form(
             step_id="global_settings",
@@ -920,6 +933,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_AUTO_CLEANUP_STALE_CONTACTS, default=current_auto_cleanup): cv.boolean,
                 vol.Optional(CONF_STALE_CONTACT_DAYS, default=current_stale_days): vol.All(cv.positive_int, vol.Range(min=1, max=365)),
                 vol.Optional(CONF_ADAPTIVE_POLL_WAIT, default=current_adaptive_poll_wait): cv.boolean,
+                vol.Optional(CONF_AUTO_CLEANUP_STALE_NEIGHBORS, default=current_auto_cleanup_neighbors): cv.boolean,
+                vol.Optional(CONF_STALE_NEIGHBOR_DAYS, default=current_stale_neighbor_days): vol.All(cv.positive_int, vol.Range(min=1, max=365)),
             }),
         )
 
@@ -1199,11 +1214,15 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
         _LOGGER.debug("User_input for editing repeater: %s", user_input)
         if user_input is not None:
+            # Capture old state for change detection
+            old_neighbors_enabled = repeater.get(CONF_REPEATER_NEIGHBORS_ENABLED, False)
+
             # Update repeater settings
             new_password = user_input.get(CONF_REPEATER_PASSWORD, "")
             if new_password:
                 repeater[CONF_REPEATER_PASSWORD] = new_password
             repeater[CONF_REPEATER_TELEMETRY_ENABLED] = user_input[CONF_REPEATER_TELEMETRY_ENABLED]
+            repeater[CONF_REPEATER_NEIGHBORS_ENABLED] = user_input[CONF_REPEATER_NEIGHBORS_ENABLED]
             repeater[CONF_REPEATER_UPDATE_INTERVAL] = user_input[CONF_REPEATER_UPDATE_INTERVAL]
             repeater[CONF_REPEATER_DISABLE_PATH_RESET] = user_input[CONF_REPEATER_DISABLE_PATH_RESET]
             repeater[CONF_DEVICE_DISABLED] = user_input[CONF_DEVICE_DISABLED]
@@ -1231,6 +1250,17 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             _LOGGER.debug("Updating repeater subscriptions: %s", new_data[CONF_REPEATER_SUBSCRIPTIONS])
             self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
 
+            # If neighbors was just disabled, clean up existing entities
+            now_neighbors_enabled = user_input.get(CONF_REPEATER_NEIGHBORS_ENABLED, False)
+            if old_neighbors_enabled and not now_neighbors_enabled:
+                coordinator = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id)
+                if coordinator and hasattr(coordinator, "cleanup_neighbor_entities"):
+                    removed = coordinator.cleanup_neighbor_entities(prefix)
+                    _LOGGER.info(
+                        "Disabled neighbors for %s: removed %d entities",
+                        repeater.get("name"), removed,
+                    )
+
             return await self.async_step_init()
 
         # Show current settings
@@ -1242,6 +1272,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     description={"suggested_value": repeater.get(CONF_REPEATER_PASSWORD, "")}
                 ): str,
                 vol.Optional(CONF_REPEATER_TELEMETRY_ENABLED, default=repeater.get(CONF_REPEATER_TELEMETRY_ENABLED, False)): bool,
+                vol.Optional(CONF_REPEATER_NEIGHBORS_ENABLED, default=repeater.get(CONF_REPEATER_NEIGHBORS_ENABLED, False)): bool,
                 vol.Optional(CONF_REPEATER_UPDATE_INTERVAL, default=repeater.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)): vol.All(cv.positive_int, vol.Range(min=MIN_UPDATE_INTERVAL)),
                 vol.Optional(CONF_REPEATER_DISABLE_PATH_RESET, default=repeater.get(CONF_REPEATER_DISABLE_PATH_RESET, False)): bool,
                 vol.Optional(CONF_DEVICE_DISABLED, default=repeater.get(CONF_DEVICE_DISABLED, False)): bool,

@@ -66,6 +66,7 @@ CONF_REPEATER_PASSWORD: Final = "password"
 CONF_REPEATER_UPDATE_INTERVAL: Final = "update_interval"
 CONF_REPEATER_TELEMETRY_ENABLED: Final = "telemetry_enabled"
 CONF_REPEATER_DISABLE_PATH_RESET: Final = "disable_path_reset"
+CONF_REPEATER_NEIGHBORS_ENABLED: Final = "neighbors_enabled"
 DEFAULT_REPEATER_UPDATE_INTERVAL: Final = 7200  # 2 hours in seconds
 MIN_UPDATE_INTERVAL: Final = 300  # 5 minutes minimum
 MAX_REPEATER_FAILURES_BEFORE_LOGIN: Final = 5  # After this many failures, try login
@@ -113,6 +114,14 @@ REPEATER_BACKOFF_MAX_MULTIPLIER: Final = 120  # Maximum backoff multiplier (10 m
 MAX_FAILURES_BEFORE_PATH_RESET: Final = 3  # Reset path after this many failures
 MAX_RETRY_ATTEMPTS: Final = 5  # Maximum retry attempts within refresh window
 MAX_RANDOM_DELAY: Final = 30  # Maximum random delay in seconds
+
+# Repeater neighbor settings
+NEIGHBOR_PUBKEY_PREFIX_LENGTH: Final = 6  # Bytes requested from firmware (12 hex chars)
+NEIGHBOR_STALE_THRESHOLD: Final = 259200  # 72 hours in seconds — neighbor goes unavailable after this
+SEEN_WINDOW_SECS: Final = 172800  # 48-hour rolling window for seen count
+CONF_AUTO_CLEANUP_STALE_NEIGHBORS: Final = "auto_cleanup_stale_neighbors"
+CONF_STALE_NEIGHBOR_DAYS: Final = "stale_neighbor_days"
+DEFAULT_STALE_NEIGHBOR_DAYS: Final = 7
 
 
 # Generic battery voltage to percentage lookup table

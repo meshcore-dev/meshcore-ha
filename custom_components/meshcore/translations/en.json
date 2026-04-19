@@ -89,6 +89,7 @@
           "repeater_name": "Available Repeaters",
           "repeater_password": "Repeater Password",
           "telemetry_enabled": "Enable Telemetry Polling (automatically polls and discovers telemetry data)",
+          "neighbors_enabled": "Enable Neighbor Entities (creates SNR and activity sensors for each neighbor seen by the repeater)",
           "repeater_update_interval": "Telemetry Refresh Rate (seconds)"
         },
         "description": "Monitor a repeater for telemetry and status",
@@ -114,6 +115,7 @@
         "data": {
           "repeater_password": "Update Password (leave blank to keep current)",
           "telemetry_enabled": "Enable Telemetry Polling (automatically polls and discovers telemetry data)",
+          "neighbors_enabled": "Enable Neighbor Entities (creates SNR and activity sensors for each neighbor seen by the repeater)",
           "repeater_update_interval": "Telemetry Refresh Rate (seconds)"
         },
         "description": "Edit settings for {device_name}",
@@ -136,11 +138,15 @@
           "map_upload_enabled": "Enable Map Auto Uploader (map.meshcore.io)",
           "auto_cleanup_stale_contacts": "Auto-Cleanup Stale Discovered Contacts (runs daily)",
           "stale_contact_days": "Stale Contact Threshold (days)",
+          "auto_cleanup_stale_neighbors": "Auto-Remove Stale Neighbors",
+          "stale_neighbor_days": "Stale Neighbor Threshold (days)",
           "adaptive_poll_wait": "Adaptive Channel Message Delivery"
         },
         "data_description": {
           "map_upload_enabled": "When enabled, adverts from repeaters and room servers you receive are uploaded to map.meshcore.io. Those nodes appear on the official MeshCore map for the community. Requires private key export enabled on the firmware (`ENABLE_PRIVATE_KEY_EXPORT=1`); without it, uploads cannot be signed.",
           "auto_cleanup_stale_contacts": "When enabled, discovered contacts whose last update is older than the configured threshold are automatically removed once per day. Contacts saved to the node are always preserved.",
+          "auto_cleanup_stale_neighbors": "Automatically remove neighbor entries and their sensor entities when they haven't been heard from in the configured number of days.",
+          "stale_neighbor_days": "Number of days without hearing a neighbor before it is automatically removed (1–365).",
           "adaptive_poll_wait": "When enabled, incoming channel messages fire as soon as RX_LOG data arrives (typically ~50ms) instead of always waiting the full 500ms. Late-arriving repeater data is delivered progressively. Disable if bots or automations depend on having all paths in the initial event."
         },
         "description": "Configure global integration settings",
@@ -194,6 +200,7 @@
           "repeater_name": "Available Repeaters",
           "repeater_password": "Repeater Password",
           "telemetry_enabled": "Enable Telemetry Polling",
+          "neighbors_enabled": "Enable Neighbor Entities (creates SNR and activity sensors for each neighbor seen by the repeater)",
           "repeater_update_interval": "Telemetry Refresh Rate (seconds)",
           "disable_path_reset": "Disable Path Reset"
         },
@@ -221,6 +228,7 @@
         "data": {
           "repeater_password": "Update Password (leave blank to keep current)",
           "telemetry_enabled": "Enable Telemetry Polling",
+          "neighbors_enabled": "Enable Neighbor Entities (creates SNR and activity sensors for each neighbor seen by the repeater)",
           "repeater_update_interval": "Telemetry Refresh Rate (seconds)",
           "disable_path_reset": "Disable Path Reset",
           "disabled": "Disable Device"
@@ -247,11 +255,15 @@
           "map_upload_enabled": "Enable Map Auto Uploader (map.meshcore.io)",
           "auto_cleanup_stale_contacts": "Auto-Cleanup Stale Discovered Contacts (runs daily)",
           "stale_contact_days": "Stale Contact Threshold (days)",
+          "auto_cleanup_stale_neighbors": "Auto-Remove Stale Neighbors",
+          "stale_neighbor_days": "Stale Neighbor Threshold (days)",
           "adaptive_poll_wait": "Adaptive Channel Message Delivery"
         },
         "data_description": {
           "map_upload_enabled": "When enabled, adverts from repeaters and room servers you receive are uploaded to map.meshcore.io. Those nodes appear on the official MeshCore map for the community. Requires private key export enabled on the firmware (`ENABLE_PRIVATE_KEY_EXPORT=1`); without it, uploads cannot be signed.",
           "auto_cleanup_stale_contacts": "When enabled, discovered contacts whose last update is older than the configured threshold are automatically removed once per day. Contacts saved to the node are always preserved.",
+          "auto_cleanup_stale_neighbors": "Automatically remove neighbor entries and their sensor entities when they haven't been heard from in the configured number of days.",
+          "stale_neighbor_days": "Number of days without hearing a neighbor before it is automatically removed (1–365).",
           "adaptive_poll_wait": "When enabled, incoming channel messages fire as soon as RX_LOG data arrives (typically ~50ms) instead of always waiting the full 500ms. Late-arriving repeater data is delivered progressively. Disable if bots or automations depend on having all paths in the initial event."
         },
         "description": "Configure global integration settings",
