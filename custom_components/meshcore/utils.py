@@ -11,7 +11,9 @@ from typing import Any
 from Crypto.Cipher import AES
 from homeassistant.util import slugify
 
-from .const import BAT_VMAX, BAT_VMIN, CHANNEL_PREFIX, DOMAIN, MESSAGES_SUFFIX, NodeType
+from .const import (
+    BAT_VMAX, BAT_VMIN, CHANNEL_PREFIX, DOMAIN, MESSAGES_SUFFIX, NodeType,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -19,7 +21,17 @@ _LOGGER = logging.getLogger(__name__)
 def generate_message_id(timestamp: str, sender: str, text: str) -> str:
     """Generate deterministic message ID matching frontend generateId().
 
-    Creates a 12-char hex ID from SHA256 of timestamp|sender|text.
+    Uses SHA256 of 'timestamp|sender|text' truncated to 12 hex chars.
+    This ensures IDs match between real-time events and stored records,
+    and between backend and frontend.
+
+    Args:
+        timestamp: ISO timestamp string
+        sender: Sender name
+        text: Message text
+
+    Returns:
+        12-character hex string
     """
     raw = f"{timestamp}|{sender}|{text}"
     return hashlib.sha256(raw.encode()).hexdigest()[:12]
@@ -288,15 +300,21 @@ def parse_and_decrypt_rx_log(payload: Any, channels_info: dict[int, dict]) -> di
         if len(packet_bytes) < 2:
             return result
 
-        # Parse header and path
+        # Parse header and packed path_len byte
+        # Firmware Packet.h: bits 6-7 encode hash size, bits 0-5 encode hop count
         header = packet_bytes[0]
-        path_len = packet_bytes[1]
+        path_len_raw = packet_bytes[1]
+        hash_size = (path_len_raw >> 6) + 1   # 1, 2, or 3 bytes per hop
+        hop_count = path_len_raw & 63          # number of relay hops
+        path_byte_len = hop_count * hash_size
 
         # Extract payload type from header (bits 2-5)
         payload_type = (header >> 2) & 0x0F
 
         result["header"] = f"{header:02x}"
-        result["path_len"] = path_len
+        result["path_len"] = path_len_raw
+        result["hop_count"] = hop_count
+        result["hash_size"] = hash_size
         result["payload_type"] = payload_type
 
         # Check if this is GroupText (0x05)
@@ -305,7 +323,7 @@ def parse_and_decrypt_rx_log(payload: Any, channels_info: dict[int, dict]) -> di
             return result
 
         # Validate packet length
-        path_end = 2 + path_len
+        path_end = 2 + path_byte_len
         if len(packet_bytes) < path_end + 3:  # Need at least channel_hash + 2-byte MAC
             return result
 
@@ -348,7 +366,9 @@ def parse_and_decrypt_rx_log(payload: Any, channels_info: dict[int, dict]) -> di
                         "timestamp": timestamp,
                         "text": message_text,
                         "decrypted": True,
-                        "path_len": path_len,
+                        "path_len": path_len_raw,
+                        "hop_count": hop_count,
+                        "hash_size": hash_size,
                         "path": path_data.hex(),
                         "channel_hash": f"{channel_hash_byte:02x}"
                     }
@@ -391,16 +411,20 @@ def parse_rx_log_data(payload: Any) -> dict[str, Any]:
 
     RX_LOG_DATA events contain raw LoRa payload with header, path, and channel hash.
     Format:
-    - Bytes 0-1: Header/identifier
-    - Bytes 2-3: Hop count (path_len)
-    - Bytes 4+: Path data (2 hex chars per node)
+    - Byte 0: Header (route type in bits 0-1, payload type in bits 2-5)
+    - Byte 1: Packed path_len byte:
+        - Bits 6-7: path hash size encoding ((value >> 6) + 1 = bytes per hop: 1, 2, or 3)
+        - Bits 0-5: hop count (number of relay nodes in path)
+        - Actual path byte length = hop_count * hash_size
+    - Bytes 2+: Path data (hash_size bytes per hop)
     - After path: Channel hash
 
     Args:
         payload: Raw event payload (dict with 'payload' or 'raw_hex', or direct hex string)
 
     Returns:
-        Dict with parsed fields: header, path_len, path, channel_hash
+        Dict with parsed fields: header, path_len (raw byte), hop_count, hash_size,
+        path, path_nodes, channel_hash.
         Returns empty dict on parsing errors (fault tolerant)
     """
     result = {}
@@ -432,20 +456,26 @@ def parse_rx_log_data(payload: Any) -> dict[str, Any]:
             _LOGGER.debug(f"RX_LOG hex too short: {len(hex_str)} chars")
             return result
 
-        # Parse header (bytes 0-1)
+        # Parse header (byte 0)
         result["header"] = hex_str[0:2]
 
-        # Parse path_len (bytes 2-3)
+        # Parse packed path_len byte (byte 1)
+        # Firmware Packet.h: bits 6-7 encode hash size, bits 0-5 encode hop count
         try:
-            path_len = int(hex_str[2:4], 16)
-            result["path_len"] = path_len
+            path_len_raw = int(hex_str[2:4], 16)
+            hash_size = (path_len_raw >> 6) + 1   # 1, 2, or 3 bytes per hop
+            hop_count = path_len_raw & 63          # number of relay hops
+            result["path_len"] = path_len_raw
+            result["hash_size"] = hash_size
+            result["hop_count"] = hop_count
         except ValueError:
             _LOGGER.debug(f"Could not parse path_len from: {hex_str[2:4]}")
             return result
 
         # Calculate expected positions
         path_start = 4
-        path_end = path_start + (path_len * 2)  # Each node is 2 hex chars
+        path_byte_len = hop_count * hash_size
+        path_end = path_start + (path_byte_len * 2)  # 2 hex chars per byte
 
         # Validate length for path data
         if len(hex_str) < path_end:
@@ -456,10 +486,11 @@ def parse_rx_log_data(payload: Any) -> dict[str, Any]:
         path_hex = hex_str[path_start:path_end]
         result["path"] = path_hex
 
-        # Parse individual nodes in path (2 chars each)
+        # Parse individual nodes in path (hash_size bytes = hash_size*2 hex chars each)
         path_nodes = []
-        for i in range(0, len(path_hex), 2):
-            node_hex = path_hex[i:i+2]
+        node_hex_len = hash_size * 2
+        for i in range(0, len(path_hex), node_hex_len):
+            node_hex = path_hex[i:i + node_hex_len]
             path_nodes.append(node_hex)
         result["path_nodes"] = path_nodes
 
@@ -469,8 +500,9 @@ def parse_rx_log_data(payload: Any) -> dict[str, Any]:
             if len(hex_str) >= path_end + 2:
                 result["channel_hash"] = hex_str[path_end:path_end+2]
 
-        _LOGGER.debug(f"Parsed RX_LOG: header={result.get('header')}, path_len={result.get('path_len')}, "
-                     f"path={result.get('path')}, channel_hash={result.get('channel_hash')}")
+        _LOGGER.debug(f"Parsed RX_LOG: header={result.get('header')}, hop_count={hop_count}, "
+                     f"hash_size={hash_size}, path={result.get('path')}, "
+                     f"channel_hash={result.get('channel_hash')}")
 
     except Exception as ex:
         _LOGGER.debug(f"Error parsing RX_LOG data: {ex}")

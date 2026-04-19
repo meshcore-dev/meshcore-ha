@@ -26,7 +26,6 @@ EVENT_MESHCORE_MESSAGE = "meshcore_message"
 # Lightweight event for progressive delivery sensor updates (not logged)
 EVENT_MESHCORE_DELIVERY_UPDATE = "meshcore_delivery_update"
 
-
 @callback
 def async_describe_events(
     hass: HomeAssistant,
@@ -87,10 +86,16 @@ async def handle_channel_message(event, coordinator) -> None:
 
                 # Use the provided coordinator for contact lookup
                 if coordinator and hasattr(coordinator, "api") and coordinator.api.mesh_core:
-                    # Try to find contact by name to get public key
+                    # Try saved contacts first (SDK), then discovered contacts
                     contact = coordinator.api.mesh_core.get_contact_by_name(sender_name)
                     if contact and isinstance(contact, dict):
                         sender_pubkey = contact.get("public_key", "")[:12]
+                    elif hasattr(coordinator, "_discovered_contacts"):
+                        # Search discovered contacts by advertised name
+                        for full_pk, disc in coordinator._discovered_contacts.items():
+                            if disc.get("adv_name") == sender_name:
+                                sender_pubkey = full_pk[:12]
+                                break
 
         # Check for Home Assistant instance
         if not hasattr(coordinator, "hass"):
@@ -178,17 +183,10 @@ async def handle_channel_message(event, coordinator) -> None:
         # Fire the meshcore_message event
         hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, event_data)
 
-        # In adaptive mode, start background collection for late-arriving
-        # repeater RX_LOGs (progressive delivery updates).
-        if adaptive and hash_key is not None:
-            hass.async_create_task(
-                _collect_incoming_rx_logs(
-                    hass, coordinator, hash_key, event_data
-                )
-            )
-
-        # Store in persistent message store
-        msg_id = generate_message_id(event_data["timestamp"], sender_name, message_text)
+        # Store message with full metadata in the message store
+        msg_id = generate_message_id(
+            event_data["timestamp"], sender_name, message_text
+        )
         await coordinator.store_message(entity_id, {
             "id": msg_id,
             "sender": sender_name,
@@ -202,6 +200,15 @@ async def handle_channel_message(event, coordinator) -> None:
             "rx_log_data": event_data.get("rx_log_data", []),
             "delivery_status": "sent",
         })
+
+        # In adaptive mode, start background collection for late-arriving
+        # repeater RX_LOGs (progressive delivery updates).
+        if adaptive and hash_key is not None:
+            hass.async_create_task(
+                _collect_incoming_rx_logs(
+                    hass, coordinator, hash_key, event_data
+                )
+            )
 
         _LOGGER.debug(
             "Logged channel message in %s from %s%s: %s",
@@ -265,8 +272,19 @@ async def _collect_incoming_rx_logs(
             }
             hass.bus.async_fire(EVENT_MESHCORE_DELIVERY_UPDATE, update_data)
 
+        # Update the stored message with final rx_log_data
+        if all_rx_logs:
+            entity_id = base_event_data.get("entity_id", "")
+            msg_id = generate_message_id(
+                base_event_data.get("timestamp", ""),
+                base_event_data.get("sender_name", ""),
+                base_event_data.get("message", ""),
+            )
+            await coordinator.update_message_rx_data(entity_id, msg_id, all_rx_logs)
+
     except Exception as ex:
         _LOGGER.debug("Error in background RX_LOG collection: %s", ex)
+
 
 def handle_contact_message(event, coordinator) -> None:
     """Handle contact message event."""
@@ -310,6 +328,12 @@ def handle_contact_message(event, coordinator) -> None:
             pubkey_prefix[:6]
         )
 
+        # Parse the packed path_len byte from firmware:
+        # bits 6-7 = hash_size mode (add 1 for bytes), bits 0-5 = hop_count
+        path_len_raw = payload.get("path_len", 0)
+        hop_count = path_len_raw & 63 if isinstance(path_len_raw, int) else 0
+        snr = payload.get("SNR")  # V3 only, uppercase in SDK
+
         # Create event data
         event_data = {
             "message": message_text,
@@ -319,14 +343,20 @@ def handle_contact_message(event, coordinator) -> None:
             "entity_id": entity_id,
             "domain": DOMAIN,
             "timestamp": datetime.now().isoformat(),
-            "message_type": "direct"  # Explicit message type for filtering
+            "message_type": "direct",  # Explicit message type for filtering
+            "hop_count": hop_count,
         }
+
+        if snr is not None:
+            event_data["snr"] = snr
 
         # Fire event
         hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, event_data)
 
-        # Store in persistent message store (sync handler — wrap in task)
-        msg_id = generate_message_id(event_data["timestamp"], contact_name, message_text)
+        # Store message with full metadata in the message store
+        msg_id = generate_message_id(
+            event_data["timestamp"], contact_name, message_text
+        )
         hass.async_create_task(
             coordinator.store_message(entity_id, {
                 "id": msg_id,
@@ -336,8 +366,9 @@ def handle_contact_message(event, coordinator) -> None:
                 "message_type": "direct",
                 "pubkey_prefix": pubkey_prefix,
                 "outgoing": False,
-                "rx_log_data": [],
+                "rx_log_data": event_data.get("rx_log_data", []),
                 "delivery_status": "sent",
+                "hop_count": hop_count,
             })
         )
 
@@ -403,8 +434,10 @@ async def handle_outgoing_message(event_data, coordinator) -> None:
         # Fire event
         hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, logbook_event)
 
-        # Store in persistent message store
-        msg_id = generate_message_id(logbook_event["timestamp"], device_name, message_text)
+        # Store outgoing direct message
+        msg_id = generate_message_id(
+            logbook_event["timestamp"], device_name, message_text
+        )
         await coordinator.store_message(entity_id, {
             "id": msg_id,
             "sender": device_name,
@@ -414,8 +447,9 @@ async def handle_outgoing_message(event_data, coordinator) -> None:
             "pubkey_prefix": pubkey_prefix,
             "outgoing": True,
             "rx_log_data": [],
-            "delivery_status": "acked" if ack_received else ("failed" if ack_received is False else "sent"),
+            "delivery_status": "sent" if ack_received else ("failed" if ack_received is False else "pending"),
             "ack_received": ack_received,
+            "send_id": event_data.get("send_id"),
         })
 
         _LOGGER.debug(
@@ -454,20 +488,22 @@ async def handle_outgoing_message(event_data, coordinator) -> None:
             "send_id": event_data.get("send_id"),
         }
 
-        # Store in persistent message store immediately with "pending" status
-        msg_id = generate_message_id(logbook_event["timestamp"], device_name, message_text)
+        # Store outgoing channel message immediately (rx_log_data updated after collection)
+        outgoing_msg_id = generate_message_id(
+            logbook_event["timestamp"], device_name, message_text
+        )
         await coordinator.store_message(entity_id, {
-            "id": msg_id,
+            "id": outgoing_msg_id,
             "sender": device_name,
             "text": message_text,
             "timestamp": logbook_event["timestamp"],
             "message_type": "channel",
             "channel": channel_name,
             "channel_idx": channel_idx,
-            "pubkey_prefix": "",
             "outgoing": True,
             "rx_log_data": [],
             "delivery_status": "pending",
+            "send_id": event_data.get("send_id"),
         })
 
         # Correlate with RX_LOG data for outgoing channel messages.
@@ -543,25 +579,24 @@ async def handle_outgoing_message(event_data, coordinator) -> None:
                         len(all_rx_logs)
                     )
 
-                # Update stored message with collected RX_LOG data
-                await coordinator.update_message_rx_data(entity_id, msg_id, all_rx_logs)
+                # Update the stored message with collected rx_log_data
+                if all_rx_logs:
+                    await coordinator.update_message_rx_data(
+                        entity_id, outgoing_msg_id, all_rx_logs
+                    )
+                # Update delivery status to "sent" now that collection is done
                 await coordinator.update_message_delivery(
-                    entity_id, msg_id,
-                    "delivered" if all_rx_logs else "sent",
+                    entity_id, outgoing_msg_id, "sent",
                     repeater_count=len(all_rx_logs),
                 )
             else:
                 # No timestamp available for correlation, fire single event
                 logbook_event["repeater_count"] = 0
                 hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, logbook_event)
-                # Update stored message delivery status
-                await coordinator.update_message_delivery(entity_id, msg_id, "sent")
         except Exception as ex:
             _LOGGER.debug(f"Error correlating outgoing channel message with RX_LOG: {ex}")
             # Fire event even on error so logbook still gets the entry
             hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, logbook_event)
-            # Update stored message delivery status on error
-            await coordinator.update_message_delivery(entity_id, msg_id, "sent")
 
         _LOGGER.debug(
             "Logged outgoing channel message to %s: %s (repeaters: %s)",

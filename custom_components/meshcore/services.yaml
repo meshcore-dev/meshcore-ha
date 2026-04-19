@@ -205,71 +205,75 @@ clear_discovered_contacts:
       selector:
         text:
 
+
 get_messages:
-  name: Get Messages
-  description: Retrieve stored messages for a conversation entity. Returns structured message data including sender, text, timestamp, delivery status, and RX log data.
+  name: Get messages
+  description: >-
+    Retrieve stored messages for a MeshCore conversation. Returns structured
+    message data including sender, text, timestamp, route/SNR/RSSI data,
+    and delivery status. Use response_variable in automations to access results.
   fields:
     entity_id:
-      name: Entity ID
-      description: The binary sensor entity ID of the conversation (contact or channel).
+      name: Entity
+      description: The conversation entity (channel or DM binary_sensor).
       required: true
-      example: "binary_sensor.meshcore_abc123_def456_messages"
       selector:
         entity:
+          integration: meshcore
           domain: binary_sensor
     limit:
       name: Limit
-      description: Maximum number of messages to return (default 50).
-      required: false
+      description: Maximum number of messages to return (newest first).
       default: 50
       selector:
         number:
           min: 1
           max: 500
-          mode: box
     before:
-      name: Before Cursor
-      description: Message ID to paginate before (returns messages older than this ID).
+      name: Before
+      description: Message ID cursor — return messages older than this ID for pagination.
       required: false
       selector:
         text:
     entry_id:
       name: Config Entry ID
-      description: The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device.
+      description: The config entry ID if you have multiple MeshCore devices.
       required: false
       selector:
         text:
 
 search_messages:
-  name: Search Messages
-  description: Search stored messages across conversations by text content or sender name.
+  name: Search messages
+  description: >-
+    Search stored MeshCore messages by text content or sender name.
+    Searches across all conversations unless entity_id is specified.
+    Use response_variable in automations to access results.
   fields:
     query:
-      name: Search Query
-      description: Text to search for in message content and sender names.
+      name: Query
+      description: Search text (matched against message text and sender name, case-insensitive).
       required: true
       selector:
         text:
     entity_id:
-      name: Entity ID
-      description: Optionally limit search to a specific conversation entity.
+      name: Entity
+      description: Limit search to a specific conversation. Leave empty to search all conversations.
       required: false
       selector:
         entity:
+          integration: meshcore
           domain: binary_sensor
     limit:
       name: Limit
-      description: Maximum number of results to return (default 20).
-      required: false
+      description: Maximum number of results to return.
       default: 20
       selector:
         number:
           min: 1
           max: 100
-          mode: box
     entry_id:
       name: Config Entry ID
-      description: The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device.
+      description: The config entry ID if you have multiple MeshCore devices.
       required: false
       selector:
         text:
