@@ -222,6 +222,26 @@ Binary sensors showing node freshness:
   - On = Fresh (recent activity within 12 hours)
   - Off = Stale (no recent activity)
 
+#### Device Online Status
+
+A per-device connectivity sensor for each managed repeater and client. Unlike the integration-level connection sensor (which reports whether the companion device itself is reachable via USB/TCP/BLE), this sensor reflects whether a specific managed node is being successfully polled.
+
+- **Entity**: `binary_sensor.meshcore_<pubkey>_online_<name>`
+- **Device Class**: Connectivity
+- **States**:
+  - **On** — the last successful poll for this device was within the staleness window
+  - **Off** — the companion device is disconnected, or no successful poll within the staleness window
+  - **Unknown** — the device has never been successfully polled this session
+
+**Staleness window**: `2.5 × max(device_update_interval, 300s)`. Defaults to 12.5 minutes for a device on the default 5-minute update cadence. Increases proportionally for devices configured with slower refresh rates.
+
+**Attributes**
+- `last_successful_request` — ISO 8601 timestamp of the most recent successful poll
+- `update_interval` — the device's configured telemetry refresh rate, in seconds
+- `staleness_window` — the current threshold, in seconds
+
+**Why this exists alongside the node status sensor**: The `sensor.meshcore_..._node_status` entity reports the companion device's own connection state (USB / TCP / BLE link up). A repeater or client tracked by the integration can stop responding while the companion stays connected — for example, when the remote node is out of range, powered off, or when its routing path has degraded. This sensor distinguishes those two failure modes.
+
 #### Message Tracking
 Binary sensors created on first message:
 
