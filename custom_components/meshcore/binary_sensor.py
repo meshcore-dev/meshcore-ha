@@ -26,6 +26,7 @@ from .const import (
     MESSAGES_SUFFIX,
     CHANNEL_PREFIX,
     CONTACT_SUFFIX,
+    ONLINE_SUFFIX,
     NodeType,
 )
 from .utils import (
@@ -259,6 +260,21 @@ async def async_setup_entry(
         ]
         if mqtt_entities:
             async_add_entities(mqtt_entities)
+
+    # Create online status binary sensors for managed devices
+    online_entities = []
+    for repeater_config in coordinator._tracked_repeaters:
+        if repeater_config.get("pubkey_prefix"):
+            online_entities.append(
+                MeshCoreDeviceOnlineBinarySensor(coordinator, repeater_config, "repeater")
+            )
+    for client_config in coordinator._tracked_clients:
+        if client_config.get("pubkey_prefix"):
+            online_entities.append(
+                MeshCoreDeviceOnlineBinarySensor(coordinator, client_config, "client")
+            )
+    if online_entities:
+        async_add_entities(online_entities)
 
     # Subscribe to our internal message sent event for outgoing messages
     @callback
@@ -669,5 +685,76 @@ class MeshCoreContactDiagnosticBinarySensor(CoordinatorEntity, BinarySensorEntit
         if last_advert > 0:
             last_advert_time = datetime.fromtimestamp(last_advert)
             attributes["last_advert_formatted"] = last_advert_time.isoformat()
-            
+
         return attributes
+
+
+class MeshCoreDeviceOnlineBinarySensor(CoordinatorEntity, BinarySensorEntity):
+    """Binary sensor indicating whether a managed device (repeater/client) is online.
+
+    Derives status from coordinator._last_successful_request timing rather than
+    the global companion BLE/serial connected flag.
+    """
+
+    _attr_has_entity_name = True
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+
+    def __init__(
+        self,
+        coordinator: DataUpdateCoordinator,
+        node_config: dict,
+        node_type: str,
+    ) -> None:
+        """Initialize the device online binary sensor."""
+        super().__init__(coordinator)
+
+        self._node_type = node_type
+        self._node_name = node_config.get("name", "Unknown")
+        self.pubkey_prefix = node_config.get("pubkey_prefix", "")
+
+        entry_id = coordinator.config_entry.entry_id
+        device_id = f"{entry_id}_{node_type}_{self.pubkey_prefix}"
+        pubkey_short = self.pubkey_prefix[:10]
+        safe_name = sanitize_name(self._node_name)
+
+        self._attr_unique_id = f"{device_id}_{ONLINE_SUFFIX}_{pubkey_short}_{safe_name}"
+        self._attr_name = "Online"
+
+        self.entity_id = format_entity_id(
+            ENTITY_DOMAIN_BINARY_SENSOR,
+            pubkey_short,
+            ONLINE_SUFFIX,
+            safe_name,
+        )
+
+    @property
+    def device_info(self):
+        """Attach to the existing managed device."""
+        entry_id = self.coordinator.config_entry.entry_id
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"{entry_id}_{self._node_type}_{self.pubkey_prefix}")},
+        )
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return True if device is online, False if offline, None if unknown."""
+        if not self.coordinator.api.connected:
+            return False
+        last_success = self.coordinator._last_successful_request.get(self.pubkey_prefix)
+        if last_success is None:
+            return None  # renders as "unknown" in HA
+        update_interval = self.coordinator.get_device_update_interval(self.pubkey_prefix)
+        staleness_window = max(update_interval, 300) * 2.5
+        return (time.time() - last_success) < staleness_window
+
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return timing context for the online status."""
+        attrs: Dict[str, Any] = {}
+        last_success = self.coordinator._last_successful_request.get(self.pubkey_prefix)
+        if last_success is not None:
+            attrs["last_successful_request"] = datetime.fromtimestamp(last_success).isoformat()
+        update_interval = self.coordinator.get_device_update_interval(self.pubkey_prefix)
+        attrs["update_interval"] = update_interval
+        attrs["staleness_window"] = max(update_interval, 300) * 2.5
+        return attrs
