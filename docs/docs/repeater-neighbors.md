@@ -40,6 +40,26 @@ The friendly name for both sensors resolves to the neighbor's advertised name wh
 
 The next repeater update cycle will query the firmware for the neighbor list and create sensors. Disabling the toggle removes all neighbor sensors for that repeater, clears in-memory state, and deletes persisted data.
 
+## Airtime cost
+
+Enabling neighbor entities for a repeater adds a small, bounded amount of mesh traffic. The integration sends one binary request to the repeater on every poll cycle (default: every 2 hours, set by **Update Interval** on the repeater subscription) and the repeater replies with its current neighbor list.
+
+**Per cycle, per enabled repeater:**
+
+- **Request**: ~10 bytes of binary payload.
+- **Response**: 4-byte header plus ~11 bytes per neighbor in the list (6-byte pubkey prefix + 4-byte last-heard + 1-byte SNR). A repeater with 25 neighbors returns ~280 bytes; 50 neighbors returns ~550 bytes.
+
+**How this travels on the mesh.** The request and response are direct, path-routed messages between your Home Assistant gateway node and the repeater — not flood adverts. Only the nodes on the established path between the gateway and the repeater re-transmit the packets. The footprint therefore scales with the hop count to that specific repeater, not with the size of the mesh.
+
+- **Zero-hop repeater** (your gateway hears the repeater directly): only those two nodes are on-air for the exchange. The cheapest case.
+- **N-hop repeater**: each of the N intermediate repeaters also re-transmits. Airtime events per cycle are roughly `2 × (N + 1)`.
+
+In practical terms, the cost per cycle is comparable to sending one extra telemetry request to the same repeater, and substantially lower than a single flood advert or a group-channel message — both of which are re-transmitted by every repeater in range of any participant regardless of who the target is.
+
+**Cadence.** At the default 2-hour `Update Interval` this is about one exchange every 2 hours per enabled repeater, or ~12 per day per repeater. Shortening `Update Interval` scales the cost linearly.
+
+**Firmware requirement.** The repeater must run firmware that supports the neighbors binary request (MeshCore firmware ≥ 1.14.1). Older firmware will not respond and the sensors will remain unavailable until the repeater is updated.
+
 ## Persistence
 
 Neighbor data is stored through Home Assistant's `Store` helper. After a restart, all neighbor sensors are recreated from disk and the 48-hour activity window continues seamlessly. The integration guards `seen_timestamps` against the inflated `secs_ago` values the firmware reports during its own startup, so the rolling window remains accurate across both HA and repeater reboots.
@@ -54,10 +74,6 @@ Separate from the per-repeater enable toggle, an integration-wide option automat
 When enabled, a daily task removes matching neighbors from every tracked repeater. The sensors are removed from the entity registry, in-memory state is cleared, and the persisted data is rewritten. This prevents the sensor count from growing without bound in mobile or dense deployments where nodes come and go.
 
 Configure under **Configure → Global Settings**.
-
-## Removing a single neighbor
-
-The frontend sidebar panel exposes a button to remove an individual neighbor — useful when you want to prune a single stale entry without waiting for the daily cleanup or adjusting the global threshold. The removal is handled by a WebSocket API command consumed by the panel UI. It is not a Home Assistant service call and is not usable from YAML automations.
 
 ## Use cases
 
