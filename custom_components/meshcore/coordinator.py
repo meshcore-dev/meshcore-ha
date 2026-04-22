@@ -867,49 +867,6 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             self.logger.error("Error loading persisted neighbor data: %s", ex)
         self._neighbor_data_loaded = True
 
-    def remove_single_neighbor(self, repeater_pubkey: str, neighbor_pubkey: str) -> int:
-        """Remove a single neighbor's sensor entities from HA and coordinator tracking.
-
-        Removes both SNR and Seen sensor entities for the specified neighbor,
-        removes from in-memory data and created sensors set, and persists.
-        Returns the number of entities removed.
-        """
-        from homeassistant.helpers import entity_registry as er
-
-        entity_registry = er.async_get(self.hass)
-        # Unique IDs end with _neighbor_{pubkey[:12]}_snr or _seen
-        unique_id_prefix = (
-            f"{self.config_entry.entry_id}_repeater_{repeater_pubkey}"
-            f"_neighbor_{neighbor_pubkey[:12]}"
-        )
-        removed = 0
-
-        for entity in list(entity_registry.entities.values()):
-            if entity.platform == DOMAIN and (entity.unique_id or "").startswith(unique_id_prefix):
-                _LOGGER.info("Removing neighbor entity: %s", entity.entity_id)
-                entity_registry.async_remove(entity.entity_id)
-                removed += 1
-
-        # Remove from in-memory neighbor data
-        repeater_neighbors = self._repeater_neighbors.get(repeater_pubkey, {})
-        if neighbor_pubkey in repeater_neighbors:
-            del repeater_neighbors[neighbor_pubkey]
-
-        # Remove from created sensors tracking
-        sensor_key = f"{repeater_pubkey}:{neighbor_pubkey}"
-        self._created_neighbor_sensors.discard(sensor_key)
-
-        # Persist updated data
-        self.hass.async_create_task(self._save_neighbor_data())
-
-        if removed:
-            _LOGGER.info(
-                "Removed %d entities for neighbor %s on repeater %s",
-                removed, neighbor_pubkey[:6], repeater_pubkey[:6]
-            )
-
-        return removed
-
     def cleanup_neighbor_entities(self, pubkey_prefix: str) -> int:
         """Remove all neighbor sensor entities for a repeater from the entity registry.
 
