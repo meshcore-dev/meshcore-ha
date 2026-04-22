@@ -92,6 +92,9 @@
           "neighbors_enabled": "Enable Neighbor Entities (creates SNR and activity sensors for each neighbor seen by the repeater)",
           "repeater_update_interval": "Telemetry Refresh Rate (seconds)"
         },
+        "data_description": {
+          "neighbors_enabled": "Queries this repeater for its neighbor list on each poll cycle and exposes each neighbor as two sensors. Airtime cost is one direct request and response per cycle — at the default 2-hour `Update Interval` that's roughly one exchange every 2 hours per enabled repeater, comparable to one extra telemetry request. Requires MeshCore firmware \u2265 1.14.1."
+        },
         "description": "Monitor a repeater for telemetry and status",
         "title": "Add Repeater Station"
       },
@@ -117,6 +120,9 @@
           "telemetry_enabled": "Enable Telemetry Polling (automatically polls and discovers telemetry data)",
           "neighbors_enabled": "Enable Neighbor Entities (creates SNR and activity sensors for each neighbor seen by the repeater)",
           "repeater_update_interval": "Telemetry Refresh Rate (seconds)"
+        },
+        "data_description": {
+          "neighbors_enabled": "Queries this repeater for its neighbor list on each poll cycle and exposes each neighbor as two sensors. Airtime cost is one direct request and response per cycle — at the default 2-hour `Update Interval` that's roughly one exchange every 2 hours per enabled repeater, comparable to one extra telemetry request. Requires MeshCore firmware \u2265 1.14.1."
         },
         "description": "Edit settings for {device_name}",
         "title": "Edit Repeater"
@@ -204,6 +210,9 @@
           "repeater_update_interval": "Telemetry Refresh Rate (seconds)",
           "disable_path_reset": "Disable Path Reset"
         },
+        "data_description": {
+          "neighbors_enabled": "Queries this repeater for its neighbor list on each poll cycle and exposes each neighbor as two sensors. Airtime cost is one direct request and response per cycle — at the default 2-hour `Update Interval` that's roughly one exchange every 2 hours per enabled repeater, comparable to one extra telemetry request. Requires MeshCore firmware \u2265 1.14.1."
+        },
         "description": "Monitor a repeater for telemetry and status",
         "title": "Add Repeater Station"
       },
@@ -232,6 +241,9 @@
           "repeater_update_interval": "Telemetry Refresh Rate (seconds)",
           "disable_path_reset": "Disable Path Reset",
           "disabled": "Disable Device"
+        },
+        "data_description": {
+          "neighbors_enabled": "Queries this repeater for its neighbor list on each poll cycle and exposes each neighbor as two sensors. Airtime cost is one direct request and response per cycle — at the default 2-hour `Update Interval` that's roughly one exchange every 2 hours per enabled repeater, comparable to one extra telemetry request. Requires MeshCore firmware \u2265 1.14.1."
         },
         "description": "Edit settings for {device_name}",
         "title": "Edit Repeater"
