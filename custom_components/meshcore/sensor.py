@@ -1608,6 +1608,19 @@ class MeshCoreNeighborSensor(CoordinatorEntity, SensorEntity):
         """Update the friendly name based on current resolved name."""
         self._attr_name = f"Neighbor {self._resolved_name} SNR"
 
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle coordinator updates — re-resolve friendly name before state write.
+
+        Picks up name changes when a neighbor later shows up in the contact list,
+        without depending on the frontend reading extra_state_attributes.
+        """
+        new_name = self.coordinator.resolve_neighbor_name(self._neighbor_pubkey)
+        if new_name != self._resolved_name:
+            self._resolved_name = new_name
+            self._update_friendly_name()
+        super()._handle_coordinator_update()
+
     @property
     def _neighbor_data(self) -> dict | None:
         """Get current neighbor data from coordinator."""
@@ -1653,12 +1666,6 @@ class MeshCoreNeighborSensor(CoordinatorEntity, SensorEntity):
             days = secs_ago // 86400
             hours = (secs_ago % 86400) // 3600
             last_seen = f"{days}d {hours}h ago"
-
-        # Re-resolve name on each attribute read (picks up newly discovered contacts)
-        new_name = self.coordinator.resolve_neighbor_name(self._neighbor_pubkey)
-        if new_name != self._resolved_name:
-            self._resolved_name = new_name
-            self._update_friendly_name()
 
         last_updated = data.get("last_updated")
         last_updated_str = (
@@ -1739,6 +1746,19 @@ class MeshCoreNeighborSeenSensor(CoordinatorEntity, SensorEntity):
         """Update the friendly name based on current resolved name."""
         self._attr_name = f"Neighbor {self._resolved_name} Seen"
 
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle coordinator updates — re-resolve friendly name before state write.
+
+        Picks up name changes when a neighbor later shows up in the contact list,
+        without depending on the frontend reading extra_state_attributes.
+        """
+        new_name = self.coordinator.resolve_neighbor_name(self._neighbor_pubkey)
+        if new_name != self._resolved_name:
+            self._resolved_name = new_name
+            self._update_friendly_name()
+        super()._handle_coordinator_update()
+
     @property
     def _neighbor_data(self) -> dict | None:
         """Get current neighbor data from coordinator."""
@@ -1766,12 +1786,6 @@ class MeshCoreNeighborSeenSensor(CoordinatorEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional attributes."""
-        # Re-resolve name on each attribute read
-        new_name = self.coordinator.resolve_neighbor_name(self._neighbor_pubkey)
-        if new_name != self._resolved_name:
-            self._resolved_name = new_name
-            self._update_friendly_name()
-
         return {
             "pubkey_prefix": self._neighbor_pubkey,
             "resolved_name": self._resolved_name,
