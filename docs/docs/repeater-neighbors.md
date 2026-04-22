@@ -58,7 +58,9 @@ In practical terms, the cost per cycle is comparable to sending one extra teleme
 
 **Cadence.** At the default 2-hour `Update Interval` this is about one exchange every 2 hours per enabled repeater, or ~12 per day per repeater. Shortening `Update Interval` scales the cost linearly.
 
-**Firmware requirement.** The repeater must run firmware that supports the neighbors binary request (MeshCore firmware ≥ 1.14.1). Older firmware will not respond and the sensors will remain unavailable until the repeater is updated.
+**Shared rate limiter.** The neighbor request consumes one token from the integration's shared mesh-request rate limiter — the same token bucket used for repeater status polls, login retries, and tracked-node telemetry (surfaced as the `rate_limiter_tokens` sensor). If the bucket is empty when a neighbor fetch is due, the fetch is skipped for that cycle and retries on the next poll; enabling neighbors therefore slightly increases contention for this shared pool in deployments that already track many repeaters and clients.
+
+**Firmware requirement.** The repeater must run firmware that supports the neighbors binary request (MeshCore firmware ≥ 1.14.0). Older firmware will not respond and the sensors will remain unavailable until the repeater is updated.
 
 ## Persistence
 
