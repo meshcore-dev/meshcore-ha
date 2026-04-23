@@ -29,6 +29,7 @@ _MOCKS = [
     "custom_components.meshcore.meshcore_api",
     "custom_components.meshcore.utils",
     "custom_components.meshcore.mqtt_uploader",
+    "custom_components.meshcore.binary_sensor",
 ]
 
 for _mod in _MOCKS:
