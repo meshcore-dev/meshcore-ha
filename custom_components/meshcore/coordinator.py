@@ -49,6 +49,13 @@ from .const import (
     RATE_LIMITER_REFILL_RATE_SECONDS,
     RX_LOG_CACHE_MAX_SIZE,
     RX_LOG_CACHE_TTL_SECONDS,
+    NEIGHBOR_PUBKEY_PREFIX_LENGTH,
+    NEIGHBOR_STALE_THRESHOLD,
+    SEEN_WINDOW_SECS,
+    CONF_REPEATER_NEIGHBORS_ENABLED,
+    CONF_AUTO_CLEANUP_STALE_NEIGHBORS,
+    CONF_STALE_NEIGHBOR_DAYS,
+    DEFAULT_STALE_NEIGHBOR_DAYS,
 )
 from .meshcore_api import MeshCoreAPI
 
@@ -88,6 +95,11 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
 
         # Storage for discovered contacts
         self._store = Store[dict[str, dict]](hass, 1, f"meshcore.{config_entry.entry_id}.discovered_contacts")
+        # Storage for neighbor data (persists SNR, seen_timestamps, etc. across restarts)
+        self._neighbor_store = Store[dict[str, dict]](
+            hass, 1, f"meshcore.{config_entry.entry_id}.neighbor_data"
+        )
+        self._neighbor_data_loaded = False
         # Get name and pubkey from config_entry.data (not options)
         self.name = config_entry.data.get(CONF_NAME)
         self.pubkey = config_entry.data.get(CONF_PUBKEY)
@@ -176,6 +188,22 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         # safety-net poll only fires after MSG_SAFETY_NET_INTERVAL of silence.
         self._last_msg_activity: float = 0.0
         self._initial_drain_done: bool = False
+
+        # Repeater neighbor tracking
+        # Key: repeater pubkey_prefix, Value: dict of neighbor data keyed by neighbor pubkey
+        # Each neighbor entry: {pubkey, snr, secs_ago, last_updated, resolved_name}
+        self._repeater_neighbors: Dict[str, Dict[str, dict]] = {}
+        # Track which neighbor sensor entities have been created: set of "repeater_pubkey:neighbor_pubkey"
+        self._created_neighbor_sensors: set = set()
+
+        # Auto-cleanup of stale neighbors (daily)
+        self._auto_cleanup_stale_neighbors = config_entry.data.get(
+            CONF_AUTO_CLEANUP_STALE_NEIGHBORS, False
+        )
+        self._stale_neighbor_days = config_entry.data.get(
+            CONF_STALE_NEIGHBOR_DAYS, DEFAULT_STALE_NEIGHBOR_DAYS
+        )
+        self._last_stale_neighbor_cleanup = 0.0
 
         # RX_LOG correlation cache: auto-evicts after TTL expires
         # Key: correlation hash, Value: list of RX_LOG data (multiple receptions possible)
@@ -536,13 +564,347 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self._stale_contact_days = config_entry.data.get(
             CONF_STALE_CONTACT_DAYS, DEFAULT_STALE_CONTACT_DAYS
         )
+        self._auto_cleanup_stale_neighbors = config_entry.data.get(
+            CONF_AUTO_CLEANUP_STALE_NEIGHBORS, False
+        )
+        self._stale_neighbor_days = config_entry.data.get(
+            CONF_STALE_NEIGHBOR_DAYS, DEFAULT_STALE_NEIGHBOR_DAYS
+        )
         _LOGGER.debug(f"Updated telemetry settings - Enabled: {self._self_telemetry_enabled}, Interval: {self._self_telemetry_interval}, Tracked clients: {len(self._tracked_clients)}")
 
     def _current_time(self) -> int:
         """Return current time as integer seconds since epoch."""
         return int(time.time())
-    
-        
+
+    def resolve_neighbor_name(self, neighbor_pubkey: str) -> str:
+        """Resolve a neighbor pubkey prefix to a contact name.
+
+        Searches the merged contacts list (added + discovered) for a
+        public_key that starts with the neighbor's prefix.
+        Returns the hex prefix (uppercase) if no match is found.
+        """
+        for contact in (self.data or {}).get("contacts", []):
+            pk = contact.get("public_key", "") or contact.get("pubkey_prefix", "")
+            if pk and pk.lower().startswith(neighbor_pubkey.lower()):
+                return contact.get("adv_name") or contact.get("name") or neighbor_pubkey[:6].upper()
+        return neighbor_pubkey[:6].upper()
+
+    async def _fetch_repeater_neighbors(self, contact, repeater_name: str, pubkey_prefix: str):
+        """Fetch neighbor data for a repeater after a successful status request.
+
+        Calls the SDK's fetch_all_neighbours() binary command and stores the
+        result in self._repeater_neighbors. Creates new sensor entities for
+        any neighbors not previously seen. Tracks sightings as timestamps in
+        a rolling 48h window (seen_timestamps). Persists neighbor data to
+        storage for survival across restarts.
+        """
+        try:
+            # Check rate limiter before making mesh request
+            if not self._rate_limiter.try_consume(1):
+                self.logger.debug(f"Rate limited: skipping neighbor fetch for {repeater_name}")
+                return
+
+            self.logger.debug(f"Fetching neighbors for repeater {repeater_name} ({pubkey_prefix})")
+            result = await self.api.mesh_core.commands.fetch_all_neighbours(
+                contact, pubkey_prefix_length=NEIGHBOR_PUBKEY_PREFIX_LENGTH
+            )
+
+            if not result or "neighbours" not in result:
+                self.logger.debug(f"No neighbor data returned for {repeater_name}")
+                return
+
+            neighbours = result["neighbours"]
+            now = time.time()
+            updated_neighbors = {}
+
+            # Get existing data before iteration (for seen_timestamps carry-over)
+            existing = self._repeater_neighbors.get(pubkey_prefix, {})
+            cutoff = now - SEEN_WINDOW_SECS
+
+            for neighbour in neighbours:
+                if not neighbour or not isinstance(neighbour, dict):
+                    continue
+                n_pubkey = neighbour.get("pubkey", "")
+                if not n_pubkey:
+                    continue
+                n_snr = neighbour.get("snr", 0)
+                n_secs_ago = neighbour.get("secs_ago", 0)
+
+                # Track sightings as timestamps in a rolling 48h window.
+                # The firmware computes secs_ago from its own RTC, so if secs_ago
+                # decreased since last poll, heard_timestamp was refreshed — the
+                # neighbor was heard again. If secs_ago grew or stayed the same,
+                # nothing new happened.
+                existing_data = existing.get(n_pubkey, {})
+                prev_secs_ago = existing_data.get("secs_ago")
+
+                # Carry forward existing timestamps, pruning entries older than 48h
+                prev_timestamps = existing_data.get("seen_timestamps", [])
+                seen_timestamps = [t for t in prev_timestamps if t > cutoff]
+
+                # Only record a sighting if the neighbor was actually heard
+                # within the 48h window.  After an HA restart the stored
+                # secs_ago is inflated by the elapsed downtime, so the
+                # "n_secs_ago < prev_secs_ago" comparison would incorrectly
+                # treat every stale neighbor as newly heard.
+                if n_secs_ago <= SEEN_WINDOW_SECS:
+                    if prev_secs_ago is None:
+                        # First sighting — always record it
+                        seen_timestamps.append(now)
+                    elif n_secs_ago < prev_secs_ago:
+                        # secs_ago decreased — firmware heard this neighbor again
+                        seen_timestamps.append(now)
+                # else: stale (>48h) or secs_ago grew/stayed same — don't record
+
+                updated_neighbors[n_pubkey] = {
+                    "pubkey": n_pubkey,
+                    "snr": n_snr,
+                    "secs_ago": n_secs_ago,
+                    "last_updated": now,
+                    "resolved_name": self.resolve_neighbor_name(n_pubkey),
+                    "seen_timestamps": seen_timestamps,
+                }
+
+            # Preserve neighbors from previous polls that aren't in this response
+            # (they may still be valid, just not in the current page)
+            for n_pubkey, n_data in existing.items():
+                if n_pubkey not in updated_neighbors:
+                    # Keep old data but don't update last_updated — staleness
+                    # is tracked via secs_ago from the most recent poll that included it.
+                    # Prune seen_timestamps so stale entries don't inflate the count.
+                    prev_ts = n_data.get("seen_timestamps", [])
+                    n_data["seen_timestamps"] = [t for t in prev_ts if t > cutoff]
+                    updated_neighbors[n_pubkey] = n_data
+
+            self._repeater_neighbors[pubkey_prefix] = updated_neighbors
+
+            # Persist neighbor data (strip resolved_name — resolved live from contacts)
+            await self._save_neighbor_data()
+
+            # Create sensor entities for any new neighbors
+            new_neighbors = []
+            for n_pubkey in updated_neighbors:
+                sensor_key = f"{pubkey_prefix}:{n_pubkey}"
+                if sensor_key not in self._created_neighbor_sensors:
+                    new_neighbors.append(n_pubkey)
+                    self._created_neighbor_sensors.add(sensor_key)
+
+            if new_neighbors and hasattr(self, "sensor_add_entities") and self.sensor_add_entities:
+                from .sensor import MeshCoreNeighborSensor, MeshCoreNeighborSeenSensor
+                new_entities = []
+                for n_pubkey in new_neighbors:
+                    try:
+                        snr_sensor = MeshCoreNeighborSensor(
+                            coordinator=self,
+                            repeater_pubkey=pubkey_prefix,
+                            repeater_name=repeater_name,
+                            neighbor_pubkey=n_pubkey,
+                        )
+                        seen_sensor = MeshCoreNeighborSeenSensor(
+                            coordinator=self,
+                            repeater_pubkey=pubkey_prefix,
+                            repeater_name=repeater_name,
+                            neighbor_pubkey=n_pubkey,
+                        )
+                        new_entities.extend([snr_sensor, seen_sensor])
+                        self.logger.info(
+                            "Creating neighbor sensors: %s -> %s (%s)",
+                            repeater_name,
+                            updated_neighbors[n_pubkey]["resolved_name"],
+                            n_pubkey[:6],
+                        )
+                    except Exception as ex:
+                        self.logger.error(f"Error creating neighbor sensors for {n_pubkey}: {ex}")
+                if new_entities:
+                    self.sensor_add_entities(new_entities)
+
+            self.logger.debug(
+                f"Updated {len(neighbours)} neighbors for {repeater_name} "
+                f"({len(new_neighbors)} new sensors created)"
+            )
+
+        except Exception as ex:
+            self.logger.warning(f"Exception fetching neighbors for {repeater_name}: {ex}")
+
+    def _persistable_neighbors(self) -> dict:
+        """Return neighbor data suitable for persistence (no transient fields)."""
+        result = {}
+        for rptr_prefix, neighbors in self._repeater_neighbors.items():
+            result[rptr_prefix] = {}
+            for n_pubkey, n_data in neighbors.items():
+                result[rptr_prefix][n_pubkey] = {
+                    k: v for k, v in n_data.items() if k != "resolved_name"
+                }
+        return result
+
+    async def _save_neighbor_data(self) -> None:
+        """Save current neighbor data to persistent storage."""
+        try:
+            await self._neighbor_store.async_save(self._persistable_neighbors())
+        except Exception as ex:
+            _LOGGER.error("Error saving neighbor data: %s", ex)
+
+    async def _cleanup_stale_neighbors(self, days_threshold: int) -> int:
+        """Remove neighbors whose last_heard exceeds the age threshold.
+
+        Uses last_heard = last_updated - secs_ago (the actual time the repeater
+        heard the neighbor, not the poll time).
+
+        Three-phase approach mirroring stale contacts cleanup:
+        1. Collect stale neighbors (no side effects)
+        2. Remove entities + in-memory data in batches
+        3. Persist and refresh state
+
+        Returns the number of neighbors removed.
+        """
+        from homeassistant.helpers import entity_registry as er
+
+        now = time.time()
+        threshold_seconds = days_threshold * 86400
+        entity_registry = er.async_get(self.hass)
+
+        # Phase 1: Collect stale neighbors across all repeaters
+        stale_entries: list[tuple[str, str, str]] = []  # (repeater_prefix, neighbor_pubkey, resolved_name)
+        for rptr_prefix, neighbors in self._repeater_neighbors.items():
+            for n_pubkey, n_data in neighbors.items():
+                last_updated = n_data.get("last_updated", 0)
+                secs_ago = n_data.get("secs_ago", 0)
+
+                # Skip neighbors with no data yet (just loaded from storage
+                # without a poll)
+                if last_updated == 0 and secs_ago == 0:
+                    continue
+
+                last_heard = last_updated - secs_ago
+                if last_heard > 0 and (now - last_heard) > threshold_seconds:
+                    resolved = n_data.get("resolved_name", n_pubkey[:6])
+                    stale_entries.append((rptr_prefix, n_pubkey, resolved))
+
+        if not stale_entries:
+            _LOGGER.debug(
+                "Stale neighbor cleanup: 0 neighbors older than %d days",
+                days_threshold,
+            )
+            return 0
+
+        # Phase 2: Remove in batches, yielding the event loop between each
+        # batch so WebSocket clients can drain their message queues.
+        batch_size = 10
+        removed_count = 0
+
+        for i, (rptr_prefix, n_pubkey, resolved_name) in enumerate(stale_entries):
+            # Remove both sensor entities (SNR + Seen) from entity registry
+            unique_id_prefix = (
+                f"{self.config_entry.entry_id}_repeater_{rptr_prefix}"
+                f"_neighbor_{n_pubkey[:12]}"
+            )
+            for entity in list(entity_registry.entities.values()):
+                if entity.platform == DOMAIN and (entity.unique_id or "").startswith(unique_id_prefix):
+                    entity_registry.async_remove(entity.entity_id)
+
+            # Remove from created sensors tracking
+            sensor_key = f"{rptr_prefix}:{n_pubkey}"
+            self._created_neighbor_sensors.discard(sensor_key)
+
+            # Remove from in-memory neighbor data
+            repeater_neighbors = self._repeater_neighbors.get(rptr_prefix, {})
+            repeater_neighbors.pop(n_pubkey, None)
+
+            removed_count += 1
+            _LOGGER.debug(
+                "Removed stale neighbor: %s (%s) on repeater %s",
+                resolved_name, n_pubkey[:6], rptr_prefix[:6],
+            )
+
+            # Yield the event loop every batch_size removals
+            if (i + 1) % batch_size == 0:
+                await asyncio.sleep(0)
+
+        # Phase 3: Persist and refresh once after all removals
+        if removed_count > 0:
+            await self._save_neighbor_data()
+
+            updated_data = dict(self.data) if self.data else {}
+            self.async_set_updated_data(updated_data)
+
+        _LOGGER.info(
+            "Stale neighbor cleanup: removed %d neighbors older than %d days",
+            removed_count, days_threshold,
+        )
+        return removed_count
+
+    async def async_load_neighbor_data(self) -> None:
+        """Load persisted neighbor data from storage.
+
+        Must be called before sensor platform setup so that sensor.py can
+        recreate neighbor sensor entities from the persisted data. Does NOT
+        populate _created_neighbor_sensors — that is done by sensor.py when
+        it actually instantiates the sensor objects.
+        """
+        if self._neighbor_data_loaded:
+            return
+        try:
+            stored = await self._neighbor_store.async_load()
+            if stored:
+                now = time.time()
+                for rptr_prefix, neighbors in stored.items():
+                    for n_pubkey, n_data in neighbors.items():
+                        last_updated = n_data.get("last_updated", now)
+                        elapsed = now - last_updated
+                        n_data["secs_ago"] = n_data.get("secs_ago", 0) + int(elapsed)
+                        n_data["resolved_name"] = self.resolve_neighbor_name(n_pubkey)
+                        # Migrate from seen_count (integer) to seen_timestamps (list)
+                        if "seen_count" in n_data and "seen_timestamps" not in n_data:
+                            n_data["seen_timestamps"] = []
+                            del n_data["seen_count"]
+                self._repeater_neighbors = stored
+                self.logger.info(
+                    "Loaded persisted neighbor data for %d repeaters (%d total neighbors)",
+                    len(stored),
+                    sum(len(n) for n in stored.values()),
+                )
+        except Exception as ex:
+            self.logger.error("Error loading persisted neighbor data: %s", ex)
+        self._neighbor_data_loaded = True
+
+    def cleanup_neighbor_entities(self, pubkey_prefix: str) -> int:
+        """Remove all neighbor sensor entities for a repeater from the entity registry.
+
+        Called when the neighbors_enabled toggle is turned off for a repeater.
+        Removes both SNR and Seen sensor entities, clears in-memory tracking,
+        and removes persisted data for this repeater.
+        Returns the number of entities removed.
+        """
+        from homeassistant.helpers import entity_registry as er
+
+        entity_registry = er.async_get(self.hass)
+        unique_id_prefix = f"{self.config_entry.entry_id}_repeater_{pubkey_prefix}_neighbor_"
+        removed = 0
+
+        for entity in list(entity_registry.entities.values()):
+            if entity.platform == DOMAIN and (entity.unique_id or "").startswith(unique_id_prefix):
+                _LOGGER.info("Removing neighbor entity: %s", entity.entity_id)
+                entity_registry.async_remove(entity.entity_id)
+                removed += 1
+
+        # Clear in-memory tracking for this repeater's neighbors
+        self._repeater_neighbors.pop(pubkey_prefix, None)
+        self._created_neighbor_sensors = {
+            k for k in self._created_neighbor_sensors
+            if not k.startswith(f"{pubkey_prefix}:")
+        }
+
+        # Remove persisted data for this repeater and save
+        self.hass.async_create_task(self._save_neighbor_data())
+
+        if removed:
+            _LOGGER.info(
+                "Cleaned up %d neighbor entities for repeater %s",
+                removed, pubkey_prefix[:6]
+            )
+
+        return removed
+
     async def _update_repeater(self, repeater_config):
         """Update a repeater and schedule the next update.
 
@@ -669,15 +1031,19 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 # Reset failure count on success
                 self._repeater_consecutive_failures[pubkey_prefix] = 0
                 self._increment_success(pubkey_prefix)
-                
+
+                # Fetch neighbor data while we have a good connection (if enabled)
+                if repeater_config.get(CONF_REPEATER_NEIGHBORS_ENABLED, False):
+                    await self._fetch_repeater_neighbors(contact, repeater_name, pubkey_prefix)
+
                 # Trigger state updates for any entities listening for this repeater
                 self.async_set_updated_data(self.data)
-                
+
                 # Schedule next update based on configured interval
                 update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
                 next_update_time = self._current_time() + update_interval
                 self._next_repeater_update_times[pubkey_prefix] = next_update_time
-            
+
         except Exception as ex:
             self.logger.warning(f"Exception updating repeater {repeater_name}: {ex}")
             # Increment failure count and apply backoff
@@ -1142,5 +1508,20 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     telemetry_task.set_name(f"client_telemetry_{client_name}")
                 else:
                     _LOGGER.warning(f"Could not find contact for client telemetry request: {pubkey_prefix}")
+
+        # Auto-cleanup stale neighbors (once per day)
+        if self._auto_cleanup_stale_neighbors and self._stale_neighbor_days > 0:
+            now_ts = time.time()
+            if now_ts - self._last_stale_neighbor_cleanup >= 86400:  # 24 hours
+                self._last_stale_neighbor_cleanup = now_ts
+                removed = await self._cleanup_stale_neighbors(
+                    self._stale_neighbor_days
+                )
+                if removed > 0:
+                    _LOGGER.info(
+                        "Auto-cleanup removed %d stale neighbors "
+                        "(older than %d days)",
+                        removed, self._stale_neighbor_days,
+                    )
 
         return result_data

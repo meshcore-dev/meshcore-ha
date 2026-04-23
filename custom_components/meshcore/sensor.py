@@ -28,8 +28,11 @@ from .const import (
     DOMAIN,
     ENTITY_DOMAIN_SENSOR,
     CONF_REPEATER_SUBSCRIPTIONS,
+    CONF_REPEATER_NEIGHBORS_ENABLED,
     CONF_TRACKED_CLIENTS,
     SENSOR_AVAILABILITY_TIMEOUT_MULTIPLIER,
+    NEIGHBOR_STALE_THRESHOLD,
+    SEEN_WINDOW_SECS,
 )
 from .utils import (
     format_entity_id,
@@ -533,6 +536,52 @@ async def async_setup_entry(
     entry.async_on_unload(unsub_sent)
     entry.async_on_unload(unsub_delivery)
     entry.async_on_unload(unsub_logbook)
+
+    # Recreate sensor entities for any persisted neighbors (survives restarts)
+    if coordinator._repeater_neighbors:
+        persisted_entities = []
+        for rptr_prefix, neighbors in coordinator._repeater_neighbors.items():
+            # Look up repeater name and check if neighbors are enabled
+            rptr_name = "Unknown"
+            neighbors_enabled = False
+            for sub in repeater_subscriptions:
+                if sub.get("pubkey_prefix") == rptr_prefix:
+                    rptr_name = sub.get("name", "Unknown")
+                    neighbors_enabled = sub.get(CONF_REPEATER_NEIGHBORS_ENABLED, False)
+                    break
+
+            if not neighbors_enabled:
+                continue
+
+            for n_pubkey in neighbors:
+                try:
+                    snr_sensor = MeshCoreNeighborSensor(
+                        coordinator=coordinator,
+                        repeater_pubkey=rptr_prefix,
+                        repeater_name=rptr_name,
+                        neighbor_pubkey=n_pubkey,
+                    )
+                    seen_sensor = MeshCoreNeighborSeenSensor(
+                        coordinator=coordinator,
+                        repeater_pubkey=rptr_prefix,
+                        repeater_name=rptr_name,
+                        neighbor_pubkey=n_pubkey,
+                    )
+                    persisted_entities.extend([snr_sensor, seen_sensor])
+                    # Mark as created so _fetch_repeater_neighbors doesn't
+                    # try to duplicate them on the next poll cycle
+                    coordinator._created_neighbor_sensors.add(
+                        f"{rptr_prefix}:{n_pubkey}"
+                    )
+                except Exception as ex:
+                    _LOGGER.error("Error recreating neighbor sensor for %s: %s", n_pubkey, ex)
+
+        if persisted_entities:
+            async_add_entities(persisted_entities)
+            _LOGGER.info(
+                "Recreated %d neighbor sensor entities from persisted data",
+                len(persisted_entities),
+            )
 
 
 class RateLimiterSensor(CoordinatorEntity, SensorEntity):
@@ -1496,7 +1545,253 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
         return attributes
 
 
+class MeshCoreNeighborSensor(CoordinatorEntity, SensorEntity):
+    """Sensor tracking SNR from a repeater to one of its neighbors.
+
+    Created dynamically by the coordinator when a new neighbor is discovered
+    during a repeater update cycle. The sensor reads its state from
+    coordinator._repeater_neighbors[repeater_pubkey][neighbor_pubkey].
+    """
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "dB"
+    _attr_icon = "mdi:signal-variant"
+
+    def __init__(
+        self,
+        coordinator: MeshCoreDataUpdateCoordinator,
+        repeater_pubkey: str,
+        repeater_name: str,
+        neighbor_pubkey: str,
+    ) -> None:
+        """Initialize the neighbor SNR sensor."""
+        super().__init__(coordinator)
+        self.coordinator = coordinator
+        self._repeater_pubkey = repeater_pubkey
+        self._repeater_name = repeater_name
+        self._neighbor_pubkey = neighbor_pubkey
+        self._repeater_pubkey_short = repeater_pubkey[:6] if repeater_pubkey else ""
+        self._neighbor_pubkey_short = neighbor_pubkey[:6].lower() if neighbor_pubkey else ""
+
+        # Build device_id matching the repeater's existing device
+        self._device_id = f"{coordinator.config_entry.entry_id}_repeater_{repeater_pubkey}"
+
+        # Unique ID uses 12-char neighbor prefix for stability
+        self._attr_unique_id = (
+            f"{self._device_id}_neighbor_{neighbor_pubkey[:12]}_snr"
+        )
+
+        # Entity ID: sensor.meshcore_{repeater_pubkey[:10]}_neighbor_{neighbor_pubkey[:6]}
+        self.entity_id = format_entity_id(
+            ENTITY_DOMAIN_SENSOR,
+            repeater_pubkey[:10],
+            "neighbor",
+            self._neighbor_pubkey_short,
+        )
+
+        # Resolve initial name
+        self._resolved_name = coordinator.resolve_neighbor_name(neighbor_pubkey)
+
+        # Friendly name: "{Repeater} Neighbor {Name} SNR"
+        self._update_friendly_name()
+
+        # Device info — attach to the repeater's existing device
+        device_name = f"MeshCore Repeater: {repeater_name} ({self._repeater_pubkey_short})"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, self._device_id)},
+            name=device_name,
+            manufacturer="MeshCore",
+            model="Mesh Repeater",
+            via_device=(DOMAIN, coordinator.config_entry.entry_id),
+        )
+
+    def _update_friendly_name(self):
+        """Update the friendly name based on current resolved name."""
+        self._attr_name = f"Neighbor {self._resolved_name} SNR"
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle coordinator updates — re-resolve friendly name before state write.
+
+        Picks up name changes when a neighbor later shows up in the contact list,
+        without depending on the frontend reading extra_state_attributes.
+        """
+        new_name = self.coordinator.resolve_neighbor_name(self._neighbor_pubkey)
+        if new_name != self._resolved_name:
+            self._resolved_name = new_name
+            self._update_friendly_name()
+        super()._handle_coordinator_update()
+
+    @property
+    def _neighbor_data(self) -> dict | None:
+        """Get current neighbor data from coordinator."""
+        repeater_neighbors = self.coordinator._repeater_neighbors.get(self._repeater_pubkey, {})
+        return repeater_neighbors.get(self._neighbor_pubkey)
+
+    @property
+    def available(self) -> bool:
+        """Return True if the neighbor was heard within the stale threshold."""
+        data = self._neighbor_data
+        if data is None:
+            return False
+        secs_ago = data.get("secs_ago", 0)
+        return secs_ago < NEIGHBOR_STALE_THRESHOLD
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the SNR value."""
+        data = self._neighbor_data
+        if data is None:
+            return None
+        return data.get("snr")
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return additional attributes for the neighbor."""
+        data = self._neighbor_data
+        if data is None:
+            return {}
+
+        secs_ago = data.get("secs_ago", 0)
+
+        # Human-readable last seen
+        if secs_ago < 60:
+            last_seen = f"{secs_ago}s ago"
+        elif secs_ago < 3600:
+            last_seen = f"{secs_ago // 60}m {secs_ago % 60}s ago"
+        elif secs_ago < 86400:
+            hours = secs_ago // 3600
+            mins = (secs_ago % 3600) // 60
+            last_seen = f"{hours}h {mins}m ago"
+        else:
+            days = secs_ago // 86400
+            hours = (secs_ago % 86400) // 3600
+            last_seen = f"{days}d {hours}h ago"
+
+        last_updated = data.get("last_updated")
+        last_updated_str = (
+            datetime.fromtimestamp(last_updated).isoformat()
+            if last_updated
+            else "Unknown"
+        )
+
+        return {
+            "secs_ago": secs_ago,
+            "last_seen": last_seen,
+            "pubkey_prefix": self._neighbor_pubkey,
+            "resolved_name": self._resolved_name,
+            "last_updated": last_updated_str,
+            "seen_48h": len([t for t in data.get("seen_timestamps", []) if t > time.time() - SEEN_WINDOW_SECS]),
+        }
 
 
+class MeshCoreNeighborSeenSensor(CoordinatorEntity, SensorEntity):
+    """Sensor tracking how many times a neighbor has been seen in the last 48 hours.
+
+    Uses state_class MEASUREMENT since the 48h rolling window can decrease
+    as old sightings age out.
+    """
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:counter"
+
+    def __init__(
+        self,
+        coordinator: MeshCoreDataUpdateCoordinator,
+        repeater_pubkey: str,
+        repeater_name: str,
+        neighbor_pubkey: str,
+    ) -> None:
+        """Initialize the neighbor seen counter sensor."""
+        super().__init__(coordinator)
+        self.coordinator = coordinator
+        self._repeater_pubkey = repeater_pubkey
+        self._repeater_name = repeater_name
+        self._neighbor_pubkey = neighbor_pubkey
+        self._repeater_pubkey_short = repeater_pubkey[:6] if repeater_pubkey else ""
+        self._neighbor_pubkey_short = neighbor_pubkey[:6].lower() if neighbor_pubkey else ""
+
+        # Build device_id matching the repeater's existing device
+        self._device_id = f"{coordinator.config_entry.entry_id}_repeater_{repeater_pubkey}"
+
+        # Unique ID: distinct from the SNR sensor (_seen vs _snr suffix)
+        self._attr_unique_id = (
+            f"{self._device_id}_neighbor_{neighbor_pubkey[:12]}_seen"
+        )
+
+        # Entity ID: sensor.meshcore_{repeater_short}_neighbor_{neighbor_short}_seen
+        self.entity_id = format_entity_id(
+            ENTITY_DOMAIN_SENSOR,
+            repeater_pubkey[:10],
+            "neighbor",
+            f"{self._neighbor_pubkey_short}_seen",
+        )
+
+        # Resolve initial name
+        self._resolved_name = coordinator.resolve_neighbor_name(neighbor_pubkey)
+        self._update_friendly_name()
+
+        # Device info — attach to the repeater's existing device
+        device_name = f"MeshCore Repeater: {repeater_name} ({self._repeater_pubkey_short})"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, self._device_id)},
+            name=device_name,
+            manufacturer="MeshCore",
+            model="Mesh Repeater",
+            via_device=(DOMAIN, coordinator.config_entry.entry_id),
+        )
+
+    def _update_friendly_name(self):
+        """Update the friendly name based on current resolved name."""
+        self._attr_name = f"Neighbor {self._resolved_name} Seen"
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle coordinator updates — re-resolve friendly name before state write.
+
+        Picks up name changes when a neighbor later shows up in the contact list,
+        without depending on the frontend reading extra_state_attributes.
+        """
+        new_name = self.coordinator.resolve_neighbor_name(self._neighbor_pubkey)
+        if new_name != self._resolved_name:
+            self._resolved_name = new_name
+            self._update_friendly_name()
+        super()._handle_coordinator_update()
+
+    @property
+    def _neighbor_data(self) -> dict | None:
+        """Get current neighbor data from coordinator."""
+        repeater_neighbors = self.coordinator._repeater_neighbors.get(self._repeater_pubkey, {})
+        return repeater_neighbors.get(self._neighbor_pubkey)
+
+    @property
+    def available(self) -> bool:
+        """Return True if the neighbor was heard within the stale threshold."""
+        data = self._neighbor_data
+        if data is None:
+            return False
+        secs_ago = data.get("secs_ago", 0)
+        return secs_ago < NEIGHBOR_STALE_THRESHOLD
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the number of sightings in the last 48 hours."""
+        data = self._neighbor_data
+        if data is None:
+            return None
+        cutoff = time.time() - SEEN_WINDOW_SECS
+        return len([t for t in data.get("seen_timestamps", []) if t > cutoff])
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return additional attributes."""
+        return {
+            "pubkey_prefix": self._neighbor_pubkey,
+            "resolved_name": self._resolved_name,
+        }
 
 

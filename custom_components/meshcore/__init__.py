@@ -449,6 +449,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.warning("Map Auto Uploader failed to initialize: %s - continuing without it", ex)
         coordinator.map_uploader = None
     
+    # Load persisted neighbor data before sensor platform setup so that
+    # sensor.py can recreate neighbor sensor entities from the stored data.
+    await coordinator.async_load_neighbor_data()
+
     # Set up all platforms for this device
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     
