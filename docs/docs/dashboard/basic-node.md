@@ -37,9 +37,19 @@ sections:
             entities:
               - entity: select.meshcore_recipient_type
                 name: Send To
-              - entity: select.meshcore_channel
+              - type: conditional
+              conditions:
+                - entity: select.meshcore_recipient_type
+                  state: Channel
+              row:
+                entity: select.meshcore_channel
                 name: Channel
-              - entity: select.meshcore_contact
+            - type: conditional
+              conditions:
+                - entity: select.meshcore_recipient_type
+                  state: Contact
+              row:
+                entity: select.meshcore_contact
                 name: Contact
               - entity: text.meshcore_message
                 name: Message
