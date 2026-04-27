@@ -34,7 +34,8 @@
       },
       "ble": {
         "data": {
-          "ble_address": "Bluetooth Device"
+          "ble_address": "Bluetooth Device",
+          "ble_pin": "Bluetooth PIN / Passkey"
         },
         "description": "Connect to your MeshCore node via Bluetooth",
         "title": "Configure Bluetooth Connection"
@@ -64,7 +65,8 @@
       },
       "reconfigure_ble": {
         "data": {
-          "ble_address": "Bluetooth Device"
+          "ble_address": "Bluetooth Device",
+          "ble_pin": "Bluetooth PIN / Passkey"
         },
         "description": "Update Bluetooth connection settings",
         "title": "Reconfigure Bluetooth Connection"

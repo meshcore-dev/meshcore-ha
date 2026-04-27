@@ -34,7 +34,8 @@
       },
       "ble": {
         "data": {
-          "ble_address": "Bluetooth-apparaat"
+          "ble_address": "Bluetooth-apparaat",
+          "ble_pin": "Bluetooth-pincode / toegangscode"
         },
         "description": "Maak verbinding met uw MeshCore-node via Bluetooth",
         "title": "Configureer Bluetooth-verbinding"

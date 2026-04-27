@@ -31,6 +31,7 @@ class MeshCoreAPI:
         usb_path: Optional[str] = None,
         baudrate: int = DEFAULT_BAUDRATE,
         ble_address: Optional[str] = None,
+        ble_pin: Optional[str] = None,
         tcp_host: Optional[str] = None,
         tcp_port: int = DEFAULT_TCP_PORT,
     ) -> None:
@@ -40,6 +41,7 @@ class MeshCoreAPI:
         self.usb_path = usb_path
         self.baudrate = baudrate
         self.ble_address = ble_address
+        self.ble_pin = ble_pin
         self.tcp_host = tcp_host
         self.tcp_port = tcp_port
         
@@ -118,6 +120,7 @@ class MeshCoreAPI:
                 _LOGGER.info(f"Using BLE connection with address {self.ble_address}")
                 self._mesh_core = await MeshCore.create_ble(
                     self.ble_address if self.ble_address else "", 
+                    pin=self.ble_pin or None,
                     debug=False,
                     auto_reconnect=True,
                     max_reconnect_attempts=100

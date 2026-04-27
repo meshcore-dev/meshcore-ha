@@ -34,7 +34,8 @@
       },
       "ble": {
         "data": {
-          "ble_address": "Bluetooth zariadenie"
+          "ble_address": "Bluetooth zariadenie",
+          "ble_pin": "Bluetooth PIN / prístupový kód"
         },
         "description": "Pripojte sa k vášmu uzlu MeshCore prostredníctvom Bluetooth",
         "title": "Nastaviť pripojenie Bluetooth"
