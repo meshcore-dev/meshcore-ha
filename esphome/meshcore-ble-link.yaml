@@ -2,6 +2,12 @@ esphome:
   name: meshcore-ble-link
   friendly_name: Meshcore ble link
 
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [meshcore_ble_bridge]
+
 esp32:
   board: esp32dev
   framework:
@@ -17,7 +23,7 @@ logger:
     esp32_ble_tracker: DEBUG
     esp32_ble_client: DEBUG
     ble_client: DEBUG
-    bluetooth_proxy: DEBUG
+    meshcore_ble_bridge: DEBUG
 
 # Enable Home Assistant API
 api:
@@ -47,16 +53,7 @@ esp32_ble_tracker:
 ble_client:
   - mac_address: AC:A7:04:07:CE:21
     id: meshcore_ble
-    auto_connect: True
-
-    on_connect:
-      then:
-        - logger.log:
-            format: "Connected to MeshCore BLE node"
-            level: DEBUG
-        - lambda: |-
-            esphome::ble_client::BLEClient* client = id(meshcore_ble);
-            esp_ble_set_encryption(client->get_remote_bda(), ESP_BLE_SEC_ENCRYPT_MITM);
+    auto_connect: true
 
     on_passkey_request:
       then:
@@ -67,7 +64,9 @@ ble_client:
             id: meshcore_ble
             passkey: xxx
 
-bluetooth_proxy:
-  active: True
-  connection_slots: 5
-    
+meshcore_ble_bridge:
+  id: meshcore_bridge
+  ble_client_id: meshcore_ble
+  port: 5000
+  force_encryption: true
+  wait_for_auth: true
