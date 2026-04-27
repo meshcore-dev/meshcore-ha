@@ -1,0 +1,137 @@
+INFO ESPHome 2026.4.2
+INFO Reading configuration /config/esphome/meshcore-ble-link.yaml...
+INFO Starting log output from meshcore-ble-link.local using esphome API
+INFO Successfully resolved meshcore-ble-link.local in 1.527s
+INFO Successfully connected to meshcore-ble-link @ 192.168.1.45 in 0.016s
+INFO Successful handshake with meshcore-ble-link @ 192.168.1.45 in 0.172s
+[19:12:32.927][I][app:154]: ESPHome version 2026.4.2 compiled on 2026-04-27 19:06:46 +0200
+[19:12:32.927][I][app:161]: ESP32 Chip: ESP32 rev1.0, 2 core(s)
+[19:12:32.927][W][app:201]: Bootloader supports SRAM1 as IRAM (+40KB). Set sram1_as_iram: true under esp32 > framework > advanced
+[19:12:32.927][C][logger:219]: Logger:
+[19:12:32.927][C][logger:219]:   Max Level: DEBUG
+[19:12:32.927][C][logger:219]:   Initial Level: DEBUG
+[19:12:32.936][C][logger:226]:   Log Baud Rate: 115200
+[19:12:32.936][C][logger:226]:   Hardware UART: UART0
+[19:12:32.937][C][logger:235]:   Task Log Buffer Size: 768 bytes
+[19:12:32.937][C][logger:241]:   Level for 'ble_client': DEBUG
+[19:12:32.947][C][logger:241]:   Level for 'bluetooth_proxy': DEBUG
+[19:12:33.009][C][logger:241]:   Level for 'esp32_ble_client': DEBUG
+[19:12:33.009][C][logger:241]:   Level for 'esp32_ble_tracker': DEBUG
+[19:12:33.009][C][bluetooth_proxy:129]: Bluetooth Proxy:
+[19:12:33.009][C][bluetooth_proxy:129]:   Active: YES
+[19:12:33.009][C][bluetooth_proxy:129]:   Connections: 5
+[19:12:33.010][C][esp32_ble:665]: BLE:
+[19:12:33.010][C][esp32_ble:665]:   MAC address: D4:D4:DA:84:F6:62
+[19:12:33.010][C][esp32_ble:665]:   IO Capability: keyboard_only
+[19:12:33.010][C][esp32_ble_tracker:693]: BLE Tracker:
+[19:12:33.010][C][esp32_ble_tracker:694]:   Scan Duration: 300 s
+[19:12:33.010][C][esp32_ble_tracker:694]:   Scan Interval: 2000.0 ms
+[19:12:33.010][C][esp32_ble_tracker:694]:   Scan Window: 1000.0 ms
+[19:12:33.010][C][esp32_ble_tracker:694]:   Scan Type: ACTIVE
+[19:12:33.010][C][esp32_ble_tracker:694]:   Continuous Scanning: YES
+[19:12:33.017][C][esp32_ble_tracker:702]:   Scanner State: RUNNING
+[19:12:33.017][C][esp32_ble_tracker:702]:   Connecting: 0, discovered: 0, disconnecting: 0
+[19:12:33.018][C][ble_client:026]: BLE Client:
+[19:12:33.018][C][esp32_ble_client:081]:   Address: AC:A7:04:07:CE:21
+[19:12:33.018][C][esp32_ble_client:081]:   Auto-Connect: TRUE
+[19:12:33.018][C][esp32_ble_client:081]:   State: IDLE
+[19:12:33.026][C][bluetooth_proxy.connection:091]: BLE Connection:
+[19:12:33.042][C][esp32_ble_client:081]:   Address: 
+[19:12:33.042][C][esp32_ble_client:081]:   Auto-Connect: FALSE
+[19:12:33.042][C][esp32_ble_client:081]:   State: IDLE
+[19:12:33.043][C][bluetooth_proxy.connection:091]: BLE Connection:
+[19:12:33.050][C][esp32_ble_client:081]:   Address: 
+[19:12:33.050][C][esp32_ble_client:081]:   Auto-Connect: FALSE
+[19:12:33.050][C][esp32_ble_client:081]:   State: IDLE
+[19:12:33.050][C][bluetooth_proxy.connection:091]: BLE Connection:
+[19:12:33.056][C][esp32_ble_client:081]:   Address: 
+[19:12:33.056][C][esp32_ble_client:081]:   Auto-Connect: FALSE
+[19:12:33.056][C][esp32_ble_client:081]:   State: IDLE
+[19:12:33.112][C][bluetooth_proxy.connection:091]: BLE Connection:
+[19:12:33.113][C][esp32_ble_client:081]:   Address: 
+[19:12:33.113][C][esp32_ble_client:081]:   Auto-Connect: FALSE
+[19:12:33.113][C][esp32_ble_client:081]:   State: IDLE
+[19:12:33.113][C][bluetooth_proxy.connection:091]: BLE Connection:
+[19:12:33.113][C][esp32_ble_client:081]:   Address: 
+[19:12:33.113][C][esp32_ble_client:081]:   Auto-Connect: FALSE
+[19:12:33.113][C][esp32_ble_client:081]:   State: IDLE
+[19:12:33.114][C][captive_portal:134]: Captive Portal:
+[19:12:33.114][C][wifi:1505]: WiFi:
+[19:12:33.114][C][wifi:1505]:   Local MAC: D4:D4:DA:84:F6:60
+[19:12:33.114][C][wifi:1505]:   Connected: YES
+[19:12:33.115][C][wifi:1216]:   IP Address: 192.168.1.45
+[19:12:33.125][C][wifi:1227]:   SSID: 'Burton the 3rd'[redacted]
+[19:12:33.125][C][wifi:1227]:   BSSID: 38:06:E6:45:70:48[redacted]
+[19:12:33.125][C][wifi:1227]:   Hostname: 'meshcore-ble-link'
+[19:12:33.125][C][wifi:1227]:   Signal strength: -54 dB ▂▄▆█
+[19:12:33.125][C][wifi:1227]:   Channel: 1
+[19:12:33.125][C][wifi:1227]:   Subnet: 255.255.255.0
+[19:12:33.125][C][wifi:1227]:   Gateway: 192.168.1.1
+[19:12:33.125][C][wifi:1227]:   DNS1: 192.168.1.1
+[19:12:33.125][C][wifi:1227]:   DNS2: 0.0.0.0
+[19:12:33.126][C][esphome.ota:071]: Over-The-Air updates:
+[19:12:33.126][C][esphome.ota:071]:   Address: meshcore-ble-link.local:3232
+[19:12:33.126][C][esphome.ota:071]:   Version: 2
+[19:12:33.134][C][esphome.ota:078]:   Password configured
+[19:12:33.140][C][safe_mode:026]: Safe Mode:
+[19:12:33.140][C][safe_mode:026]:   Successful after: 60s
+[19:12:33.140][C][safe_mode:026]:   Invoke after: 10 attempts
+[19:12:33.140][C][safe_mode:026]:   Duration: 300s
+[19:12:33.154][C][safe_mode:043]:   Bootloader rollback: supported
+[19:12:33.164][C][web_server.ota:256]: Web Server OTA
+[19:12:33.234][C][api:235]: Server:
+[19:12:33.234][C][api:235]:   Address: meshcore-ble-link.local:6053
+[19:12:33.234][C][api:235]:   Listen backlog: 4
+[19:12:33.234][C][api:235]:   Max connections: 8
+[19:12:33.234][C][api:242]:   Noise encryption: YES
+[19:12:33.253][C][mdns:194]: mDNS:
+[19:12:33.253][C][mdns:194]:   Hostname: meshcore-ble-link
+[19:13:19.821][D][esp32_ble_client:207]: [0] [AC:A7:04:07:CE:21] Found device
+[19:13:19.821][D][esp32_ble_tracker:722]: Found device AC:A7:04:07:CE:21 RSSI=-47
+[19:13:19.822][D][esp32_ble_tracker:743]:   Address Type: PUBLIC
+[19:13:19.822][D][esp32_ble_tracker:745]:   Name: 'MeshCore-Matthew’s Node'
+[19:13:19.822][D][esp32_ble_tracker:748]:   TX Power: 9
+[19:13:19.822][D][esp32_ble_tracker:169]: connecting: 0, discovered: 1, disconnecting: 0
+[19:13:19.823][D][esp32_ble_tracker:899]: Stopping scan to make connection
+[19:13:19.823][D][esp32_ble_tracker:907]: Promoting client to connect
+[19:13:19.851][D][esp32_ble_tracker:943]: Setting coexistence to Bluetooth to make connection.
+[19:13:19.851][I][esp32_ble_client:125]: [0] [AC:A7:04:07:CE:21] 0x00 Connecting
+[19:13:19.851][D][esp32_ble_tracker:169]: connecting: 1, discovered: 0, disconnecting: 0
+[19:13:20.250][D][esp32_ble_client:211]: [0] [AC:A7:04:07:CE:21] ESP_GATTC_CONNECT_EVT
+[19:13:20.250][D][esp32_ble_client:211]: [0] [AC:A7:04:07:CE:21] ESP_GATTC_OPEN_EVT
+[19:13:20.250][I][esp32_ble_client:343]: [0] [AC:A7:04:07:CE:21] Connection open
+[19:13:20.250][D][esp32_ble_client:207]: [0] [AC:A7:04:07:CE:21] Searching for services
+[19:13:20.251][D][esp32_ble_tracker:169]: connecting: 0, discovered: 0, disconnecting: 0
+[19:13:20.251][D][esp32_ble_tracker:947]: Setting coexistence preference to balanced.
+[19:13:20.251][D][esp32_ble_client:211]: [0] [AC:A7:04:07:CE:21] ESP_GATTC_SEARCH_CMPL_EVT
+[19:13:20.251][I][esp32_ble_client:463]: [0] [AC:A7:04:07:CE:21] Service discovery complete
+[19:13:20.251][D][main:399]: Connected to MeshCore BLE node
+[19:13:20.339][D][esp32_ble_client:410]: [0] [AC:A7:04:07:CE:21] cfg_mtu status 0, mtu 172
+[19:13:20.738][D][main:065]: Authenticating MeshCore BLE passkey
+[19:13:23.082][W][esp32_ble:615][BTC_TASK]: Ignoring unexpected GAP event type: 9
+[19:13:23.082][W][esp32_ble:615][BTC_TASK]: Ignoring unexpected GAP event type: 9
+[19:13:23.094][W][esp32_ble:615][BTC_TASK]: Ignoring unexpected GAP event type: 9
+[19:13:23.094][W][esp32_ble:615][BTC_TASK]: Ignoring unexpected GAP event type: 9
+[19:13:23.094][W][esp32_ble:615][BTC_TASK]: Ignoring unexpected GAP event type: 9
+[19:13:23.184][I][esp32_ble_client:570]: [0] [AC:A7:04:07:CE:21] auth complete addr: AC:A7:04:07:CE:21
+[19:13:23.298][D][esp32_ble_client:575]: [0] [AC:A7:04:07:CE:21] auth success type = 0 mode = 13
+[19:13:27.206][I][bluetooth_proxy:071]: [1] [AC:A7:04:07:CE:21] Connecting v3 without cache
+[19:13:27.220][D][esp32_ble_tracker:169]: connecting: 0, discovered: 1, disconnecting: 0
+[19:13:27.220][D][esp32_ble_tracker:899]: Stopping scan to make connection
+[19:13:27.220][D][esp32_ble_tracker:907]: Promoting client to connect
+[19:13:27.220][D][esp32_ble_tracker:943]: Setting coexistence to Bluetooth to make connection.
+[19:13:27.220][I][esp32_ble_client:125]: [1] [AC:A7:04:07:CE:21] 0x00 Connecting
+[19:13:27.220][D][esp32_ble_client:231]: [1] [AC:A7:04:07:CE:21] fast conn params
+[19:13:27.289][D][esp32_ble_client:211]: [1] [AC:A7:04:07:CE:21] ESP_GATTC_OPEN_EVT
+[19:13:27.289][I][esp32_ble_client:343]: [1] [AC:A7:04:07:CE:21] Connection open
+[19:13:27.289][D][esp32_ble_client:207]: [1] [AC:A7:04:07:CE:21] Searching for services
+[19:13:27.289][D][esp32_ble_tracker:169]: connecting: 0, discovered: 0, disconnecting: 0
+[19:13:27.298][D][esp32_ble_tracker:947]: Setting coexistence preference to balanced.
+[19:13:37.232][D][esp32_ble_client:156]: [1] [AC:A7:04:07:CE:21] Disconnect before connected, disconnect scheduled
+[19:15:07.029][W][bluetooth_proxy:066]: [1] [AC:A7:04:07:CE:21] Connection request ignored, state: CONNECTED
+[19:15:07.046][W][bluetooth_proxy:075]: Cannot get GATT services, not connected
+[19:15:07.063][D][esp32_ble_client:156]: [1] [AC:A7:04:07:CE:21] Disconnect before connected, disconnect scheduled
+[19:15:11.359][D][wifi:2413]: Roam scan (-54 dBm, attempt 1/3)
+[19:15:31.504][W][bluetooth_proxy:066]: [1] [AC:A7:04:07:CE:21] Connection request ignored, state: CONNECTED
+[19:15:31.527][W][bluetooth_proxy:075]: Cannot get GATT services, not connected
+[19:15:31.537][D][esp32_ble_client:156]: [1] [AC:A7:04:07:CE:21] Disconnect before connected, disconnect scheduled

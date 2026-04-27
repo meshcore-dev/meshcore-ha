@@ -1,0 +1,73 @@
+esphome:
+  name: meshcore-ble-link
+  friendly_name: Meshcore ble link
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+esp32_ble:
+  io_capability: keyboard_only
+  max_connections: 6
+
+logger:
+  level: DEBUG
+  logs:
+    esp32_ble_tracker: DEBUG
+    esp32_ble_client: DEBUG
+    ble_client: DEBUG
+    bluetooth_proxy: DEBUG
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "xxx"
+
+ota:
+  - platform: esphome
+    password: "xxx"
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Meshcore-Ble-Link"
+    password: "xxx"
+
+captive_portal:
+
+esp32_ble_tracker:
+  scan_parameters:
+    interval: 2000ms
+    window: 1000ms
+
+ble_client:
+  - mac_address: AC:A7:04:07:CE:21
+    id: meshcore_ble
+    auto_connect: True
+
+    on_connect:
+      then:
+        - logger.log:
+            format: "Connected to MeshCore BLE node"
+            level: DEBUG
+        - lambda: |-
+            esphome::ble_client::BLEClient* client = id(meshcore_ble);
+            esp_ble_set_encryption(client->get_remote_bda(), ESP_BLE_SEC_ENCRYPT_MITM);
+
+    on_passkey_request:
+      then:
+        - logger.log:
+            format: "Authenticating MeshCore BLE passkey"
+            level: DEBUG
+        - ble_client.passkey_reply:
+            id: meshcore_ble
+            passkey: xxx
+
+bluetooth_proxy:
+  active: True
+  connection_slots: 5
+    
