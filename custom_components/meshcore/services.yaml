@@ -179,6 +179,76 @@ cleanup_unavailable_contacts:
       selector:
         text:
 
+get_contacts:
+  name: Get Contacts
+  description: >-
+    Return the device's known contacts as a structured list.
+    Use this instead of string-scraping execute_command output — the response
+    shape is stable across releases. See the companion-integration API docs for
+    the full schema.
+  response: optional
+  fields:
+    entry_id:
+      name: Config Entry ID
+      description: The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device.
+      required: false
+      example: "abc123def456"
+      selector:
+        text:
+
+get_channels:
+  name: Get Channels
+  description: >-
+    Return the device's configured channels as a structured list. The shared
+    secret is never leaked — only its presence is reported via
+    shared_secret_present.
+  response: optional
+  fields:
+    entry_id:
+      name: Config Entry ID
+      description: The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device.
+      required: false
+      example: "abc123def456"
+      selector:
+        text:
+
+trace:
+  name: Trace Contact
+  description: >-
+    Trace the route to a contact and return hop count, per-hop path, and
+    round-trip time. The contact must be saved to the device — discovered-only
+    contacts return {"trace": null, "error": "contact_not_on_device"}. For
+    flood contacts a path-discovery pass runs first; the result is used to
+    build the trace. On timeout or any failure, returns {"trace": null,
+    "error": "..."} so automations always get a structured response.
+  response: optional
+  fields:
+    pubkey_prefix:
+      name: Public Key Prefix
+      description: The public key prefix (at least 6 characters) of the contact to trace.
+      required: true
+      example: "f293ac"
+      selector:
+        text:
+    timeout:
+      name: Timeout
+      description: Maximum seconds to wait for the trace response. The effective timeout also respects the firmware's suggested_timeout.
+      required: false
+      default: 15
+      example: 15
+      selector:
+        number:
+          min: 1
+          max: 120
+          unit_of_measurement: seconds
+    entry_id:
+      name: Config Entry ID
+      description: The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device.
+      required: false
+      example: "abc123def456"
+      selector:
+        text:
+
 clear_discovered_contacts:
   name: Clear Discovered Contacts
   description: >-

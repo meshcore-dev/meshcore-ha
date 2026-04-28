@@ -3,6 +3,7 @@ import ast
 import asyncio
 import inspect
 import logging
+import random
 import re
 import shlex
 import time
@@ -47,6 +48,9 @@ from .const import (
     SERVICE_REMOVE_DISCOVERED_CONTACT,
     SERVICE_CLEANUP_UNAVAILABLE_CONTACTS,
     SERVICE_CLEAR_DISCOVERED_CONTACTS,
+    SERVICE_GET_CONTACTS,
+    SERVICE_GET_CHANNELS,
+    SERVICE_TRACE,
     SELECT_NO_CONTACTS,
     SELECT_NO_DISCOVERED,
     SELECT_NO_ADDED,
@@ -1155,6 +1159,388 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         }),
     )
 
+    # ── Structured query services (get_contacts, get_channels, trace) ──
+    # These services return structured responses (SupportsResponse.ONLY) so
+    # companion integrations don't have to string-scrape execute_command output.
+    # See docs/docs/companion-integration-api.md for the published surface.
+
+    def _resolve_coordinator(entry_id: Optional[str]) -> Any:
+        """Locate a MeshCore coordinator by entry_id, or the first available one."""
+        if entry_id:
+            coord = hass.data[DOMAIN].get(entry_id)
+            if coord is not None and hasattr(coord, "api"):
+                return coord
+            return None
+        for _eid, coord in hass.data[DOMAIN].items():
+            if hasattr(coord, "api"):
+                return coord
+        return None
+
+    async def async_get_contacts_service(call: ServiceCall) -> dict:
+        """Return the device's known contacts as a structured list.
+
+        Delegates to ``coordinator.get_all_contacts()`` so the result includes
+        both contacts saved to the device and those only discovered via
+        advertisements. ``added_to_node`` and ``pubkey_prefix`` are set by
+        the coordinator; ``out_path_hash_mode`` is backfilled for older
+        records via ``_ensure_contact_compat``.
+        """
+        entry_id = call.data.get(ATTR_ENTRY_ID)
+        coordinator = _resolve_coordinator(entry_id)
+        if coordinator is None:
+            return {"contacts": [], "error": "no_coordinator"}
+
+        try:
+            raw_contacts = coordinator.get_all_contacts() or []
+        except Exception as ex:
+            _LOGGER.error("get_contacts: coordinator access failed: %s", ex)
+            return {"contacts": [], "error": "coordinator_error"}
+
+        contacts_out = []
+        for contact in raw_contacts:
+            if not isinstance(contact, dict):
+                continue
+            c = _ensure_contact_compat(dict(contact))
+            # get_all_contacts populates pubkey_prefix; double-check for
+            # older records that somehow made it through without one.
+            if "pubkey_prefix" not in c:
+                pk = c.get("public_key") or ""
+                if pk:
+                    c["pubkey_prefix"] = pk[:12]
+            contacts_out.append(c)
+
+        return {"contacts": contacts_out}
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_CONTACTS,
+        async_get_contacts_service,
+        schema=vol.Schema({vol.Optional(ATTR_ENTRY_ID): cv.string}),
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    async def async_get_channels_service(call: ServiceCall) -> dict:
+        """Return the device's configured channels as a structured list.
+
+        Reads cached info from ``coordinator._channel_info`` (same source the
+        sidebar-panel's ``ws_get_channels`` uses) so this is a pure query
+        that never issues an on-device request. Unused channel slots
+        (empty name or ``(unused)``) are filtered out. The shared secret is
+        never returned — only its presence via ``shared_secret_present``.
+        """
+        entry_id = call.data.get(ATTR_ENTRY_ID)
+        coordinator = _resolve_coordinator(entry_id)
+        if coordinator is None:
+            return {"channels": [], "error": "no_coordinator"}
+
+        try:
+            max_ch = int(getattr(coordinator, "max_channels", 0) or 0)
+        except Exception:
+            max_ch = 0
+
+        channel_info_map = getattr(coordinator, "_channel_info", {}) or {}
+
+        channels_out = []
+        for channel_idx in range(max_ch):
+            info = channel_info_map.get(channel_idx) or {}
+            if not info:
+                continue
+            channel_name = info.get("channel_name", "") or ""
+            # Skip unused/unconfigured channel slots so companions only see
+            # real channels the user could actually send to.
+            if not channel_name or channel_name == "(unused)":
+                continue
+            entry = {
+                "channel_idx": channel_idx,
+                "channel_name": channel_name,
+                # Don't leak the shared secret; only surface presence.
+                "shared_secret_present": bool(info.get("channel_secret")),
+            }
+            channels_out.append(entry)
+
+        return {"channels": channels_out}
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_CHANNELS,
+        async_get_channels_service,
+        schema=vol.Schema({vol.Optional(ATTR_ENTRY_ID): cv.string}),
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    async def async_trace_service(call: ServiceCall) -> dict:
+        """Trace the route to a contact and return hop/path/round-trip info.
+
+        Ported from the sidebar-panel's ``ws_trace`` so the service honours
+        the same validated behavior:
+
+          * Only contacts saved to the device can be traced — firmware's
+            path-discovery handler rejects discovered-only contacts with
+            ERR_CODE_NOT_FOUND, so fail fast with ``contact_not_on_device``.
+          * Flood contacts (``out_path_len == -1``) run a path-discovery
+            pass first. The PATH_RESPONSE listener is registered before the
+            PATH_REQ is sent to close the race where the response could
+            arrive before the subscription was live. Firmware rejection
+            (ERROR) and timeout surface as distinct error strings.
+          * The trace packet is built as outbound_hops + target + reverse
+            (outbound_hops) with 1-byte per-hop hashes (flags=0). The
+            round-trip hash list is required by the firmware TRACE
+            handler (Mesh.cpp:41-66) for the sender to receive the echo,
+            and 1-byte hashes are empirically the only width that
+            completes reliably in production meshes.
+          * Every failure mode returns a structured ``{"trace": null,
+            "error": "..."}`` dict so automations never see an exception.
+        """
+        entry_id = call.data.get(ATTR_ENTRY_ID)
+        pubkey_prefix = call.data[ATTR_PUBKEY_PREFIX]
+        requested_timeout_s = float(call.data.get("timeout", 15))
+
+        coordinator = _resolve_coordinator(entry_id)
+        if coordinator is None:
+            return {"trace": None, "error": "no_coordinator"}
+
+        api = coordinator.api
+        if not api or not api.connected or not api.mesh_core:
+            return {"trace": None, "error": "not_connected"}
+
+        # Prefer coordinator.get_contact_by_prefix (searches added +
+        # discovered), fall back to the SDK lookup used elsewhere. This
+        # matches the sidebar-panel's behavior so discovered-only contacts
+        # can be recognised and rejected with a clear error.
+        contact = None
+        get_by_prefix = getattr(coordinator, "get_contact_by_prefix", None)
+        if callable(get_by_prefix):
+            contact = get_by_prefix(pubkey_prefix) or None
+        if not contact:
+            contact = _resolve_contact(pubkey_prefix, "trace", api, coordinator)
+        if not contact:
+            return {"trace": None, "error": "contact_not_found"}
+
+        # Firmware CMD_SEND_PATH_DISCOVERY_REQ memcmps the target pubkey
+        # against the on-device contact table; discovered-only contacts are
+        # rejected with ERR_CODE_NOT_FOUND. Fail fast with an actionable
+        # error instead of paying for the firmware round-trip.
+        if not contact.get("added_to_node"):
+            return {"trace": None, "error": "contact_not_on_device"}
+
+        public_key = contact.get("public_key") or ""
+        if not public_key:
+            return {"trace": None, "error": "contact_missing_pubkey"}
+
+        mesh_core = api.mesh_core
+        tag = random.randint(0, 0xFFFFFFFF)
+
+        out_path_len = contact.get("out_path_len", -1)
+        out_path_hash_mode = contact.get("out_path_hash_mode", 0)
+        out_path_hex = contact.get("out_path", "") or ""
+
+        # ── Flood contact: run path discovery first ──
+        if out_path_len == -1:
+            try:
+                dst_bytes = bytes.fromhex(public_key)
+            except (ValueError, TypeError) as ex:
+                _LOGGER.error("trace: bad pubkey hex for path discovery: %s", ex)
+                return {"trace": None, "error": "contact_missing_pubkey"}
+
+            # Pre-register the PATH_RESPONSE listener so the response can't
+            # arrive and be dispatched before our subscription is live.
+            # Filter by pubkey_pre so concurrent path-discovery traffic
+            # for other contacts can't satisfy this wait. Mirrors
+            # Remote-Terminal-for-MeshCore's approach.
+            path_response_task = asyncio.create_task(
+                mesh_core.dispatcher.wait_for_event(
+                    EventType.PATH_RESPONSE,
+                    attribute_filters={"pubkey_pre": pubkey_prefix},
+                    timeout=30.0,  # outer safety; real bound applied below
+                )
+            )
+
+            pd_data = b"\x34\x00" + dst_bytes
+            try:
+                send_result = await mesh_core.commands.send(
+                    pd_data,
+                    [EventType.MSG_SENT, EventType.ERROR],
+                )
+            except Exception as ex:
+                path_response_task.cancel()
+                _LOGGER.error("trace: path discovery send raised: %s", ex)
+                return {"trace": None, "error": "path_discovery_failed"}
+
+            if send_result is None:
+                path_response_task.cancel()
+                return {
+                    "trace": None,
+                    "error": "path_discovery_failed",
+                    "reason": "no_firmware_ack",
+                }
+
+            if getattr(send_result, "type", None) == EventType.ERROR:
+                path_response_task.cancel()
+                # Firmware PacketType.ERROR carries {"error_code",
+                # "code_string"} when mapped, or {"reason"} for reader
+                # parse-failures. Accept either shape.
+                reason = "unknown"
+                if isinstance(send_result.payload, dict):
+                    p = send_result.payload
+                    reason = (
+                        p.get("code_string")
+                        or p.get("reason")
+                        or (f"error_code={p['error_code']}" if "error_code" in p else "unknown")
+                    )
+                elif send_result.payload is not None:
+                    reason = repr(send_result.payload)
+                return {
+                    "trace": None,
+                    "error": "path_discovery_rejected",
+                    "reason": reason,
+                }
+
+            # MSG_SENT — firmware accepted and broadcast the request.
+            # Apply a 15s floor on the PATH_RESPONSE wait — two-hop flood
+            # round-trips routinely run 5-12s under real LoRa conditions,
+            # and a shorter timeout gives up before the mesh has had time
+            # to answer. Honour firmware's suggested_timeout if it ever
+            # exceeds 15s.
+            suggested_ms = 0
+            if isinstance(send_result.payload, dict):
+                suggested_ms = send_result.payload.get("suggested_timeout", 0) or 0
+            pd_timeout = max(suggested_ms / 800.0, 15.0)
+
+            try:
+                path_event = await asyncio.wait_for(
+                    path_response_task, timeout=pd_timeout,
+                )
+            except asyncio.TimeoutError:
+                path_response_task.cancel()
+                path_event = None
+            except Exception as ex:
+                path_response_task.cancel()
+                _LOGGER.error("trace: PATH_RESPONSE wait raised: %s", ex)
+                return {"trace": None, "error": "path_discovery_failed"}
+
+            if path_event is None:
+                return {"trace": None, "error": "path_discovery_timeout"}
+
+            discovered = path_event.payload or {}
+            out_path_len = discovered.get("out_path_len", -1)
+            if out_path_len < 0:
+                return {
+                    "trace": None,
+                    "error": "path_discovery_failed",
+                    "reason": "malformed_path_response",
+                }
+
+            out_path_hash_len = discovered.get("out_path_hash_len", 1)
+            out_path_hash_mode = {1: 0, 2: 1, 4: 2}.get(out_path_hash_len, 0)
+            out_path_hex = discovered.get("out_path", "") or ""
+
+        # ── Build the round-trip 1-byte-hash path ──
+        # Force flags=0 (1-byte hashes) regardless of the contact's cached
+        # hash mode: 2-byte traces empirically fail to complete round-trip
+        # in production meshes. Truncate each stored hop to its first byte
+        # to match.
+        flags = 0
+        target_hash_hex = public_key[:2]  # first 1 byte
+        if not target_hash_hex:
+            return {"trace": None, "error": "contact_missing_pubkey"}
+
+        stored_hop_width = {0: 2, 1: 4, 2: 8}.get(out_path_hash_mode, 2)
+        outbound_hops = []
+        for i in range(out_path_len):
+            start = i * stored_hop_width
+            stored_hop = out_path_hex[start : start + stored_hop_width]
+            if len(stored_hop) >= 2:
+                outbound_hops.append(stored_hop[:2])
+        return_hops = list(reversed(outbound_hops))
+        full_path_hex = (
+            "".join(outbound_hops) + target_hash_hex + "".join(return_hops)
+        )
+
+        try:
+            trace_path_bytes = bytes.fromhex(full_path_hex)
+        except ValueError as ex:
+            _LOGGER.error("trace: bad hex in path construction: %s", ex)
+            return {"trace": None, "error": "internal_error"}
+
+        _LOGGER.debug(
+            "trace: sending tag=%08x flags=%d path=%s (hops=%d, target=%s)",
+            tag, flags, full_path_hex, len(outbound_hops), target_hash_hex,
+        )
+
+        # ── Send trace and await TRACE_DATA with our tag ──
+        start_time = time.monotonic()
+        try:
+            send_result = await mesh_core.commands.send_trace(
+                0, tag, flags, trace_path_bytes
+            )
+        except Exception as ex:
+            _LOGGER.error("trace: send_trace raised: %s", ex)
+            return {"trace": None, "error": "send_failed"}
+
+        if send_result is None or getattr(send_result, "type", None) == EventType.ERROR:
+            reason = "no_response"
+            if send_result is not None and isinstance(send_result.payload, dict):
+                reason = send_result.payload.get("reason", "unknown")
+            return {"trace": None, "error": reason}
+
+        # Bound the TRACE_DATA wait using (in order of preference) the
+        # user's requested timeout, the device's self-reported suggested
+        # timeout, and sensible floor/ceiling. Use firmware-suggested *1.2
+        # like ws_trace so near-timeout responses aren't cut off.
+        self_info = getattr(api, "self_info", None) or {}
+        fw_suggested_ms = self_info.get("suggested_timeout", 15000) if isinstance(self_info, dict) else 15000
+        try:
+            fw_suggested_s = float(fw_suggested_ms) / 1000.0 * 1.2
+        except Exception:
+            fw_suggested_s = 18.0
+        effective_timeout = min(max(requested_timeout_s, fw_suggested_s, 5.0), 60.0)
+
+        try:
+            trace_event = await mesh_core.dispatcher.wait_for_event(
+                EventType.TRACE_DATA,
+                attribute_filters={"tag": tag},
+                timeout=effective_timeout,
+            )
+        except Exception as ex:
+            _LOGGER.error("trace: awaiting TRACE_DATA raised: %s", ex)
+            return {"trace": None, "error": "await_failed"}
+
+        rtt_ms = int((time.monotonic() - start_time) * 1000)
+        if trace_event is None:
+            return {"trace": None, "error": "timeout", "round_trip_ms": rtt_ms}
+
+        payload = trace_event.payload or {}
+        path_nodes = payload.get("path") or []
+        # Final path entry is the local device on receiving the echo; its
+        # SNR tells callers how strong the return leg was.
+        final_snr = None
+        if path_nodes and isinstance(path_nodes[-1], dict) and "snr" in path_nodes[-1]:
+            final_snr = path_nodes[-1]["snr"]
+
+        return {
+            "trace": {
+                "hops": payload.get("path_len", 0),
+                "path": path_nodes,
+                "round_trip_ms": rtt_ms,
+                "final_snr": final_snr,
+                "tag": payload.get("tag"),
+            }
+        }
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_TRACE,
+        async_trace_service,
+        schema=vol.Schema({
+            vol.Required(ATTR_PUBKEY_PREFIX): cv.string,
+            vol.Optional(ATTR_ENTRY_ID): cv.string,
+            vol.Optional("timeout", default=15): vol.All(
+                vol.Coerce(float), vol.Range(min=1, max=120)
+            ),
+        }),
+        supports_response=SupportsResponse.ONLY,
+    )
+
     # Create CLI command execution service from UI helper
     # async def async_execute_cli_command_ui(call: ServiceCall) -> None:
     #     """Execute CLI command from the text helper entity."""
@@ -1235,6 +1621,15 @@ async def async_unload_services(hass: HomeAssistant) -> None:
 
     if hass.services.has_service(DOMAIN, SERVICE_CLEAR_DISCOVERED_CONTACTS):
         hass.services.async_remove(DOMAIN, SERVICE_CLEAR_DISCOVERED_CONTACTS)
+
+    if hass.services.has_service(DOMAIN, SERVICE_GET_CONTACTS):
+        hass.services.async_remove(DOMAIN, SERVICE_GET_CONTACTS)
+
+    if hass.services.has_service(DOMAIN, SERVICE_GET_CHANNELS):
+        hass.services.async_remove(DOMAIN, SERVICE_GET_CHANNELS)
+
+    if hass.services.has_service(DOMAIN, SERVICE_TRACE):
+        hass.services.async_remove(DOMAIN, SERVICE_TRACE)
 
 
 def create_service_call(

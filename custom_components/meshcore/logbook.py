@@ -246,6 +246,10 @@ async def _collect_incoming_rx_logs(
                 "message": base_event_data.get("message"),
                 "timestamp": base_event_data.get("timestamp"),
             }
+            # Correlation fields: every meshcore_delivery_update carries entity_id,
+            # sender_name, message, and timestamp — enough for downstream
+            # listeners to correlate back to a previously-received
+            # meshcore_message event without re-hashing the message text.
             hass.bus.async_fire(EVENT_MESHCORE_DELIVERY_UPDATE, update_data)
 
     except Exception as ex:
@@ -293,6 +297,20 @@ def handle_contact_message(event, coordinator) -> None:
             pubkey_prefix[:6]
         )
 
+        # path_len semantics for received DM packets (verified empirically
+        # against firmware payload on 2026-04-23):
+        #   * Direct contact (no repeaters): SDK returns 255 (0xFF) — sentinel
+        #     for "no path bytes processed". -1 also occurs in some SDK paths.
+        #   * Multi-hop contact: SDK returns the literal hop count.
+        # path_hash_mode is a SEPARATE field in the payload — there's no
+        # packed encoding here, so no bit-mask is applied to path_len.
+        path_len_raw = payload.get("path_len", 0)
+        if not isinstance(path_len_raw, int) or path_len_raw < 0 or path_len_raw == 0xFF:
+            hop_count = 0
+        else:
+            hop_count = path_len_raw
+        snr = payload.get("SNR")  # V3 only, uppercase in SDK
+
         # Create event data
         event_data = {
             "message": message_text,
@@ -302,8 +320,12 @@ def handle_contact_message(event, coordinator) -> None:
             "entity_id": entity_id,
             "domain": DOMAIN,
             "timestamp": datetime.now().isoformat(),
-            "message_type": "direct"  # Explicit message type for filtering
+            "message_type": "direct",  # Explicit message type for filtering
+            "hop_count": hop_count,
         }
+
+        if snr is not None:
+            event_data["snr"] = snr
 
         # Fire event
         hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, event_data)
@@ -456,7 +478,12 @@ async def handle_outgoing_message(event_data, coordinator) -> None:
                             # Final pass: fire the real logbook event (single entry)
                             hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, update_event)
                         else:
-                            # Intermediate: lightweight event only the sensor listens to
+                            # Intermediate: lightweight event only the sensor listens to.
+                            # Correlation fields: every meshcore_delivery_update carries
+                            # entity_id, sender_name, message, and timestamp — enough
+                            # for downstream listeners to correlate back to a
+                            # previously-received meshcore_message event without
+                            # re-hashing the message text.
                             hass.bus.async_fire(EVENT_MESHCORE_DELIVERY_UPDATE, update_event)
                 finally:
                     # Always release the reservation so the cache key can be

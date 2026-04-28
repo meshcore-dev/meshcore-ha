@@ -2,8 +2,6 @@
 
 # MeshCore for Home Assistant
 
-Fork for BLE
-
 [![Add Integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=meshcore)
 [![Add Repository](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=meshcore-dev&repository=meshcore-ha&category=integration)
 
@@ -27,6 +25,12 @@ Core integration is powered by [meshcore-py](https://github.com/meshcore-dev/mes
 - ✅ Automation examples
 - ✅ Dashboard templates
 - ✅ Troubleshooting guides
+
+---
+
+## Lovelace Card
+
+A companion Lovelace card is available at [meshcore-card](https://github.com/jpettitt/meshcore-card) for displaying MeshCore node data in your Home Assistant dashboards.
 
 ---
 
