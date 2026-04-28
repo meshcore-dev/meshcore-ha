@@ -398,7 +398,7 @@ bool MeshCoreBLEBridge::discover_handles_() {
     for (uint16_t service_index = 0; service_index < service_count; service_index++) {
       char service_uuid[esp32_ble::UUID_STR_LEN];
       espbt::ESPBTUUID::from_uuid(services[service_index].uuid).to_str(service_uuid);
-      ESP_LOGD(TAG, "GATT service %s handles 0x%04X-0x%04X", service_uuid, services[service_index].start_handle,
+      ESP_LOGV(TAG, "GATT service %s handles 0x%04X-0x%04X", service_uuid, services[service_index].start_handle,
                services[service_index].end_handle);
 
       for (uint16_t char_offset = 0;; char_offset += CHAR_BATCH) {
@@ -414,7 +414,7 @@ bool MeshCoreBLEBridge::discover_handles_() {
         for (uint16_t char_index = 0; char_index < char_count; char_index++) {
           char char_uuid[esp32_ble::UUID_STR_LEN];
           espbt::ESPBTUUID::from_uuid(chars[char_index].uuid).to_str(char_uuid);
-          ESP_LOGD(TAG, "  GATT char %s handle 0x%04X props 0x%02X", char_uuid, chars[char_index].char_handle,
+          ESP_LOGV(TAG, "  GATT char %s handle 0x%04X props 0x%02X", char_uuid, chars[char_index].char_handle,
                    chars[char_index].properties);
 
           if (this->uuid_matches_(chars[char_index].uuid, NUS_RX_UUID))
@@ -435,7 +435,7 @@ bool MeshCoreBLEBridge::discover_handles_() {
               for (uint16_t descr_index = 0; descr_index < descr_count; descr_index++) {
                 char descr_uuid[esp32_ble::UUID_STR_LEN];
                 espbt::ESPBTUUID::from_uuid(descriptors[descr_index].uuid).to_str(descr_uuid);
-                ESP_LOGD(TAG, "    GATT descr %s handle 0x%04X", descr_uuid, descriptors[descr_index].handle);
+                ESP_LOGV(TAG, "    GATT descr %s handle 0x%04X", descr_uuid, descriptors[descr_index].handle);
                 if (espbt::ESPBTUUID::from_uuid(descriptors[descr_index].uuid) ==
                     espbt::ESPBTUUID::from_uuid(cccd_uuid))
                   this->tx_cccd_handle_ = descriptors[descr_index].handle;

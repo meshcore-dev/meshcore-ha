@@ -36,6 +36,14 @@ meshcore_ble_bridge:
 For a PIN-protected MeshCore node, keep this pattern:
 
 ```yaml
+logger:
+  level: DEBUG
+  logs:
+    esp32_ble_tracker: DEBUG
+    esp32_ble_client: DEBUG
+    ble_client: DEBUG
+    meshcore_ble_bridge: DEBUG
+
 esp32_ble:
   io_capability: keyboard_only
 
@@ -52,6 +60,10 @@ ble_client:
 
 The bridge's `force_encryption: true` setting replaces the previous
 `on_connect` lambda that called `esp_ble_set_encryption` with MITM encryption.
+
+Avoid `VERY_VERBOSE` for `esp32_ble_tracker` during normal testing. On an ESP32
+with many BLE advertisements nearby, the scan log flood can trip the task
+watchdog before the MeshCore client even connects.
 
 `bluetooth_proxy` is intentionally not used for this MeshCore node. If you need a
 general Home Assistant Bluetooth proxy, use another ESP32 or be prepared for BLE
