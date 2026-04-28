@@ -28,6 +28,12 @@ Core integration is powered by [meshcore-py](https://github.com/meshcore-dev/mes
 
 ---
 
+## Lovelace Card
+
+A companion Lovelace card is available at [meshcore-card](https://github.com/jpettitt/meshcore-card) for displaying MeshCore node data in your Home Assistant dashboards.
+
+---
+
 ## Installation
 
 ### HACS Installation (Recommended)
