@@ -36,6 +36,9 @@ SERVICE_REMOVE_SELECTED_CONTACT: Final = "remove_selected_contact"
 SERVICE_REMOVE_DISCOVERED_CONTACT: Final = "remove_discovered_contact"
 SERVICE_CLEANUP_UNAVAILABLE_CONTACTS: Final = "cleanup_unavailable_contacts"
 SERVICE_CLEAR_DISCOVERED_CONTACTS: Final = "clear_discovered_contacts"
+SERVICE_GET_CONTACTS: Final = "get_contacts"
+SERVICE_GET_CHANNELS: Final = "get_channels"
+SERVICE_TRACE: Final = "trace"
 
 # Select entity placeholders
 SELECT_NO_CONTACTS: Final = "Select a contact..."
