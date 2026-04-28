@@ -17,18 +17,8 @@ namespace esphome::meshcore_ble_bridge {
 
 static const char *const TAG = "meshcore_ble_bridge";
 
-static const uint8_t NUS_SERVICE_UUID[16] = {
-    0x9E, 0xCA, 0xDC, 0x24, 0x5E, 0xE0, 0xA9, 0xE4,
-    0x93, 0xF3, 0xA3, 0xB5, 0x01, 0x00, 0x40, 0x6E,
-};
-static const uint8_t NUS_RX_UUID[16] = {
-    0x9E, 0xCA, 0xDC, 0x24, 0x5E, 0xE0, 0xA9, 0xE4,
-    0x93, 0xF3, 0xA3, 0xB5, 0x02, 0x00, 0x40, 0x6E,
-};
-static const uint8_t NUS_TX_UUID[16] = {
-    0x9E, 0xCA, 0xDC, 0x24, 0x5E, 0xE0, 0xA9, 0xE4,
-    0x93, 0xF3, 0xA3, 0xB5, 0x03, 0x00, 0x40, 0x6E,
-};
+static const char *const NUS_RX_UUID = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E";
+static const char *const NUS_TX_UUID = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E";
 
 void MeshCoreBLEBridge::setup() {
   this->setup_complete_ = true;
@@ -75,21 +65,10 @@ void MeshCoreBLEBridge::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt
       break;
 
     case ESP_GATTC_SEARCH_CMPL_EVT: {
-      auto service_uuid = espbt::ESPBTUUID::from_raw(const_cast<uint8_t *>(NUS_SERVICE_UUID));
-      auto rx_uuid = espbt::ESPBTUUID::from_raw(const_cast<uint8_t *>(NUS_RX_UUID));
-      auto tx_uuid = espbt::ESPBTUUID::from_raw(const_cast<uint8_t *>(NUS_TX_UUID));
-
-      auto *rx = this->parent()->get_characteristic(service_uuid, rx_uuid);
-      auto *tx = this->parent()->get_characteristic(service_uuid, tx_uuid);
-      if (rx == nullptr || tx == nullptr) {
+      if (!this->discover_handles_()) {
         ESP_LOGE(TAG, "MeshCore Nordic UART characteristics not found");
         break;
       }
-
-      this->rx_handle_ = rx->handle;
-      this->tx_handle_ = tx->handle;
-      auto *cccd = this->parent()->get_config_descriptor(this->tx_handle_);
-      this->tx_cccd_handle_ = cccd == nullptr ? 0 : cccd->handle;
 
       ESP_LOGI(TAG, "BLE handles ready: RX=0x%04X TX=0x%04X CCCD=0x%04X", this->rx_handle_, this->tx_handle_,
                this->tx_cccd_handle_);
@@ -394,6 +373,92 @@ void MeshCoreBLEBridge::reset_ble_state_() {
   this->tx_cccd_handle_ = 0;
 }
 
+bool MeshCoreBLEBridge::discover_handles_() {
+  this->rx_handle_ = 0;
+  this->tx_handle_ = 0;
+  this->tx_cccd_handle_ = 0;
+
+  constexpr uint16_t SERVICE_BATCH = 8;
+  constexpr uint16_t CHAR_BATCH = 16;
+  constexpr uint16_t DESCR_BATCH = 8;
+
+  esp_bt_uuid_t cccd_uuid = espbt::ESPBTUUID::from_uint16(ESP_GATT_UUID_CHAR_CLIENT_CONFIG).get_uuid();
+
+  for (uint16_t service_offset = 0;; service_offset += SERVICE_BATCH) {
+    esp_gattc_service_elem_t services[SERVICE_BATCH]{};
+    uint16_t service_count = SERVICE_BATCH;
+    auto service_status = esp_ble_gattc_get_service(this->parent()->get_gattc_if(), this->parent()->get_conn_id(),
+                                                    nullptr, services, &service_count, service_offset);
+    if (service_status != ESP_GATT_OK || service_count == 0) {
+      if (service_offset == 0)
+        ESP_LOGW(TAG, "No services in GATT cache, status=%d count=%u", service_status, service_count);
+      break;
+    }
+
+    for (uint16_t service_index = 0; service_index < service_count; service_index++) {
+      char service_uuid[esp32_ble::UUID_STR_LEN];
+      espbt::ESPBTUUID::from_uuid(services[service_index].uuid).to_str(service_uuid);
+      ESP_LOGD(TAG, "GATT service %s handles 0x%04X-0x%04X", service_uuid, services[service_index].start_handle,
+               services[service_index].end_handle);
+
+      for (uint16_t char_offset = 0;; char_offset += CHAR_BATCH) {
+        esp_gattc_char_elem_t chars[CHAR_BATCH]{};
+        uint16_t char_count = CHAR_BATCH;
+        auto char_status = esp_ble_gattc_get_all_char(this->parent()->get_gattc_if(), this->parent()->get_conn_id(),
+                                                      services[service_index].start_handle,
+                                                      services[service_index].end_handle, chars, &char_count,
+                                                      char_offset);
+        if (char_status != ESP_GATT_OK || char_count == 0)
+          break;
+
+        for (uint16_t char_index = 0; char_index < char_count; char_index++) {
+          char char_uuid[esp32_ble::UUID_STR_LEN];
+          espbt::ESPBTUUID::from_uuid(chars[char_index].uuid).to_str(char_uuid);
+          ESP_LOGD(TAG, "  GATT char %s handle 0x%04X props 0x%02X", char_uuid, chars[char_index].char_handle,
+                   chars[char_index].properties);
+
+          if (this->uuid_matches_(chars[char_index].uuid, NUS_RX_UUID))
+            this->rx_handle_ = chars[char_index].char_handle;
+          if (this->uuid_matches_(chars[char_index].uuid, NUS_TX_UUID)) {
+            this->tx_handle_ = chars[char_index].char_handle;
+
+            for (uint16_t descr_offset = 0;; descr_offset += DESCR_BATCH) {
+              esp_gattc_descr_elem_t descriptors[DESCR_BATCH]{};
+              uint16_t descr_count = DESCR_BATCH;
+              auto descr_status = esp_ble_gattc_get_all_descr(this->parent()->get_gattc_if(),
+                                                              this->parent()->get_conn_id(),
+                                                              this->tx_handle_, descriptors, &descr_count,
+                                                              descr_offset);
+              if (descr_status != ESP_GATT_OK || descr_count == 0)
+                break;
+
+              for (uint16_t descr_index = 0; descr_index < descr_count; descr_index++) {
+                char descr_uuid[esp32_ble::UUID_STR_LEN];
+                espbt::ESPBTUUID::from_uuid(descriptors[descr_index].uuid).to_str(descr_uuid);
+                ESP_LOGD(TAG, "    GATT descr %s handle 0x%04X", descr_uuid, descriptors[descr_index].handle);
+                if (espbt::ESPBTUUID::from_uuid(descriptors[descr_index].uuid) ==
+                    espbt::ESPBTUUID::from_uuid(cccd_uuid))
+                  this->tx_cccd_handle_ = descriptors[descr_index].handle;
+              }
+
+              if (descr_count < DESCR_BATCH)
+                break;
+            }
+          }
+        }
+
+        if (char_count < CHAR_BATCH)
+          break;
+      }
+    }
+
+    if (service_count < SERVICE_BATCH)
+      break;
+  }
+
+  return this->rx_handle_ != 0 && this->tx_handle_ != 0 && this->tx_cccd_handle_ != 0;
+}
+
 void MeshCoreBLEBridge::maybe_enable_notifications_() {
   if (this->rx_handle_ == 0 || this->tx_handle_ == 0)
     return;
@@ -424,6 +489,10 @@ bool MeshCoreBLEBridge::address_matches_(const esp_bd_addr_t address) {
   if (this->parent() == nullptr)
     return false;
   return std::memcmp(address, this->parent()->get_remote_bda(), sizeof(esp_bd_addr_t)) == 0;
+}
+
+bool MeshCoreBLEBridge::uuid_matches_(const esp_bt_uuid_t &actual, const char *expected) {
+  return espbt::ESPBTUUID::from_uuid(actual) == espbt::ESPBTUUID::from_raw(expected);
 }
 
 void MeshCoreBLEBridge::set_nonblocking_(int fd) {

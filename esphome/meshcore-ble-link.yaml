@@ -51,7 +51,7 @@ esp32_ble_tracker:
     window: 1000ms
 
 ble_client:
-  - mac_address: AC:A7:04:07:CE:21
+  - mac_address: xxx
     id: meshcore_ble
     auto_connect: true
 

@@ -51,9 +51,11 @@ class MeshCoreBLEBridge : public Component, public ble_client::BLEClientNode {
   bool send_all_(const uint8_t *data, size_t len);
 
   void reset_ble_state_();
+  bool discover_handles_();
   void maybe_enable_notifications_();
   void mark_ble_ready_();
   bool address_matches_(const esp_bd_addr_t address);
+  bool uuid_matches_(const esp_bt_uuid_t &actual, const char *expected);
   void set_nonblocking_(int fd);
 
   uint16_t port_{5000};
