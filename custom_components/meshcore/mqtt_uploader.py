@@ -1183,20 +1183,11 @@ class MeshCoreMqttUploader:
                 if not hash_value:
                     has_transport = route_type in (0x00, 0x03)
                     offset = 1 + (4 if has_transport else 0)
-                    # Path byte is bit-packed: low 4 bits = hop count
                     raw_path_byte = packet_bytes[offset] if len(packet_bytes) > offset else 0
-                    hop_count = raw_path_byte & 0x0F
+                    path_hash_size = ((raw_path_byte & 0xC0) >> 6) + 1
+                    hop_count = raw_path_byte & 0x3F
 
-                    # Determine per-node address size (1..4 bytes) by testing which fits
-                    addr_size = 1
-                    for candidate in (4, 3, 2, 1):
-                        path_bytes_len = hop_count * candidate
-                        # need at least channel_hash (1) + MAC (2) after path
-                        if len(packet_bytes) >= offset + 1 + path_bytes_len + 3:
-                            addr_size = candidate
-                            break
-
-                    payload_start = offset + 1 + hop_count * addr_size
+                    payload_start = offset + 1 + (hop_count * path_hash_size)
                     payload_data = packet_bytes[payload_start:] if len(packet_bytes) > payload_start else b""
 
                     hash_obj = hashlib.sha256()
