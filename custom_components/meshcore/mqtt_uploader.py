@@ -1183,14 +1183,17 @@ class MeshCoreMqttUploader:
                 if not hash_value:
                     has_transport = route_type in (0x00, 0x03)
                     offset = 1 + (4 if has_transport else 0)
-                    path_len_value = packet_bytes[offset] if len(packet_bytes) > offset else 0
-                    payload_start = offset + 1 + path_len_value
+                    raw_path_byte = packet_bytes[offset] if len(packet_bytes) > offset else 0
+                    path_hash_size = ((raw_path_byte & 0xC0) >> 6) + 1
+                    hop_count = raw_path_byte & 0x3F
+
+                    payload_start = offset + 1 + (hop_count * path_hash_size)
                     payload_data = packet_bytes[payload_start:] if len(packet_bytes) > payload_start else b""
 
                     hash_obj = hashlib.sha256()
                     hash_obj.update(bytes([payload_type_value]))
                     if payload_type_value == 9:  # TRACE
-                        hash_obj.update(path_len_value.to_bytes(2, byteorder="little"))
+                        hash_obj.update(hop_count.to_bytes(2, byteorder="little"))
                     hash_obj.update(payload_data)
                     hash_value = hash_obj.hexdigest()[:16].upper()
             except Exception:

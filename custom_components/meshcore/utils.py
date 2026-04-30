@@ -279,15 +279,23 @@ def parse_and_decrypt_rx_log(payload: Any, channels_info: dict[int, dict]) -> di
         if len(packet_bytes) < 2:
             return result
 
-        # Parse header and path
+        # Parse header and path using the same layout as meshcore_py:
+        # - byte 0: header
+        # - byte 1: path byte
+        #   - high 2 bits: path hash size mode => 1..4 bytes per hop
+        #   - low 6 bits: hop count
         header = packet_bytes[0]
-        path_len = packet_bytes[1]
+        path_byte = packet_bytes[1]
 
         # Extract payload type from header (bits 2-5)
         payload_type = (header >> 2) & 0x0F
 
+        path_hash_size = ((path_byte & 0xC0) >> 6) + 1
+        hop_count = path_byte & 0x3F
+
         result["header"] = f"{header:02x}"
-        result["path_len"] = path_len
+        result["path_len"] = hop_count
+        result["path_hash_size"] = path_hash_size
         result["payload_type"] = payload_type
 
         # Check if this is GroupText (0x05)
@@ -295,12 +303,12 @@ def parse_and_decrypt_rx_log(payload: Any, channels_info: dict[int, dict]) -> di
             _LOGGER.debug(f"RX_LOG payload type {payload_type:02x} is not GroupText, skipping decryption")
             return result
 
-        # Validate packet length
-        path_end = 2 + path_len
+        # Validate packet length and compute path end index
+        path_end = 2 + hop_count * path_hash_size
         if len(packet_bytes) < path_end + 3:  # Need at least channel_hash + 2-byte MAC
             return result
 
-        # Extract path data
+        # Extract path data (bytes) and hex string
         path_data = packet_bytes[2:path_end]
         result["path"] = path_data.hex()
 
@@ -339,9 +347,10 @@ def parse_and_decrypt_rx_log(payload: Any, channels_info: dict[int, dict]) -> di
                         "timestamp": timestamp,
                         "text": message_text,
                         "decrypted": True,
-                        "path_len": path_len,
+                        "path_len": hop_count,
                         "path": path_data.hex(),
-                        "channel_hash": f"{channel_hash_byte:02x}"
+                        "channel_hash": f"{channel_hash_byte:02x}",
+                        "path_hash_size": path_hash_size,
                     }
 
                     _LOGGER.debug(f"Successfully decrypted RX_LOG for channel {channel_idx}: {message_text[:50]}")
@@ -426,31 +435,39 @@ def parse_rx_log_data(payload: Any) -> dict[str, Any]:
         # Parse header (bytes 0-1)
         result["header"] = hex_str[0:2]
 
-        # Parse path_len (bytes 2-3)
+        # Parse path byte using the same bit layout as meshcore_py:
+        # high 2 bits = path hash size mode (1..4 bytes per hop)
+        # low 6 bits = hop count
         try:
-            path_len = int(hex_str[2:4], 16)
-            result["path_len"] = path_len
+            path_byte = int(hex_str[2:4], 16)
         except ValueError:
-            _LOGGER.debug(f"Could not parse path_len from: {hex_str[2:4]}")
+            _LOGGER.debug(f"Could not parse path byte from: {hex_str[2:4]}")
             return result
 
-        # Calculate expected positions
+        path_hash_size = ((path_byte & 0xC0) >> 6) + 1
+        hop_count = path_byte & 0x3F
+        result["path_len"] = hop_count
+        result["path_hash_size"] = path_hash_size
+
+        # Path hex starts at nibble index 4.
         path_start = 4
-        path_end = path_start + (path_len * 2)  # Each node is 2 hex chars
-
-        # Validate length for path data
+        path_end = path_start + (hop_count * path_hash_size * 2)
         if len(hex_str) < path_end:
-            _LOGGER.debug(f"RX_LOG hex too short for path data: expected {path_end}, got {len(hex_str)}")
+            _LOGGER.debug(
+                "RX_LOG hex too short for path data: expected at least %d, got %d",
+                path_end,
+                len(hex_str),
+            )
             return result
 
-        # Extract path data
         path_hex = hex_str[path_start:path_end]
         result["path"] = path_hex
 
-        # Parse individual nodes in path (2 chars each)
+        # Parse individual nodes in path (2, 4, 6, or 8 chars each depending on path_hash_size)
         path_nodes = []
-        for i in range(0, len(path_hex), 2):
-            node_hex = path_hex[i:i+2]
+        step = path_hash_size * 2
+        for i in range(0, len(path_hex), step):
+            node_hex = path_hex[i:i+step]
             path_nodes.append(node_hex)
         result["path_nodes"] = path_nodes
 
