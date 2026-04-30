@@ -58,6 +58,14 @@ This guide will help you install and configure the Meshcore integration for Home
 - Or enter the Bluetooth address manually
 - **Note**: BLE pairing over Home Assistant Bluetooth proxy is not currently working
 
+##### Workaround for PIN-protected BLE devices
+
+Home Assistant Bluetooth Proxy does not currently pass through Meshcore's BLE
+PIN pairing flow. If your node requires a BLE PIN, the external
+[Meshcore BLE Bridge for ESPHome](https://github.com/matthew73210/meshcore-ble-bridge)
+project can keep the authenticated BLE connection on an ESP32 and expose it to
+this integration as a TCP connection.
+
 #### TCP Connection
 - Enter the hostname or IP address
 - Enter the port number (default: varies by device)
