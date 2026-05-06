@@ -279,7 +279,21 @@ async def async_setup_entry(
     # Subscribe to our internal message sent event for outgoing messages
     @callback
     async def message_sent_handler(event):
-        """Handle outgoing message events."""
+        """Handle outgoing message events.
+
+        Multi-entry safety: only the originating coordinator should
+        process its own send. The event is fired on the global bus
+        and all entries' listeners receive it; without this filter,
+        every registered listener fires on every send, causing
+        handle_outgoing_message to fan-fire meshcore_message events
+        with each coordinator's pubkey prefix - the message gets
+        stored as outgoing on entries that didn't actually send it.
+        The meshcore.send_* services tag the event with
+        ``device: <originating-entry-id>`` (services.py:259, :336),
+        so the filter has authoritative source data.
+        """
+        if event.data.get("device") != entry.entry_id:
+            return
         if event.data.get("message_type") == "direct":
             # Handle outgoing direct message
             _LOGGER.debug(f"Handling outgoing direct message: {event.data}")
