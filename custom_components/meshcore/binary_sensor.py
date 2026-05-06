@@ -56,7 +56,15 @@ def create_contact_sensor(coordinator, contact: dict):
             coordinator,
             contact_name,
             public_key,
-            public_key[:12]
+            # Multi-entry safety: scope unique_id by entry_id so two
+            # entries observing the same physical mesh contact don't
+            # collide at entity registration. Format mirrors other
+            # entities in this file (MeshCoreMessagesBinarySensor at
+            # line 363, MeshCoreMQTTBrokerConnectionBinarySensor at
+            # line 430). Continuation of PR #131's multi-entry-same-
+            # mesh hardening, which fixed the entity-cleanup path;
+            # this closes the entity-registration path.
+            f"{coordinator.config_entry.entry_id}_contact_{public_key[:12]}",
         )
     return None
 

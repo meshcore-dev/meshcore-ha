@@ -247,6 +247,51 @@ def _migrate_unique_ids_remove_name(
         _LOGGER.info("Stabilized %d entity unique_ids (removed name)", migrated)
 
 
+def _migrate_unique_ids_scope_contact_diagnostics(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+) -> None:
+    """One-time: prefix contact-diagnostic unique_ids with entry_id.
+
+    Pre-fix unique_ids were the raw 12-char pubkey prefix, which
+    collides on multi-entry installs where the same mesh contact is
+    observed by both entries. This migration scopes them to
+    "{entry_id}_contact_{pubkey[:12]}" so each entry has its own
+    diagnostic entity per contact. Single-entry installs see no
+    behavior change beyond the unique_id format itself.
+
+    Idempotent: a second call finds no 12-char-only unique_ids
+    (they've all been migrated to the new format).
+    """
+    entity_registry = er.async_get(hass)
+    migrated = 0
+    for entity in list(entity_registry.entities.values()):
+        if entity.config_entry_id != entry.entry_id:
+            continue
+        if entity.platform != DOMAIN:
+            continue
+        # Old unique_ids are exactly 12 hex chars (pubkey[:12]).
+        old_uid = entity.unique_id
+        if not (len(old_uid) == 12 and all(c in "0123456789abcdef" for c in old_uid.lower())):
+            continue
+        new_uid = f"{entry.entry_id}_contact_{old_uid}"
+        try:
+            entity_registry.async_update_entity(
+                entity.entity_id, new_unique_id=new_uid,
+            )
+            migrated += 1
+        except Exception as ex:
+            _LOGGER.error(
+                "Failed to migrate contact unique_id %s: %s",
+                old_uid, ex,
+            )
+    if migrated:
+        _LOGGER.info(
+            "Migrated %d contact-diagnostic unique_ids for entry %s",
+            migrated, entry.entry_id,
+        )
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up MeshCore from a config entry."""
     # Home Assistant can trigger a duplicate setup during rapid reload/update cycles.
@@ -355,6 +400,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # One-time migration: remove device name from unique_ids
     _migrate_unique_ids_remove_name(hass, entry)
+    # One-time migration: scope contact-diagnostic unique_ids by
+    # entry_id so multi-entry installs don't collide on shared mesh
+    # contacts (F-U1). Idempotent.
+    _migrate_unique_ids_scope_contact_diagnostics(hass, entry)
 
     # TODO: remove this with contact refresh interval migration?
     # Get the messages interval for base update frequency
