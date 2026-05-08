@@ -2,9 +2,9 @@
 import asyncio
 import logging
 from typing import  Callable
-from datetime import datetime
 
 from homeassistant.core import HomeAssistant, callback, Event
+from homeassistant.util import dt as dt_util
 
 from .const import (
     DOMAIN,
@@ -114,7 +114,7 @@ async def handle_channel_message(event, coordinator) -> None:
             "channel_idx": channel_idx,
             "entity_id": entity_id,
             "domain": DOMAIN,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": dt_util.utcnow().isoformat(),
             "message_type": "channel"  # Explicit message type for filtering
         }
 
@@ -319,7 +319,7 @@ def handle_contact_message(event, coordinator) -> None:
             "receiver_name": DEFAULT_DEVICE_NAME,
             "entity_id": entity_id,
             "domain": DOMAIN,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": dt_util.utcnow().isoformat(),
             "message_type": "direct",  # Explicit message type for filtering
             "hop_count": hop_count,
         }
@@ -379,7 +379,7 @@ async def handle_outgoing_message(event_data, coordinator) -> None:
             "pubkey_prefix": pubkey_prefix,
             "entity_id": entity_id,
             "domain": DOMAIN,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": dt_util.utcnow().isoformat(),
             "outgoing": True,
             "message_type": "direct",
             "send_id": event_data.get("send_id"),
@@ -422,7 +422,7 @@ async def handle_outgoing_message(event_data, coordinator) -> None:
             "channel_idx": channel_idx,
             "entity_id": entity_id,
             "domain": DOMAIN,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": dt_util.utcnow().isoformat(),
             "outgoing": True,
             "message_type": "channel",
             "send_id": event_data.get("send_id"),
