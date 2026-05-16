@@ -287,7 +287,7 @@ REPEATER_SENSORS = [
     SensorEntityDescription(
         key="recv_errors",
         state_class=SensorStateClass.TOTAL_INCREASING,
-        icon="mdi:email-alert",
+        icon="mdi:message-alert",
     ),
     SensorEntityDescription(
         key="airtime_utilization",
@@ -373,7 +373,7 @@ REPEATER_SENSORS = [
         native_unit_of_measurement="msg/min",
         suggested_display_precision="1",
         state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:email-alert",
+        icon="mdi:message-alert",
     ),
 ]
 
