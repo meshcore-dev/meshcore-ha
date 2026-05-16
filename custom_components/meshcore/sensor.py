@@ -285,6 +285,11 @@ REPEATER_SENSORS = [
         icon="mdi:content-duplicate",
     ),
     SensorEntityDescription(
+        key="recv_errors",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:message-alert",
+    ),
+    SensorEntityDescription(
         key="airtime_utilization",
         device_class=SensorDeviceClass.POWER_FACTOR,
         native_unit_of_measurement="%",
@@ -362,6 +367,13 @@ REPEATER_SENSORS = [
         suggested_display_precision="1",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:message-arrow-right-outline",
+    ),
+    SensorEntityDescription(
+        key="recv_errors_rate",
+        native_unit_of_measurement="msg/min",
+        suggested_display_precision="1",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:message-alert",
     ),
 ]
 
