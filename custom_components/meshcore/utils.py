@@ -260,7 +260,92 @@ def parse_and_decrypt_rx_log(payload: Any, channels_info: dict[int, dict]) -> di
     result = {}
 
     try:
-        # Extract hex string from payload
+        if not isinstance(payload, dict):
+            return result
+
+        # Fast path: use pre-parsed fields set by the SDK's MeshcorePacketParser.
+        # These are always correct for all route types, including TC_FLOOD (route_type 0)
+        # and TC_DIRECT (route_type 3) which carry a 4-byte transport code between the
+        # header and the path_byte — a detail the raw-parsing fallback previously missed,
+        # causing region-scope (TC_FLOOD) messages to never correlate with RX_LOG data.
+        if "payload_type" in payload:
+            payload_type = payload.get("payload_type")
+            path_len = payload.get("path_len", 0)
+            path_hash_size = payload.get("path_hash_size", 1)
+            path = payload.get("path", "")
+
+            header_raw = payload.get("header")
+            if isinstance(header_raw, int):
+                result["header"] = f"{header_raw:02x}"
+            elif isinstance(header_raw, str):
+                result["header"] = header_raw
+
+            result["path_len"] = path_len
+            result["path_hash_size"] = path_hash_size
+            result["payload_type"] = payload_type
+            if path:
+                result["path"] = path
+
+            if payload_type != 5:  # 5 = GRP_TXT (GroupText channel message)
+                return result
+
+            chan_hash_hex = payload.get("chan_hash", "")
+            cipher_mac_hex = payload.get("cipher_mac", "")
+            crypted_hex = payload.get("crypted", "")
+
+            if chan_hash_hex:
+                result["channel_hash"] = chan_hash_hex
+
+            if not (chan_hash_hex and cipher_mac_hex and crypted_hex):
+                return result
+
+            try:
+                chan_hash_byte = int(chan_hash_hex, 16)
+            except ValueError:
+                return result
+
+            for channel_idx, channel_info in channels_info.items():
+                channel_secret = channel_info.get("channel_secret")
+                if not channel_secret:
+                    continue
+
+                if isinstance(channel_secret, str):
+                    channel_secret = bytes.fromhex(channel_secret)
+
+                expected_hash_byte = hashlib.sha256(channel_secret).digest()[0]
+
+                if expected_hash_byte == chan_hash_byte:
+                    try:
+                        ciphertext = bytes.fromhex(crypted_hex)
+                        cipher_mac = bytes.fromhex(cipher_mac_hex)
+                    except ValueError:
+                        continue
+
+                    timestamp, message_text = decrypt_channel_message(ciphertext, cipher_mac, channel_secret)
+
+                    if timestamp is not None and message_text is not None:
+                        result = {
+                            "channel_idx": channel_idx,
+                            "channel_name": channel_info.get("channel_name", f"Channel {channel_idx}"),
+                            "timestamp": timestamp,
+                            "text": message_text,
+                            "decrypted": True,
+                            "path_len": path_len,
+                            "path": path,
+                            "channel_hash": chan_hash_hex,
+                            "path_hash_size": path_hash_size,
+                        }
+                        _LOGGER.debug(
+                            "Decrypted RX_LOG via SDK fields for channel %d: %s",
+                            channel_idx, message_text[:50],
+                        )
+                        break
+
+            return result
+
+        # Fallback: parse from raw payload bytes when SDK pre-parsed fields are absent.
+        # TC_FLOOD (route_type 0) and TC_DIRECT (route_type 3) carry a 4-byte transport
+        # code between the header byte and the path_byte; skip it before reading path info.
         hex_str = None
         if isinstance(payload, dict):
             hex_str = payload.get("payload") or payload.get("raw_hex")
@@ -270,7 +355,9 @@ def parse_and_decrypt_rx_log(payload: Any, channels_info: dict[int, dict]) -> di
         if not hex_str:
             return result
 
-        # Convert to bytes
+        if isinstance(hex_str, bytes):
+            hex_str = hex_str.hex()
+
         if isinstance(hex_str, str):
             packet_bytes = bytes.fromhex(hex_str.replace(" ", "").replace("\n", ""))
         else:
@@ -279,40 +366,43 @@ def parse_and_decrypt_rx_log(payload: Any, channels_info: dict[int, dict]) -> di
         if len(packet_bytes) < 2:
             return result
 
-        # Parse header and path using the same layout as meshcore_py:
-        # - byte 0: header
-        # - byte 1: path byte
-        #   - high 2 bits: path hash size mode => 1..4 bytes per hop
-        #   - low 6 bits: hop count
         header = packet_bytes[0]
-        path_byte = packet_bytes[1]
-
-        # Extract payload type from header (bits 2-5)
+        route_type = header & 0x03
         payload_type = (header >> 2) & 0x0F
 
+        result["header"] = f"{header:02x}"
+        result["payload_type"] = payload_type
+
+        # TC_FLOOD (0) and TC_DIRECT (3) have a 4-byte transport code before the path byte.
+        transport_code_size = 4 if route_type in (0, 3) else 0
+        path_byte_offset = 1 + transport_code_size
+
+        if len(packet_bytes) <= path_byte_offset:
+            return result
+
+        path_byte = packet_bytes[path_byte_offset]
         path_hash_size = ((path_byte & 0xC0) >> 6) + 1
         hop_count = path_byte & 0x3F
 
-        result["header"] = f"{header:02x}"
         result["path_len"] = hop_count
         result["path_hash_size"] = path_hash_size
-        result["payload_type"] = payload_type
 
-        # Check if this is GroupText (0x05)
         if payload_type != 0x05:
-            _LOGGER.debug(f"RX_LOG payload type {payload_type:02x} is not GroupText, skipping decryption")
+            _LOGGER.debug(
+                "RX_LOG payload type %02x is not GroupText, skipping decryption",
+                payload_type,
+            )
             return result
 
-        # Validate packet length and compute path end index
-        path_end = 2 + hop_count * path_hash_size
+        path_start = path_byte_offset + 1
+        path_end = path_start + hop_count * path_hash_size
+
         if len(packet_bytes) < path_end + 3:  # Need at least channel_hash + 2-byte MAC
             return result
 
-        # Extract path data (bytes) and hex string
-        path_data = packet_bytes[2:path_end]
+        path_data = packet_bytes[path_start:path_end]
         result["path"] = path_data.hex()
 
-        # Parse GroupText payload
         group_payload = packet_bytes[path_end:]
         channel_hash_byte = group_payload[0]
         result["channel_hash"] = f"{channel_hash_byte:02x}"
@@ -323,24 +413,20 @@ def parse_and_decrypt_rx_log(payload: Any, channels_info: dict[int, dict]) -> di
         cipher_mac = group_payload[1:3]
         ciphertext = group_payload[3:]
 
-        # Try to match channel hash and decrypt
         for channel_idx, channel_info in channels_info.items():
             channel_secret = channel_info.get("channel_secret")
             if not channel_secret:
                 continue
 
-            # Calculate channel hash (first byte of SHA256)
             if isinstance(channel_secret, str):
                 channel_secret = bytes.fromhex(channel_secret)
 
             expected_hash_byte = hashlib.sha256(channel_secret).digest()[0]
 
             if expected_hash_byte == channel_hash_byte:
-                # Found matching channel, try to decrypt
                 timestamp, message_text = decrypt_channel_message(ciphertext, cipher_mac, channel_secret)
 
                 if timestamp is not None and message_text is not None:
-                    # Keep essential parsed fields, add decryption-specific fields
                     result = {
                         "channel_idx": channel_idx,
                         "channel_name": channel_info.get("channel_name", f"Channel {channel_idx}"),
@@ -352,8 +438,10 @@ def parse_and_decrypt_rx_log(payload: Any, channels_info: dict[int, dict]) -> di
                         "channel_hash": f"{channel_hash_byte:02x}",
                         "path_hash_size": path_hash_size,
                     }
-
-                    _LOGGER.debug(f"Successfully decrypted RX_LOG for channel {channel_idx}: {message_text[:50]}")
+                    _LOGGER.debug(
+                        "Decrypted RX_LOG via raw parse for channel %d: %s",
+                        channel_idx, message_text[:50],
+                    )
                     break
 
     except Exception as ex:
@@ -389,59 +477,91 @@ def create_message_correlation_key(channel_idx: int, timestamp: int) -> str:
 def parse_rx_log_data(payload: Any) -> dict[str, Any]:
     """Parse RX_LOG event payload to extract LoRa packet details.
 
-    RX_LOG_DATA events contain raw LoRa payload with header, path, and channel hash.
-    Format:
-    - Bytes 0-1: Header/identifier
-    - Bytes 2-3: Hop count (path_len)
-    - Bytes 4+: Path data (2 hex chars per node)
-    - After path: Channel hash
-
     Args:
-        payload: Raw event payload (dict with 'payload' or 'raw_hex', or direct hex string)
+        payload: Raw event payload (dict with SDK pre-parsed fields, or 'payload'/'raw_hex',
+                 or direct hex string)
 
     Returns:
-        Dict with parsed fields: header, path_len, path, channel_hash
-        Returns empty dict on parsing errors (fault tolerant)
+        Dict with parsed fields: header, path_len, path_hash_size, path, path_nodes,
+        channel_hash. Returns empty dict on parsing errors (fault tolerant).
     """
     result = {}
 
     try:
-        # Extract hex string from payload
-        hex_str = None
-
         if isinstance(payload, dict):
-            # Try payload.payload first, then raw_hex
+            # Fast path: use pre-parsed fields set by the SDK's MeshcorePacketParser.
+            # These are always correct for all route types including TC_FLOOD (route_type 0)
+            # and TC_DIRECT (route_type 3) which carry a 4-byte transport code that the
+            # raw-parsing fallback previously handled incorrectly.
+            if "payload_type" in payload:
+                path_len = payload.get("path_len", 0)
+                path_hash_size = payload.get("path_hash_size", 1)
+                path_hex = payload.get("path", "")
+                chan_hash = payload.get("chan_hash")
+
+                header_raw = payload.get("header")
+                if isinstance(header_raw, int):
+                    result["header"] = f"{header_raw:02x}"
+                elif isinstance(header_raw, str):
+                    result["header"] = header_raw
+
+                result["path_len"] = path_len
+                result["path_hash_size"] = path_hash_size
+
+                if path_hex:
+                    result["path"] = path_hex
+                    step = path_hash_size * 2
+                    result["path_nodes"] = [
+                        path_hex[i:i + step]
+                        for i in range(0, len(path_hex), step)
+                        if path_hex[i:i + step]
+                    ]
+
+                if chan_hash:
+                    result["channel_hash"] = chan_hash
+
+                return result
+
+            # Fallback: extract raw hex and parse manually.
             hex_str = payload.get("payload") or payload.get("raw_hex")
         elif isinstance(payload, (str, bytes)):
-            # Direct string or bytes
             hex_str = payload
+        else:
+            return result
 
         if not hex_str:
             _LOGGER.debug("No hex data found in RX_LOG payload")
             return result
 
-        # Convert bytes to hex string if needed
         if isinstance(hex_str, bytes):
             hex_str = hex_str.hex()
 
-        # Normalize: lowercase, remove spaces and newlines
         hex_str = str(hex_str).lower().replace(" ", "").replace("\n", "").replace("\r", "")
 
-        # Validate minimum length (at least header + path_len)
         if len(hex_str) < 4:
-            _LOGGER.debug(f"RX_LOG hex too short: {len(hex_str)} chars")
+            _LOGGER.debug("RX_LOG hex too short: %d chars", len(hex_str))
             return result
 
-        # Parse header (bytes 0-1)
         result["header"] = hex_str[0:2]
 
-        # Parse path byte using the same bit layout as meshcore_py:
-        # high 2 bits = path hash size mode (1..4 bytes per hop)
-        # low 6 bits = hop count
+        header = int(hex_str[0:2], 16)
+        route_type = header & 0x03
+
+        # TC_FLOOD (0) and TC_DIRECT (3) have a 4-byte transport code before the path byte;
+        # skip it (8 hex chars) before reading path info.
+        transport_nibbles = 8 if route_type in (0, 3) else 0
+        path_byte_start = 2 + transport_nibbles
+
+        if len(hex_str) < path_byte_start + 2:
+            return result
+
         try:
-            path_byte = int(hex_str[2:4], 16)
+            path_byte = int(hex_str[path_byte_start:path_byte_start + 2], 16)
         except ValueError:
-            _LOGGER.debug(f"Could not parse path byte from: {hex_str[2:4]}")
+            _LOGGER.debug(
+                "Could not parse path byte from: %s",
+                hex_str[path_byte_start:path_byte_start + 2],
+            )
             return result
 
         path_hash_size = ((path_byte & 0xC0) >> 6) + 1
@@ -449,9 +569,9 @@ def parse_rx_log_data(payload: Any) -> dict[str, Any]:
         result["path_len"] = hop_count
         result["path_hash_size"] = path_hash_size
 
-        # Path hex starts at nibble index 4.
-        path_start = 4
-        path_end = path_start + (hop_count * path_hash_size * 2)
+        path_start = path_byte_start + 2
+        path_end = path_start + hop_count * path_hash_size * 2
+
         if len(hex_str) < path_end:
             _LOGGER.debug(
                 "RX_LOG hex too short for path data: expected at least %d, got %d",
@@ -463,22 +583,19 @@ def parse_rx_log_data(payload: Any) -> dict[str, Any]:
         path_hex = hex_str[path_start:path_end]
         result["path"] = path_hex
 
-        # Parse individual nodes in path (2, 4, 6, or 8 chars each depending on path_hash_size)
-        path_nodes = []
         step = path_hash_size * 2
-        for i in range(0, len(path_hex), step):
-            node_hex = path_hex[i:i+step]
-            path_nodes.append(node_hex)
-        result["path_nodes"] = path_nodes
+        result["path_nodes"] = [path_hex[i:i + step] for i in range(0, len(path_hex), step)]
 
-        # Extract channel hash if available
-        if len(hex_str) > path_end:
-            # Channel hash is the next 2 characters after path
-            if len(hex_str) >= path_end + 2:
-                result["channel_hash"] = hex_str[path_end:path_end+2]
+        if len(hex_str) >= path_end + 2:
+            result["channel_hash"] = hex_str[path_end:path_end + 2]
 
-        _LOGGER.debug(f"Parsed RX_LOG: header={result.get('header')}, path_len={result.get('path_len')}, "
-                     f"path={result.get('path')}, channel_hash={result.get('channel_hash')}")
+        _LOGGER.debug(
+            "Parsed RX_LOG: header=%s, path_len=%d, path=%s, channel_hash=%s",
+            result.get("header"),
+            result.get("path_len"),
+            result.get("path"),
+            result.get("channel_hash"),
+        )
 
     except Exception as ex:
         _LOGGER.debug(f"Error parsing RX_LOG data: {ex}")
