@@ -151,7 +151,7 @@ RATE_LIMITER_REFILL_RATE_SECONDS: Final = 120
 
 # RX_LOG correlation cache settings
 RX_LOG_CACHE_MAX_SIZE: Final = 100
-RX_LOG_CACHE_TTL_SECONDS: Final = 5.0
+RX_LOG_CACHE_TTL_SECONDS: Final = 30.0
 
 # Adaptive poll-wait for incoming channel message RX_LOG correlation
 CONF_ADAPTIVE_POLL_WAIT: Final = "adaptive_poll_wait"

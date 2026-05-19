@@ -470,6 +470,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except Exception as ex:
             _LOGGER.error(f"Error loading contacts from device: {ex}")
 
+    # Load channel info eagerly so RX_LOG decryption works before the first
+    # coordinator update fires (avoids empty _channel_info causing pending_cache_keys=[]).
+    if connected and api.mesh_core:
+        try:
+            _LOGGER.info("Loading channel info on startup for RX_LOG correlation...")
+            await coordinator._fetch_all_channel_info()
+            _LOGGER.info(f"Startup channel info loaded: {len(coordinator._channel_info)} channels")
+        except Exception as ex:
+            _LOGGER.error(f"Error loading channel info on startup: {ex}")
+
     # Store coordinator for this entry
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
