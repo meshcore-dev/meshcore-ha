@@ -37,6 +37,7 @@ from .const import (
     CONF_LIMIT_DISCOVERED_CONTACTS,
     CONF_MAX_DISCOVERED_CONTACTS,
     DEFAULT_MAX_DISCOVERED_CONTACTS,
+    CONF_FLOOD_SCOPES,
     CONF_MESSAGES_INTERVAL,
     DEFAULT_UPDATE_TICK,
     REPAIR_PUBKEY_CHANGED,
@@ -48,6 +49,8 @@ from .mqtt_uploader import MeshCoreMqttUploader
 from .services import async_setup_services, async_unload_services
 from .utils import (
     create_message_correlation_key,
+    load_flood_scope_keys,
+    match_flood_scope,
     parse_and_decrypt_rx_log,
     parse_rx_log_data,
     sanitize_event_data,
@@ -470,6 +473,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except Exception as ex:
             _LOGGER.error(f"Error loading contacts from device: {ex}")
 
+    # Load channel info eagerly so RX_LOG decryption works before the first
+    # coordinator update fires (avoids empty _channel_info causing pending_cache_keys=[]).
+    if connected and api.mesh_core:
+        try:
+            _LOGGER.info("Loading channel info on startup for RX_LOG correlation...")
+            await coordinator._fetch_all_channel_info()
+            _LOGGER.info(f"Startup channel info loaded: {len(coordinator._channel_info)} channels")
+        except Exception as ex:
+            _LOGGER.error(f"Error loading channel info on startup: {ex}")
+
     # Store coordinator for this entry
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
@@ -555,6 +568,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
                     hash_key = create_message_correlation_key(channel_idx, timestamp)
 
+                    route_type = event.payload.get("route_type")
+                    flood_scope = None
+                    if route_type == 0:
+                        # 'payload' hex starts at the header byte;
+                        # 'raw_hex' has 2 framing bytes before the header.
+                        pkt_hex = event.payload.get("payload", "")
+                        pkt_payload = event.payload.get("pkt_payload", b"")
+                        payload_type_int = event.payload.get("payload_type", 0)
+                        scope_keys = load_flood_scope_keys(
+                            coordinator.config_entry.data.get(CONF_FLOOD_SCOPES, "")
+                        )
+                        if scope_keys and pkt_hex and pkt_payload:
+                            try:
+                                pkt_bytes = bytes.fromhex(pkt_hex) if isinstance(pkt_hex, str) else pkt_hex
+                                # header(1) + transport_codes[0](2 LE) + transport_codes[1](2)
+                                if len(pkt_bytes) >= 3:
+                                    transport_code = int.from_bytes(pkt_bytes[1:3], "little")
+                                    flood_scope = match_flood_scope(
+                                        transport_code, payload_type_int, pkt_payload, scope_keys
+                                    )
+                            except Exception:
+                                pass
+
                     rx_log_entry = {
                         "channel_idx": channel_idx,
                         "channel_name": decrypted_data.get("channel_name"),
@@ -565,6 +601,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         "path_len": decrypted_data.get("path_len"),
                         "path": decrypted_data.get("path"),
                         "channel_hash": decrypted_data.get("channel_hash"),
+                        "route_type": route_type,
+                        "route_typename": event.payload.get("route_typename"),
+                        "region_scope": route_type == 0,
+                        "flood_scope": flood_scope,
                     }
 
                     if hash_key in coordinator._pending_rx_logs:

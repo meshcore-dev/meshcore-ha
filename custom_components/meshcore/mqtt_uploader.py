@@ -371,8 +371,9 @@ class MeshCoreMqttUploader:
             except Exception as ex:
                 self.logger.error("[%s] Connection error: %s", broker.name, ex)
         if self._status_refresh_task is None or self._status_refresh_task.done():
-            self._status_refresh_task = self.hass.async_create_task(
-                self._async_status_refresh_loop()
+            self._status_refresh_task = asyncio.create_task(
+                self._async_status_refresh_loop(),
+                name="meshcore_mqtt_status_refresh",
             )
 
     async def _async_create_client(self, broker: BrokerConfig):
