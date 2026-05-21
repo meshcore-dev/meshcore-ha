@@ -31,6 +31,8 @@ Fired when any message is received. Ideal for notifications and message logging.
 - `timestamp` - When received
 - `message_type` - "channel"
 - `pubkey_prefix` - Sender's public key prefix
+- `hop_count` - Number of repeater hops the packet traversed. `0` indicates direct reception (firmware returns the `0xFF` sentinel, which is normalised to `0`); positive values are the literal hop count from the SDK `path_len` byte.
+- `snr` - (Optional) Signal-to-noise ratio in dB for this packet. Present on V3 `CHANNEL_MSG_RECV` frames (carried directly in the SDK payload as `SNR`). On V2 frames the field is only populated when channel decryption is enabled and the SDK matched a `log_channels` entry, so absence is normal.
 - `rx_log_data` - (Optional) Array of radio reception details when message was received via multiple mesh paths:
   - `channel_idx` - Channel number
   - `channel_name` - Channel name
