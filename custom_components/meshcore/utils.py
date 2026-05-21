@@ -234,9 +234,9 @@ def decrypt_channel_message(ciphertext: bytes, cipher_mac: bytes, channel_secret
         cipher = AES.new(channel_secret, AES.MODE_ECB)
         decrypted = cipher.decrypt(ciphertext)
 
-        # Parse structure: timestamp(4 bytes, little endian) + message text
+        # AES plaintext: timestamp(4 bytes LE) + flags(1 byte: attempt+txt_type) + message text
         timestamp = int.from_bytes(decrypted[0:4], byteorder="little")
-        message_text = decrypted[4:].decode("utf-8", errors="ignore").strip('\x00')
+        message_text = decrypted[5:].decode("utf-8", errors="ignore").strip('\x00')
 
         return timestamp, message_text
 
@@ -445,7 +445,7 @@ def parse_and_decrypt_rx_log(payload: Any, channels_info: dict[int, dict]) -> di
                     break
 
     except Exception as ex:
-        _LOGGER.debug(f"Error parsing/decrypting RX_LOG: {ex}")
+        _LOGGER.debug("Error parsing/decrypting RX_LOG: %s", ex)
 
     return result
 
@@ -598,7 +598,7 @@ def parse_rx_log_data(payload: Any) -> dict[str, Any]:
         )
 
     except Exception as ex:
-        _LOGGER.debug(f"Error parsing RX_LOG data: {ex}")
+        _LOGGER.debug("Error parsing RX_LOG data: %s", ex)
 
     return result
 
