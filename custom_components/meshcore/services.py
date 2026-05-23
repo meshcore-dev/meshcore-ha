@@ -730,26 +730,36 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                                 updated_data["contacts"] = coordinator.get_all_contacts()
                                 coordinator.async_set_updated_data(updated_data)
 
-                    # Convert any binary data to hex strings for logging and events
-                    json_safe_payload = {}
-                    if hasattr(result, 'payload') and isinstance(result.payload, dict):
-                        # Create a JSON-serializable version of the payload
-                        for key, value in result.payload.items():
-                            if isinstance(value, bytes):
-                                json_safe_payload[key] = value.hex()
-                            else:
-                                json_safe_payload[key] = value
-
-                        # Log only the JSON-safe version
-                        _LOGGER.info("Command result: %s with payload: %s",
-                                    result.type, json_safe_payload)
-                    else:
-                        _LOGGER.info("Command result: %s", result)
-
-                    # Return response data for commands that support it
-                    # (e.g., export_private_key when called with return_response=True)
-                    if json_safe_payload:
-                        return json_safe_payload
+                    # Normalize the SDK return value into a JSON-safe response.
+                    # Three shapes are possible:
+                    #   * Event with .payload dict — send_* / set_* commands
+                    #   * Plain dict — req_*_sync (awaited response payload)
+                    #   * None — req_*_sync on timeout / no response
+                    if hasattr(result, "payload") and isinstance(result.payload, dict):
+                        response = {
+                            k: (v.hex() if isinstance(v, bytes) else v)
+                            for k, v in result.payload.items()
+                        }
+                        _LOGGER.info(
+                            "Command result: %s with payload: %s",
+                            result.type, response,
+                        )
+                        if response:
+                            return response
+                        return
+                    if isinstance(result, dict):
+                        response = {
+                            k: (v.hex() if isinstance(v, bytes) else v)
+                            for k, v in result.items()
+                        }
+                        _LOGGER.info("Command result: %s", response)
+                        return response
+                    if result is None:
+                        _LOGGER.info(
+                            "Command %s returned no response", command_name,
+                        )
+                        return {"error": "no_response", "command": command_name}
+                    _LOGGER.info("Command result: %s", result)
                     return
 
                 except Exception as ex:
