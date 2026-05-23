@@ -21,6 +21,7 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.device_registry import DeviceEntry
 
 
 from .const import (
@@ -722,7 +723,47 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # If no more entries, unload services
         if not hass.data[DOMAIN]:
             await async_unload_services(hass)
-    
+
     return unload_ok
 
-                
+
+async def async_remove_config_entry_device(
+    hass: HomeAssistant, config_entry: ConfigEntry, device_entry: DeviceEntry
+) -> bool:
+    """Decide whether a device may be removed from the HA UI.
+
+    Refuses removal of the main hub device and of repeater/client devices
+    that are still present in the config entry. Allows removal of orphans
+    (devices whose pubkey_prefix is no longer in the configured lists).
+    """
+    entry_id = config_entry.entry_id
+    repeater_prefixes = {
+        r.get("pubkey_prefix")
+        for r in config_entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, [])
+        if r.get("pubkey_prefix")
+    }
+    client_prefixes = {
+        c.get("pubkey_prefix")
+        for c in config_entry.data.get(CONF_TRACKED_CLIENTS, [])
+        if c.get("pubkey_prefix")
+    }
+
+    for domain, identifier in device_entry.identifiers:
+        if domain != DOMAIN:
+            continue
+
+        if identifier == entry_id:
+            return False
+
+        prefix = f"{entry_id}_"
+        if not identifier.startswith(prefix):
+            continue
+        remainder = identifier[len(prefix):]
+        node_type, _, pubkey_prefix = remainder.partition("_")
+
+        if node_type == "repeater" and pubkey_prefix in repeater_prefixes:
+            return False
+        if node_type == "client" and pubkey_prefix in client_prefixes:
+            return False
+
+    return True
