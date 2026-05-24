@@ -106,6 +106,26 @@ async def handle_channel_message(event, coordinator) -> None:
             channel_idx
         )
 
+        # path_len semantics for received channel packets mirror the
+        # direct-contact path (see handle_contact_message for the
+        # empirical notes against the firmware payload):
+        #   * Direct reception (no repeaters): SDK returns 255 (0xFF)
+        #     — sentinel for "no path bytes processed". -1 also occurs
+        #     in some SDK paths.
+        #   * Multi-hop reception: SDK returns the literal hop count.
+        # path_hash_mode is a separate field — no bit-mask applied here.
+        # SNR semantics: V3 CHANNEL_MSG_RECV frames carry SNR directly
+        # (uppercase "SNR" key from the SDK reader). V2 frames only
+        # surface SNR via the log_channels lookup when channel decryption
+        # is enabled, so absence is normal — emit the field only when
+        # the SDK actually provided it.
+        path_len_raw = payload.get("path_len", 0)
+        if not isinstance(path_len_raw, int) or path_len_raw < 0 or path_len_raw == 0xFF:
+            hop_count = 0
+        else:
+            hop_count = path_len_raw
+        snr = payload.get("SNR")  # V3 channel frames; V2 only via log_channels
+
         # Create event data
         event_data = {
             "message": message_text,
@@ -115,8 +135,12 @@ async def handle_channel_message(event, coordinator) -> None:
             "entity_id": entity_id,
             "domain": DOMAIN,
             "timestamp": dt_util.utcnow().isoformat(),
-            "message_type": "channel"  # Explicit message type for filtering
+            "message_type": "channel",  # Explicit message type for filtering
+            "hop_count": hop_count,
         }
+
+        if snr is not None:
+            event_data["snr"] = snr
 
         # Add sender pubkey if available
         if sender_pubkey:

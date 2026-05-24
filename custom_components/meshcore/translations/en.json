@@ -557,6 +557,9 @@
       "flood_dups": {
         "name": "Flood Duplicates"
       },
+      "recv_errors": {
+        "name": "Receive Errors"
+      },
       "airtime_utilization": {
         "name": "Airtime Utilization"
       },
@@ -589,6 +592,9 @@
       },
       "sent_flood_rate": {
         "name": "Sent Flood Messages Rate"
+      },
+      "recv_errors_rate": {
+        "name": "Receive Errors Rate"
       }
     }
   }
