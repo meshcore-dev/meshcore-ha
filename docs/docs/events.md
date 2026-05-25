@@ -42,6 +42,7 @@ Fired when any message is received. Ideal for notifications and message logging.
   - `rssi` - Received signal strength indicator
   - `path_len` - Number of hops
   - `path` - Hex-encoded path (node pubkey prefixes)
+  - `path_hash_size` - Per-hop hash width in bytes (1–3). The `path` field concatenates each hop's hash at this width, so consumers must split `path` on this width rather than assuming one byte per hop.
   - `channel_hash` - Channel identifier hash
   - `decrypted` - Whether decryption succeeded
 
