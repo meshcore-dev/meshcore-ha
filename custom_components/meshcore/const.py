@@ -50,6 +50,7 @@ ATTR_CHANNEL_IDX: Final = "channel_idx"
 ATTR_MESSAGE: Final = "message"
 ATTR_COMMAND: Final = "command"
 ATTR_ENTRY_ID: Final = "entry_id"
+ATTR_SCOPE: Final = "scope"
 
 # Platform constants
 PLATFORM_MESSAGE: Final = "message"

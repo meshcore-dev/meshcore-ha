@@ -55,15 +55,30 @@ Broadcast a message to all nodes on a specific channel.
 | `channel_idx` | integer | Yes | Channel index (0-255, typically 0-3) |
 | `message` | string | Yes | The message text to broadcast |
 | `entry_id` | string | No | Config entry ID for multiple devices |
+| `scope` | string | No | Region scope for flood routing (e.g. `"pl-waw"` or `"#pl-waw"`) |
 
-**Example:**
+**Examples:**
 
+Global broadcast (no scope):
 ```yaml
 service: meshcore.send_channel_message
 data:
   channel_idx: 0
   message: "General announcement to all nodes"
 ```
+
+Region-scoped broadcast:
+```yaml
+service: meshcore.send_channel_message
+data:
+  channel_idx: 0
+  message: "Hello Warsaw region!"
+  scope: "waw"
+```
+
+:::info
+When `scope` is provided the integration calls `set_flood_scope` on the device before sending, then immediately resets it to no scope — even if the send fails. The `scope` used is included in the resulting `meshcore_message_sent` event.
+:::
 
 ### Execute Command
 Execute Meshcore SDK commands directly for advanced control.
@@ -199,6 +214,21 @@ action:
   - service: meshcore.execute_command
     data:
       command: "set_tx_power 20"
+```
+
+### Region-Scoped Alert
+```yaml
+alias: Warsaw Region Alert
+trigger:
+  - platform: state
+    entity_id: input_boolean.warsaw_alert
+    to: "on"
+action:
+  - service: meshcore.send_channel_message
+    data:
+      channel_idx: 0
+      message: "Local alert for Warsaw region"
+      scope: "waw"
 ```
 
 ### Periodic Status Request

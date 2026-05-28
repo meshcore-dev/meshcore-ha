@@ -59,6 +59,7 @@ from .const import (
     ATTR_MESSAGE,
     ATTR_COMMAND,
     ATTR_ENTRY_ID,
+    ATTR_SCOPE,
 )
 from .utils import extract_pubkey_from_selection
 from .binary_sensor import create_contact_sensor
@@ -82,6 +83,7 @@ SEND_CHANNEL_MESSAGE_SCHEMA = vol.Schema(
         vol.Required(ATTR_CHANNEL_IDX): cv.positive_int,
         vol.Required(ATTR_MESSAGE): cv.string,
         vol.Optional(ATTR_ENTRY_ID): cv.string,
+        vol.Optional(ATTR_SCOPE): vol.Any(None, cv.string),
     }
 )
 
@@ -280,18 +282,19 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         channel_idx = call.data[ATTR_CHANNEL_IDX]
         message = call.data[ATTR_MESSAGE]
         entry_id = call.data.get(ATTR_ENTRY_ID)
-        
+        scope = call.data.get(ATTR_SCOPE)
+
         # Iterate through all registered config entries
         for config_entry_id, coordinator in hass.data[DOMAIN].items():
             # Skip non-coordinator entries (like event listener flags)
             if not hasattr(coordinator, 'api'):
                 continue
-                
+
             _LOGGER.debug("Entry ID: %s, coordinator: %s", config_entry_id, coordinator.name)
             # If entry_id is specified, only use the matching entry
             if entry_id and entry_id != config_entry_id:
                 continue
-                
+
             # Get the API from coordinator
             api = coordinator.api
             if api and api.connected:
@@ -299,13 +302,26 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     _LOGGER.debug(
                         "Sending message to channel %s: %s", channel_idx, message
                     )
-                    
+
+                    # Set flood scope before sending if requested, then always reset.
+                    if scope is not None:
+                        _LOGGER.debug("Setting flood scope to: %s", scope)
+                        scope_result = await api.mesh_core.commands.set_flood_scope(scope)
+                        if scope_result.type == EventType.ERROR:
+                            _LOGGER.warning(
+                                "Failed to set flood scope %s: %s", scope, scope_result.payload
+                            )
+
                     # Capture a fallback timestamp before sending.
                     # The actual device timestamp may differ from the HA server clock.
                     fallback_timestamp = int(time.time())
 
-                    # Send the channel message using the new API
-                    result = await api.mesh_core.commands.send_chan_msg(channel_idx, message, timestamp=fallback_timestamp)
+                    try:
+                        result = await api.mesh_core.commands.send_chan_msg(channel_idx, message, timestamp=fallback_timestamp)
+                    finally:
+                        if scope is not None:
+                            _LOGGER.debug("Resetting flood scope after send")
+                            await api.mesh_core.commands.set_flood_scope(None)
 
                     if result.type == EventType.ERROR:
                         _LOGGER.warning(
@@ -340,6 +356,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                             "channel_idx": channel_idx,
                             "send_timestamp": send_timestamp,
                             "send_id": uuid.uuid4().hex[:8],
+                            "scope": scope,
                         }
                         # Fire event for outgoing message to update message-related entities
                         hass.bus.async_fire(f"{DOMAIN}_message_sent", outgoing_msg)

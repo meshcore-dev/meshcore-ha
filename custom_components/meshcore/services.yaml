@@ -59,6 +59,16 @@ send_channel_message:
       example: "abc123def456"
       selector:
         text:
+    scope:
+      name: Flood Scope
+      description: >-
+        Optional region scope for the message. Use a hashtag region name (e.g. "pl-mz" or "#pl-mz")
+        to restrict the flood to that region. Leave empty to send with no scope (global flood).
+        The scope is applied only for this send and reset to no scope immediately after.
+      required: false
+      example: "pl-mz"
+      selector:
+        text:
 
 send_ui_message:
   name: Send UI Message

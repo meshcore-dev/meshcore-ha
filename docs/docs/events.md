@@ -31,8 +31,6 @@ Fired when any message is received. Ideal for notifications and message logging.
 - `timestamp` - When received
 - `message_type` - "channel"
 - `pubkey_prefix` - Sender's public key prefix
-- `hop_count` - Number of repeater hops the packet traversed. `0` indicates direct reception (firmware returns the `0xFF` sentinel, which is normalised to `0`); positive values are the literal hop count from the SDK `path_len` byte.
-- `snr` - (Optional) Signal-to-noise ratio in dB for this packet. Present on V3 `CHANNEL_MSG_RECV` frames (carried directly in the SDK payload as `SNR`). On V2 frames the field is only populated when channel decryption is enabled and the SDK matched a `log_channels` entry, so absence is normal.
 - `rx_log_data` - (Optional) Array of radio reception details when message was received via multiple mesh paths:
   - `channel_idx` - Channel number
   - `channel_name` - Channel name
@@ -43,7 +41,10 @@ Fired when any message is received. Ideal for notifications and message logging.
   - `path_len` - Number of hops
   - `path` - Hex-encoded path (node pubkey prefixes)
   - `channel_hash` - Channel identifier hash
-  - `decrypted` - Whether decryption succeeded
+  - `route_type` - Raw route type integer (0 = TC_FLOOD, 3 = TC_DIRECT)
+  - `route_typename` - Human-readable route type string (e.g. `"TC_FLOOD"`)
+  - `region_scope` - `true` if the message was received via a region-scoped flood (TC_FLOOD)
+  - `flood_scope` - Matched scope name if `region_scope` is `true` and a scope is configured, otherwise `null`
 
 **Direct Message Fields:**
 - `message` - Message text
@@ -81,6 +82,9 @@ Fired when a message is successfully sent via integration services.
 - `receiver` - Channel identifier (e.g., "channel_1")
 - `timestamp` - Unix timestamp
 - `channel_idx` - Channel number
+- `send_timestamp` - Device-reported send timestamp (or HA server clock fallback)
+- `send_id` - 8-character hex identifier for correlating delivery updates
+- `scope` - Flood scope used for this send, or `null` if none was specified
 
 **Direct Message Fields:**
 - `message` - Message text sent
@@ -201,7 +205,10 @@ data:
       path_len: 0
       path: ""
       channel_hash: "11"
-      decrypted: true
+      route_type: 0
+      route_typename: "TC_FLOOD"
+      region_scope: true
+      flood_scope: "pl-mz"
     - channel_idx: 0
       channel_name: "public"
       timestamp: 1762838456
@@ -211,7 +218,10 @@ data:
       path_len: 1
       path: "cf"
       channel_hash: "11"
-      decrypted: true
+      route_type: 3
+      route_typename: "TC_DIRECT"
+      region_scope: false
+      flood_scope: null
   repeater_count: 2
   progressive: false
 ```
@@ -252,6 +262,8 @@ Every raw event contains:
 - `rssi` - Received signal strength indicator
 - `payload` - Packet payload hex string
 - `payload_length` - Length of payload
+- `route_type` - Route type integer (0 = TC_FLOOD, 3 = TC_DIRECT)
+- `route_typename` - Human-readable route type string
 - `parsed` - Parsed packet structure:
   - `header` - Packet header byte
   - `path_len` - Number of hops
@@ -458,7 +470,10 @@ data:
       path_len: 0
       path: ""
       channel_hash: "11"
-      decrypted: true
+      route_type: 0
+      route_typename: "TC_FLOOD"
+      region_scope: true
+      flood_scope: "pl-mz"
     - channel_idx: 0
       channel_name: "public"
       timestamp: 1762838456
@@ -468,7 +483,10 @@ data:
       path_len: 1
       path: "cf"
       channel_hash: "11"
-      decrypted: true
+      route_type: 3
+      route_typename: "TC_DIRECT"
+      region_scope: false
+      flood_scope: null
 ```
 
 #### Received Direct Message
