@@ -475,7 +475,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if connected and api.mesh_core:
         try:
             _LOGGER.info("Loading channel info on startup for RX_LOG correlation...")
-            await coordinator._fetch_all_channel_info()
+            await coordinator.fetch_all_channel_info()
             _LOGGER.info(f"Startup channel info loaded: {len(coordinator._channel_info)} channels")
         except Exception as ex:
             _LOGGER.error(f"Error loading channel info on startup: {ex}")
