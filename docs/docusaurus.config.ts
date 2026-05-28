@@ -75,6 +75,11 @@ const config: Config = {
           label: 'Home Assistant',
         },
         {
+          href: 'https://discord.com/channels/1495203904898728149/1508972219202535475',
+          label: 'Discord',
+          position: 'right',
+        },
+        {
           href: 'https://github.com/meshcore-dev/meshcore-ha',
           label: 'GitHub',
           position: 'right',
@@ -113,6 +118,10 @@ const config: Config = {
         {
           title: 'Community',
           items: [
+            {
+              label: 'Discord',
+              href: 'https://discord.com/channels/1495203904898728149/1508972219202535475',
+            },
             {
               label: 'Issues',
               href: 'https://github.com/meshcore-dev/meshcore-ha/issues',
