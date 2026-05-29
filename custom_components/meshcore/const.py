@@ -86,9 +86,7 @@ DEFAULT_CLIENT_UPDATE_INTERVAL: Final = 7200  # 2 hours in seconds
 
 # Device monitoring
 CONF_DEVICE_DISABLED: Final = "disabled"
-AUTO_DISABLE_HOURS: Final = (
-    120  # Auto-disable devices after this many hours without success
-)
+AUTO_DISABLE_HOURS: Final = 120  # Auto-disable devices after this many hours without success
 
 # Contact discovery settings
 CONF_DISABLE_CONTACT_DISCOVERY: Final = "disable_contact_discovery"
@@ -118,18 +116,14 @@ CONF_MQTT_BROKERS: Final = "mqtt_brokers"
 
 # Backoff constants for repeater failures
 REPEATER_BACKOFF_BASE: Final = 2  # Base multiplier for exponential backoff
-REPEATER_BACKOFF_MAX_MULTIPLIER: Final = (
-    120  # Maximum backoff multiplier (10 minutes when * 5 seconds)
-)
+REPEATER_BACKOFF_MAX_MULTIPLIER: Final = 120  # Maximum backoff multiplier (10 minutes when * 5 seconds)
 MAX_FAILURES_BEFORE_PATH_RESET: Final = 3  # Reset path after this many failures
 MAX_RETRY_ATTEMPTS: Final = 5  # Maximum retry attempts within refresh window
 MAX_RANDOM_DELAY: Final = 30  # Maximum random delay in seconds
 
 # Repeater neighbor settings
 NEIGHBOR_PUBKEY_PREFIX_LENGTH: Final = 6  # Bytes requested from firmware (12 hex chars)
-NEIGHBOR_STALE_THRESHOLD: Final = (
-    259200  # 72 hours in seconds — neighbor goes unavailable after this
-)
+NEIGHBOR_STALE_THRESHOLD: Final = 259200  # 72 hours in seconds — neighbor goes unavailable after this
 SEEN_WINDOW_SECS: Final = 172800  # 48-hour rolling window for seen count
 CONF_AUTO_CLEANUP_STALE_NEIGHBORS: Final = "auto_cleanup_stale_neighbors"
 CONF_STALE_NEIGHBOR_DAYS: Final = "stale_neighbor_days"
