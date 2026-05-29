@@ -101,6 +101,7 @@ pytest tests/
 
 ## Support and Development
 
+- Chat with the community on [Discord](https://discord.com/channels/1495203904898728149/1508972219202535475)
 - Report issues on [GitHub Issues](https://github.com/meshcore-dev/meshcore-ha/issues)
 - Contributions are welcome via pull requests
 - Documentation contributions are also welcome!

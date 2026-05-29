@@ -478,7 +478,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if connected and api.mesh_core:
         try:
             _LOGGER.info("Loading channel info on startup for RX_LOG correlation...")
+<<<<<<< HEAD
             await coordinator._fetch_all_channel_info()
+=======
+            await coordinator.fetch_all_channel_info()
+>>>>>>> upstream/main
             _LOGGER.info(f"Startup channel info loaded: {len(coordinator._channel_info)} channels")
         except Exception as ex:
             _LOGGER.error(f"Error loading channel info on startup: {ex}")
@@ -600,6 +604,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         "rssi": event.payload.get("rssi"),
                         "path_len": decrypted_data.get("path_len"),
                         "path": decrypted_data.get("path"),
+                        "path_hash_size": decrypted_data.get("path_hash_size"),
                         "channel_hash": decrypted_data.get("channel_hash"),
                         "route_type": route_type,
                         "route_typename": event.payload.get("route_typename"),

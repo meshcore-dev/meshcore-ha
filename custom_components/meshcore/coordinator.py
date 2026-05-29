@@ -493,7 +493,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         )
         self.logger.debug("Registered CHANNEL_INFO event listener")
     
-    async def _fetch_all_channel_info(self) -> None:
+    async def fetch_all_channel_info(self) -> None:
         """Fetch channel info for all channels on startup."""
         self.logger.info(f"Fetching channel info for {self._max_channels} channels...")
         for channel_idx in range(self._max_channels):
@@ -1279,7 +1279,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     self._setup_channel_info_listener()
 
                     # Fetch channel info for all channels
-                    await self._fetch_all_channel_info()
+                    await self.fetch_all_channel_info()
 
                     self.async_update_listeners()
             except Exception as ex:
