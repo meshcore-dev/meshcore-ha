@@ -564,6 +564,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         "rssi": event.payload.get("rssi"),
                         "path_len": decrypted_data.get("path_len"),
                         "path": decrypted_data.get("path"),
+                        "path_hash_size": decrypted_data.get("path_hash_size"),
                         "channel_hash": decrypted_data.get("channel_hash"),
                     }
 
