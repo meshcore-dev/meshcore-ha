@@ -731,9 +731,10 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                                 coordinator.async_set_updated_data(updated_data)
 
                     # Normalize the SDK return value into a JSON-safe response.
-                    # Three shapes are possible:
+                    # Possible shapes:
                     #   * Event with .payload dict — send_* / set_* commands
                     #   * Plain dict — req_*_sync (awaited response payload)
+                    #   * list / scalar / str — wrapped as {"result": <value>}
                     #   * None — req_*_sync on timeout / no response
                     if hasattr(result, "payload") and isinstance(result.payload, dict):
                         response = {
@@ -759,8 +760,12 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                             "Command %s returned no response", command_name,
                         )
                         return {"error": "no_response", "command": command_name}
+                    # Any other non-None shape (list / scalar / string) returned by
+                    # req_*_sync helpers — e.g. req_telemetry_sync (lpp list),
+                    # req_mma_sync / req_acl_sync, req_regions_sync (str). These are
+                    # primitives-only by construction, so wrap as-is for the caller.
                     _LOGGER.info("Command result: %s", result)
-                    return
+                    return {"result": result}
 
                 except Exception as ex:
                     _LOGGER.error("Error executing command %s: %s", command_name, ex)

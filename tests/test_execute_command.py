@@ -3,6 +3,7 @@
 Targets the three SDK return shapes the handler must normalize:
   * Event-with-payload-dict (most send_* / set_* commands)
   * Plain dict             (req_*_sync awaited response payloads)
+  * list / scalar / str    (req_*_sync returns wrapped as {"result": <value>})
   * None                   (req_*_sync timeout / no response)
 """
 import importlib.util
@@ -171,6 +172,38 @@ async def test_plain_dict_response_converts_bytes_to_hex():
     result = await handler(_call("req_owner_sync abcdef123456"))
 
     assert result == {"name": "n", "raw": "deadbeef"}
+
+
+@pytest.mark.asyncio
+async def test_list_response_is_wrapped_in_result():
+    """req_telemetry_sync returns a list (lpp) — must surface as {"result": [...]}."""
+    contact = {
+        "adv_name": "sensor",
+        "public_key": "abcdef123456" + "0" * 52,
+        "pubkey_prefix": "abcdef123456",
+    }
+    lpp = [{"channel": 1, "type": "temperature", "value": 21.5}]
+    coord = _build_coordinator(
+        "req_telemetry_sync",
+        return_value=lpp,
+        contact=contact,
+    )
+    handler = await _get_execute_handler(coord)
+
+    result = await handler(_call("req_telemetry_sync abcdef123456"))
+
+    assert result == {"result": lpp}
+
+
+@pytest.mark.asyncio
+async def test_string_response_is_wrapped_in_result():
+    """req_regions_sync returns a str — must surface as {"result": "US"}."""
+    coord = _build_coordinator("req_regions_sync", return_value="US")
+    handler = await _get_execute_handler(coord)
+
+    result = await handler(_call("req_regions_sync"))
+
+    assert result == {"result": "US"}
 
 
 @pytest.mark.asyncio
