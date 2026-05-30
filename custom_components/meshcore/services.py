@@ -1025,14 +1025,18 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         updated_data["contacts"] = coordinator.get_all_contacts()
         coordinator.async_set_updated_data(updated_data)
 
-        # Remove the binary sensor entity for this contact
+        # Remove the binary sensor entity for this contact.
+        # Post-PR-#236 contact unique_ids are scoped by entry_id; the migration
+        # at __init__.py:_migrate_unique_ids_scope_contact_diagnostics guarantees
+        # every existing entity uses this format.
         entity_registry = er.async_get(hass)
-        for entity in list(entity_registry.entities.values()):
-            if entity.platform == DOMAIN and entity.domain == "binary_sensor":
-                if entity.unique_id == pubkey_prefix:
-                    _LOGGER.info(f"Removing binary sensor entity: {entity.entity_id}")
-                    entity_registry.async_remove(entity.entity_id)
-                    break
+        unique_id = f"{coordinator.config_entry.entry_id}_contact_{pubkey_prefix}"
+        entity_id = entity_registry.async_get_entity_id(
+            "binary_sensor", DOMAIN, unique_id
+        )
+        if entity_id:
+            _LOGGER.info(f"Removing binary sensor entity: {entity_id}")
+            entity_registry.async_remove(entity_id)
 
     # Register the contact management services
     hass.services.async_register(
@@ -1126,13 +1130,17 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
             for public_key in list(coordinator._discovered_contacts.keys()):
                 pubkey_prefix = public_key[:12]
-                coordinator.tracked_diagnostic_binary_contacts.discard(pubkey_prefix)
+                coordinator.tracked_diagnostic_binary_contacts.discard(public_key)
 
-                for entity in list(entity_registry.entities.values()):
-                    if entity.platform == DOMAIN and entity.domain == "binary_sensor":
-                        if entity.unique_id == pubkey_prefix:
-                            entity_registry.async_remove(entity.entity_id)
-                            break
+                # Post-PR-#236 contact unique_ids are scoped by entry_id; the
+                # migration at __init__.py:_migrate_unique_ids_scope_contact_diagnostics
+                # guarantees every existing entity uses this format.
+                unique_id = f"{coordinator.config_entry.entry_id}_contact_{pubkey_prefix}"
+                entity_id = entity_registry.async_get_entity_id(
+                    "binary_sensor", DOMAIN, unique_id
+                )
+                if entity_id:
+                    entity_registry.async_remove(entity_id)
 
             coordinator._discovered_contacts.clear()
 

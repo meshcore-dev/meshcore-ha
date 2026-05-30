@@ -309,14 +309,18 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         for public_key in keys_to_evict:
             pubkey_prefix = public_key[:12]
             del self._discovered_contacts[public_key]
-            self.tracked_diagnostic_binary_contacts.discard(pubkey_prefix)
+            self.tracked_diagnostic_binary_contacts.discard(public_key)
 
-            for entity in list(entity_registry.entities.values()):
-                if entity.platform == DOMAIN and entity.domain == "binary_sensor":
-                    if entity.unique_id == pubkey_prefix:
-                        _LOGGER.info(f"Evicting binary sensor entity: {entity.entity_id}")
-                        entity_registry.async_remove(entity.entity_id)
-                        break
+            # Post-PR-#236 contact unique_ids are scoped by entry_id; the
+            # migration at __init__.py:_migrate_unique_ids_scope_contact_diagnostics
+            # guarantees every existing entity uses this format.
+            unique_id = f"{self.config_entry.entry_id}_contact_{pubkey_prefix}"
+            entity_id = entity_registry.async_get_entity_id(
+                "binary_sensor", DOMAIN, unique_id
+            )
+            if entity_id:
+                _LOGGER.info(f"Evicting binary sensor entity: {entity_id}")
+                entity_registry.async_remove(entity_id)
 
         _LOGGER.info(f"Evicted {evict_count} oldest discovered contacts (limit: {max_contacts})")
 
@@ -344,16 +348,19 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         events, which can overwhelm WebSocket clients and block the main thread.
 
         Returns the number of contacts removed.
-        """
-        if not self._discovered_contacts:
-            return 0
 
+        Note: this function ALWAYS runs the Phase 4 orphan sweep, even when
+        the dict is empty or no stale contacts are found. Orphans live in the
+        entity registry, not the dict — early-returning on empty-stale would
+        skip the sweep on every typical call once the dict is stable.
+        """
         now = time.time()
         threshold_seconds = days_threshold * 86400
         entity_registry = er.async_get(self.hass)
         skipped_node_contacts = 0
+        batch_size = 10
 
-        # Phase 1: Collect stale contacts (no side effects)
+        # Phase 1: Collect stale contacts (no side effects).
         stale_keys: list[str] = []
         for public_key, contact in self._discovered_contacts.items():
             if contact.get("added_to_node", False):
@@ -363,17 +370,9 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             if not lastmod or (now - lastmod) > threshold_seconds:
                 stale_keys.append(public_key)
 
-        if not stale_keys:
-            _LOGGER.info(
-                "Stale contact cleanup: 0 contacts older than %d days "
-                "(%d node contacts skipped)",
-                days_threshold, skipped_node_contacts,
-            )
-            return 0
-
         # Phase 2: Remove in batches, yielding the event loop between each
-        # batch so WebSocket clients can drain their message queues.
-        batch_size = 10
+        # batch so WebSocket clients can drain their message queues. No-op
+        # when stale_keys is empty; Phase 4 still runs.
         removed_count = 0
 
         for i, public_key in enumerate(stale_keys):
@@ -386,11 +385,14 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             lastmod = contact.get("lastmod", 0)
 
             del self._discovered_contacts[public_key]
-            self.tracked_diagnostic_binary_contacts.discard(pubkey_prefix)
+            self.tracked_diagnostic_binary_contacts.discard(public_key)
 
-            # O(1) entity registry lookup instead of scanning all entities
+            # Post-PR-#236 contact unique_ids are scoped by entry_id; the
+            # migration at __init__.py:_migrate_unique_ids_scope_contact_diagnostics
+            # guarantees every existing entity uses this format.
+            unique_id = f"{self.config_entry.entry_id}_contact_{pubkey_prefix}"
             entity_id = entity_registry.async_get_entity_id(
-                "binary_sensor", DOMAIN, pubkey_prefix
+                "binary_sensor", DOMAIN, unique_id
             )
             if entity_id:
                 entity_registry.async_remove(entity_id)
@@ -416,10 +418,49 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             updated_data["contacts"] = self.get_all_contacts()
             self.async_set_updated_data(updated_data)
 
+        # Phase 4: Sweep pre-existing orphaned contact entities.
+        #
+        # Catches entities that were "removed" by buggy cleanup calls between
+        # PR #236's migration (2026-05-10) and the lookup-format fix in this
+        # change set — the dict deletion ran but the entity-lookup format was
+        # wrong, so the entity stayed in the registry. Walks entities tied to
+        # this config entry whose unique_id matches
+        # "<entry_id>_contact_<hex12>" and removes any whose pubkey is not in
+        # the current contact set (added + discovered).
+        #
+        # The 12-hex suffix check is load-bearing: the contact-selector entity
+        # has unique_id "<entry_id>_contact_select" which would otherwise match
+        # the entry_prefix. Do not loosen this check.
+        entry_prefix = f"{self.config_entry.entry_id}_contact_"
+        live_pubkey_prefixes = {
+            c.get("public_key", "")[:12]
+            for c in self.get_all_contacts()
+            if c.get("public_key")
+        }
+        orphan_count = 0
+        for entity in list(entity_registry.entities.values()):
+            if entity.config_entry_id != self.config_entry.entry_id:
+                continue
+            if entity.platform != DOMAIN or entity.domain != "binary_sensor":
+                continue
+            if not entity.unique_id.startswith(entry_prefix):
+                continue
+            suffix = entity.unique_id[len(entry_prefix):]
+            if len(suffix) != 12 or any(c not in "0123456789abcdef" for c in suffix.lower()):
+                continue
+            if suffix in live_pubkey_prefixes:
+                continue
+            entity_registry.async_remove(entity.entity_id)
+            orphan_count += 1
+            # Yield the event loop every batch_size removals (consistent with Phase 2).
+            if orphan_count % batch_size == 0:
+                await asyncio.sleep(0)
+
         _LOGGER.info(
-            "Stale contact cleanup: removed %d contacts older than %d days "
-            "(%d node contacts skipped)",
-            removed_count, days_threshold, skipped_node_contacts,
+            "Stale contact cleanup: removed %d stale dict contacts (%d node "
+            "contacts skipped) and swept %d orphaned registry entities older "
+            "than %d days",
+            removed_count, skipped_node_contacts, orphan_count, days_threshold,
         )
         return removed_count
 
