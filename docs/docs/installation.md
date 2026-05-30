@@ -76,6 +76,8 @@ During setup, you can configure:
 
 - **Self Telemetry Enabled**: Whether to collect telemetry from this node
 - **Self Telemetry Interval** (60-3600 seconds): How often to collect telemetry data from this node
+- **Self Diagnostics Enabled**: Whether to create local diagnostic sensors (uptime, radio, and packet statistics) for the companion node. Off by default; adds no mesh traffic (local radio queries only).
+- **Self Diagnostics Interval** (60-3600 seconds): How often to refresh the self-diagnostic sensors
 
 ## Post-Installation Configuration
 
@@ -106,6 +108,8 @@ Configure integration-wide settings:
 - **Disable Contact Discovery**: Stop automatically creating contact sensors (useful for large networks)
 - **Enable Self Telemetry**: Collect telemetry from this node
 - **Self Telemetry Interval** (60-3600 seconds): How often to collect self telemetry data
+- **Enable Self Diagnostics**: Create ~15 local diagnostic sensors (uptime, TX queue, noise floor, RSSI/SNR, TX/RX airtime, packet counters) for the companion node, giving it the same diagnostic tiles a managed repeater has. Off by default. Adds no mesh traffic — these are local queries to the attached radio, not mesh requests.
+- **Self Diagnostics Interval** (60-3600 seconds): How often to refresh the self-diagnostic sensors
 - **Enable Map Upload (map.meshcore.io)**: When enabled, adverts from repeaters and room servers you receive are uploaded to [map.meshcore.io](https://map.meshcore.io). Those nodes appear on the official MeshCore map for the community. See [Map Auto Uploader](./map-upload) for details.
 - **Adaptive Channel Message Delivery**: When enabled, incoming channel messages fire as soon as RX_LOG radio reception data arrives (typically ~50ms) instead of always waiting the full 500ms. Late-arriving repeater data is delivered progressively via `meshcore_delivery_update` events. Disabled by default. See [Messaging — RX_LOG Correlation](./messaging#rx_log-correlation) for details.
 

@@ -21,12 +21,16 @@ from homeassistant.helpers.update_coordinator import (
 
 from .const import (
     CONF_DISABLE_CONTACT_DISCOVERY,
+    CONF_SELF_DIAGNOSTICS_ENABLED,
     DOMAIN,
     ENTITY_DOMAIN_BINARY_SENSOR,
     MESSAGES_SUFFIX,
     CHANNEL_PREFIX,
     CONTACT_SUFFIX,
     ONLINE_SUFFIX,
+    SELF_DIAG_ERR_CAD_TIMEOUT,
+    SELF_DIAG_ERR_POOL_FULL,
+    SELF_DIAG_ERR_RX_TIMEOUT,
     NodeType,
 )
 from .utils import (
@@ -283,6 +287,17 @@ async def async_setup_entry(
             )
     if online_entities:
         async_add_entities(online_entities)
+
+    # Self-diagnostic fault flags (companion main device) — created only when
+    # opted in (default off). The STATS_CORE `errors` field is a latching
+    # bitmask of radio dispatcher faults; each bit is decoded into its own
+    # `problem` binary sensor.
+    if entry.data.get(CONF_SELF_DIAGNOSTICS_ENABLED, False):
+        async_add_entities([
+            MeshCoreSelfDiagnosticBinarySensor(coordinator, "err_pool_full", SELF_DIAG_ERR_POOL_FULL),
+            MeshCoreSelfDiagnosticBinarySensor(coordinator, "err_cad_timeout", SELF_DIAG_ERR_CAD_TIMEOUT),
+            MeshCoreSelfDiagnosticBinarySensor(coordinator, "err_rx_timeout", SELF_DIAG_ERR_RX_TIMEOUT),
+        ])
 
     # Subscribe to our internal message sent event for outgoing messages
     @callback
@@ -780,3 +795,62 @@ class MeshCoreDeviceOnlineBinarySensor(CoordinatorEntity, BinarySensorEntity):
         attrs["update_interval"] = update_interval
         attrs["staleness_window"] = max(update_interval, 300) * 2.5
         return attrs
+
+
+class MeshCoreSelfDiagnosticBinarySensor(CoordinatorEntity, BinarySensorEntity):
+    """A single decoded radio fault flag from the companion's STATS_CORE
+    ``errors`` bitmask.
+
+    The firmware OR-accumulates each fault bit and clears it only on a radio
+    reboot (or an internal stats reset the integration never triggers), so
+    ``on`` means "this fault has occurred at least once since the radio last
+    booted" rather than "is occurring right now". Created only when Self
+    Diagnostics is enabled (default off).
+    """
+
+    _attr_has_entity_name = True
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: DataUpdateCoordinator,
+        key: str,
+        bit_mask: int,
+    ) -> None:
+        """Initialize the fault-flag binary sensor."""
+        super().__init__(coordinator)
+        self.coordinator = coordinator
+        self._bit_mask = bit_mask
+        self._attr_translation_key = key
+        self._attr_is_on = None  # unknown until the first STATS_CORE event
+
+        raw_device_name = coordinator.name or "Unknown"
+        public_key_short = coordinator.pubkey[:6] if coordinator.pubkey else ""
+
+        parts = [p for p in [coordinator.config_entry.entry_id, key, public_key_short] if p]
+        self._attr_unique_id = "_".join(parts)
+        self.entity_id = format_entity_id(
+            ENTITY_DOMAIN_BINARY_SENSOR,
+            public_key_short,
+            key,
+            sanitize_name(raw_device_name),
+        )
+
+    @property
+    def device_info(self):
+        """Attach to the companion main device."""
+        return DeviceInfo(**self.coordinator.device_info)
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to STATS_CORE and decode this sensor's fault bit."""
+        await super().async_added_to_hass()
+        meshcore = self.coordinator.api.mesh_core
+
+        def update_flag(event) -> None:
+            errors = event.payload.get("errors")
+            if isinstance(errors, int):
+                self._attr_is_on = bool(errors & self._bit_mask)
+                self.async_write_ha_state()
+
+        meshcore.dispatcher.subscribe(EventType.STATS_CORE, update_flag)

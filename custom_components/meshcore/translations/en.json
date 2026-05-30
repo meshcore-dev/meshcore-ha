@@ -27,14 +27,24 @@
       "usb": {
         "data": {
           "usb_path": "USB Device Path",
-          "baudrate": "Connection Speed"
+          "baudrate": "Connection Speed",
+          "self_diagnostics_enabled": "Enable Self Diagnostics",
+          "self_diagnostics_interval": "Self Diagnostics Interval (seconds)"
+        },
+        "data_description": {
+          "self_diagnostics_enabled": "Creates roughly 15 local diagnostic sensors for the companion node (uptime, TX queue length, noise floor, last RSSI/SNR, TX/RX airtime, and packet counters). Off by default. Adds no mesh traffic — these are local queries to the attached radio, not mesh requests. The interval controls how often the sensors refresh (60–3600 seconds)."
         },
         "description": "Connect to your MeshCore node via USB",
         "title": "Configure USB Connection"
       },
       "ble": {
         "data": {
-          "ble_address": "Bluetooth Device"
+          "ble_address": "Bluetooth Device",
+          "self_diagnostics_enabled": "Enable Self Diagnostics",
+          "self_diagnostics_interval": "Self Diagnostics Interval (seconds)"
+        },
+        "data_description": {
+          "self_diagnostics_enabled": "Creates roughly 15 local diagnostic sensors for the companion node (uptime, TX queue length, noise floor, last RSSI/SNR, TX/RX airtime, and packet counters). Off by default. Adds no mesh traffic — these are local queries to the attached radio, not mesh requests. The interval controls how often the sensors refresh (60–3600 seconds)."
         },
         "description": "Connect to your MeshCore node via Bluetooth",
         "title": "Configure Bluetooth Connection"
@@ -42,7 +52,12 @@
       "tcp": {
         "data": {
           "tcp_host": "Host Address",
-          "tcp_port": "Port"
+          "tcp_port": "Port",
+          "self_diagnostics_enabled": "Enable Self Diagnostics",
+          "self_diagnostics_interval": "Self Diagnostics Interval (seconds)"
+        },
+        "data_description": {
+          "self_diagnostics_enabled": "Creates roughly 15 local diagnostic sensors for the companion node (uptime, TX queue length, noise floor, last RSSI/SNR, TX/RX airtime, and packet counters). Off by default. Adds no mesh traffic — these are local queries to the attached radio, not mesh requests. The interval controls how often the sensors refresh (60–3600 seconds)."
         },
         "description": "Connect to your MeshCore node over the network",
         "title": "Configure Network Connection"
@@ -141,6 +156,8 @@
           "max_discovered_contacts": "Maximum Discovered Contacts",
           "self_telemetry_enabled": "Enable Self Telemetry",
           "self_telemetry_interval": "Self Telemetry Interval (seconds)",
+          "self_diagnostics_enabled": "Enable Self Diagnostics",
+          "self_diagnostics_interval": "Self Diagnostics Interval (seconds)",
           "map_upload_enabled": "Enable Map Auto Uploader (map.meshcore.io)",
           "auto_cleanup_stale_contacts": "Auto-Cleanup Stale Discovered Contacts (runs daily)",
           "stale_contact_days": "Stale Contact Threshold (days)",
@@ -149,6 +166,7 @@
           "adaptive_poll_wait": "Adaptive Channel Message Delivery"
         },
         "data_description": {
+          "self_diagnostics_enabled": "Creates roughly 15 local diagnostic sensors for the companion node (uptime, TX queue length, noise floor, last RSSI/SNR, TX/RX airtime, and packet counters). Off by default. Adds no mesh traffic — these are local queries to the attached radio, not mesh requests. The interval controls how often the sensors refresh (60–3600 seconds).",
           "map_upload_enabled": "When enabled, adverts from repeaters and room servers you receive are uploaded to map.meshcore.io. Those nodes appear on the official MeshCore map for the community. Requires private key export enabled on the firmware (`ENABLE_PRIVATE_KEY_EXPORT=1`); without it, uploads cannot be signed.",
           "auto_cleanup_stale_contacts": "When enabled, discovered contacts whose last update is older than the configured threshold are automatically removed once per day. Contacts saved to the node are always preserved.",
           "auto_cleanup_stale_neighbors": "Automatically remove neighbor entries and their sensor entities when they haven't been heard from in the configured number of days.",
@@ -264,6 +282,8 @@
           "max_discovered_contacts": "Maximum Discovered Contacts",
           "self_telemetry_enabled": "Enable Self Telemetry",
           "self_telemetry_interval": "Self Telemetry Interval (seconds)",
+          "self_diagnostics_enabled": "Enable Self Diagnostics",
+          "self_diagnostics_interval": "Self Diagnostics Interval (seconds)",
           "map_upload_enabled": "Enable Map Auto Uploader (map.meshcore.io)",
           "auto_cleanup_stale_contacts": "Auto-Cleanup Stale Discovered Contacts (runs daily)",
           "stale_contact_days": "Stale Contact Threshold (days)",
@@ -272,6 +292,7 @@
           "adaptive_poll_wait": "Adaptive Channel Message Delivery"
         },
         "data_description": {
+          "self_diagnostics_enabled": "Creates roughly 15 local diagnostic sensors for the companion node (uptime, TX queue length, noise floor, last RSSI/SNR, TX/RX airtime, and packet counters). Off by default. Adds no mesh traffic — these are local queries to the attached radio, not mesh requests. The interval controls how often the sensors refresh (60–3600 seconds).",
           "map_upload_enabled": "When enabled, adverts from repeaters and room servers you receive are uploaded to map.meshcore.io. Those nodes appear on the official MeshCore map for the community. Requires private key export enabled on the firmware (`ENABLE_PRIVATE_KEY_EXPORT=1`); without it, uploads cannot be signed.",
           "auto_cleanup_stale_contacts": "When enabled, discovered contacts whose last update is older than the configured threshold are automatically removed once per day. Contacts saved to the node are always preserved.",
           "auto_cleanup_stale_neighbors": "Automatically remove neighbor entries and their sensor entities when they haven't been heard from in the configured number of days.",
@@ -452,6 +473,17 @@
     }
   },
   "entity": {
+    "binary_sensor": {
+      "err_pool_full": {
+        "name": "Radio Fault: Packet Pool Exhausted"
+      },
+      "err_cad_timeout": {
+        "name": "Radio Fault: CAD Timeout"
+      },
+      "err_rx_timeout": {
+        "name": "Radio Fault: RX-Start Timeout"
+      }
+    },
     "sensor": {
       "node_status": {
         "name": "Node Status",
@@ -558,6 +590,9 @@
       },
       "airtime_utilization": {
         "name": "Airtime Utilization"
+      },
+      "tx_airtime": {
+        "name": "TX Airtime"
       },
       "rx_airtime": {
         "name": "RX Airtime"

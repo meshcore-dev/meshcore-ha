@@ -83,6 +83,21 @@ When enabled (off by default), the integration automatically uploads repeater an
 - Requires private key export on firmware (`ENABLE_PRIVATE_KEY_EXPORT=1`)
 - Replay protection and signature verification built-in
 
+## Self Diagnostics
+
+When enabled (off by default), the integration polls the locally-attached companion node's own statistics and exposes them as sensor entities — giving the companion the same rich diagnostic tiles a managed repeater has. Enable it in the integration's **Global Settings** (or during initial setup).
+
+- **No mesh traffic.** The polls are local queries to the attached radio (`get_stats_core` / `get_stats_radio` / `get_stats_packets`) — they add no LoRa-mesh traffic and consume no airtime or duty-cycle.
+- **Off by default.** No new entities are created until you opt in, so existing installs are unaffected.
+- **Poll interval.** Configurable from 60 to 3600 seconds (default 300 s / 5 minutes).
+- **Entities created (~14 sensors).** Core: uptime, TX queue length. Radio: noise floor, last RSSI, last SNR, TX airtime, RX airtime. Packets: received, sent, flood/direct TX, flood/direct RX, receive errors. Battery is not duplicated — the companion already exposes battery voltage and percentage.
+- **Radio fault flags (3 `problem` binary sensors).** The radio's `errors` field is a bitmask of dispatcher fault events, not a count, so it is decoded into three diagnostic binary sensors with `device_class: problem`:
+  - **Packet Pool Exhausted** — the packet buffer pool ran out and a packet was dropped.
+  - **CAD Timeout** — Channel Activity Detection stayed busy too long (channel congested, or the radio may be wedged).
+  - **RX-Start Timeout** — the radio failed to (re)enter receive mode (possible radio hang).
+
+  Each flag **latches**: the firmware sets it on the first occurrence and clears it only when the radio reboots, so `on` means "this fault has happened at least once since the radio last booted," not "is happening now."
+
 ## Development
 
 ### Local Development Setup
