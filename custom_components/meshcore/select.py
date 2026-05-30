@@ -261,6 +261,12 @@ class MeshCoreRecipientTypeSelect(CoordinatorEntity, SelectEntity):
 class MeshCoreDiscoveredContactSelect(CoordinatorEntity, SelectEntity):
     """Select entity for discovered contacts not yet added to node."""
 
+    # The options list grows with the discovered-contact set and can exceed
+    # the recorder's 16 KiB per-state attribute cap on dense meshes, which
+    # makes the recorder drop the state's attributes and log warnings. A
+    # picker's options history has no value, so exclude it from recording.
+    _unrecorded_attributes = frozenset({"options"})
+
     def __init__(self, coordinator: DataUpdateCoordinator) -> None:
         """Initialize the discovered contact select entity."""
         super().__init__(coordinator)
