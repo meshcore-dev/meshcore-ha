@@ -748,6 +748,16 @@ async def async_remove_config_entry_device(
         if c.get("pubkey_prefix")
     }
 
+    # Build the set of live contact prefixes from the coordinator. Config
+    # prefixes are always 12 chars; normalize contact prefixes the same way.
+    coordinator = hass.data.get(DOMAIN, {}).get(entry_id)
+    live_contact_prefixes = set()
+    if coordinator is not None and getattr(coordinator, "data", None):
+        for contact in coordinator.data.get("contacts", []):
+            prefix = contact.get("pubkey_prefix") or (contact.get("public_key") or "")[:12]
+            if prefix:
+                live_contact_prefixes.add(prefix[:12])
+
     for domain, identifier in device_entry.identifiers:
         if domain != DOMAIN:
             continue
@@ -760,10 +770,16 @@ async def async_remove_config_entry_device(
             continue
         remainder = identifier[len(prefix):]
         node_type, _, pubkey_prefix = remainder.partition("_")
+        # Device identifiers may carry the full 64-char public_key (contact
+        # fallback in _get_node_info). Config prefixes are always 12 chars,
+        # so normalize before comparing.
+        pubkey_prefix = pubkey_prefix[:12]
 
         if node_type == "repeater" and pubkey_prefix in repeater_prefixes:
             return False
         if node_type == "client" and pubkey_prefix in client_prefixes:
+            return False
+        if node_type in ("contact", "unknown") and pubkey_prefix in live_contact_prefixes:
             return False
 
     return True
