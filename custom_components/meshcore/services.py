@@ -853,7 +853,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         select_entity_id = None
         if entry_id:
             # Look for entity with matching unique_id
-            registry = hass.helpers.entity_registry.async_get()
+            registry = er.async_get(hass)
             for entity in registry.entities.values():
                 if entity.unique_id == f"{entry_id}_discovered_contact_select":
                     select_entity_id = entity.entity_id
@@ -902,7 +902,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         select_entity_id = None
         if entry_id:
             # Look for entity with matching unique_id
-            registry = hass.helpers.entity_registry.async_get()
+            registry = er.async_get(hass)
             for entity in registry.entities.values():
                 if entity.unique_id == f"{entry_id}_added_contact_select":
                     select_entity_id = entity.entity_id
@@ -951,7 +951,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         if not pubkey_prefix:
             select_entity_id = None
             if entry_id:
-                registry = hass.helpers.entity_registry.async_get()
+                registry = er.async_get(hass)
                 for entity in registry.entities.values():
                     if entity.unique_id == f"{entry_id}_discovered_contact_select":
                         select_entity_id = entity.entity_id
