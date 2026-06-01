@@ -21,6 +21,7 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.device_registry import DeviceEntry
 
 
 from .const import (
@@ -763,7 +764,63 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # If no more entries, unload services
         if not hass.data[DOMAIN]:
             await async_unload_services(hass)
-    
+
     return unload_ok
 
-                
+
+async def async_remove_config_entry_device(
+    hass: HomeAssistant, config_entry: ConfigEntry, device_entry: DeviceEntry
+) -> bool:
+    """Decide whether a device may be removed from the HA UI.
+
+    Refuses removal of the main hub device and of repeater/client devices
+    that are still present in the config entry. Allows removal of orphans
+    (devices whose pubkey_prefix is no longer in the configured lists).
+    """
+    entry_id = config_entry.entry_id
+    repeater_prefixes = {
+        r.get("pubkey_prefix")
+        for r in config_entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, [])
+        if r.get("pubkey_prefix")
+    }
+    client_prefixes = {
+        c.get("pubkey_prefix")
+        for c in config_entry.data.get(CONF_TRACKED_CLIENTS, [])
+        if c.get("pubkey_prefix")
+    }
+
+    # Build the set of live contact prefixes from the coordinator. Config
+    # prefixes are always 12 chars; normalize contact prefixes the same way.
+    coordinator = hass.data.get(DOMAIN, {}).get(entry_id)
+    live_contact_prefixes = set()
+    if coordinator is not None and getattr(coordinator, "data", None):
+        for contact in coordinator.data.get("contacts", []):
+            prefix = contact.get("pubkey_prefix") or (contact.get("public_key") or "")[:12]
+            if prefix:
+                live_contact_prefixes.add(prefix[:12])
+
+    for domain, identifier in device_entry.identifiers:
+        if domain != DOMAIN:
+            continue
+
+        if identifier == entry_id:
+            return False
+
+        prefix = f"{entry_id}_"
+        if not identifier.startswith(prefix):
+            continue
+        remainder = identifier[len(prefix):]
+        node_type, _, pubkey_prefix = remainder.partition("_")
+        # Device identifiers may carry the full 64-char public_key (contact
+        # fallback in _get_node_info). Config prefixes are always 12 chars,
+        # so normalize before comparing.
+        pubkey_prefix = pubkey_prefix[:12]
+
+        if node_type == "repeater" and pubkey_prefix in repeater_prefixes:
+            return False
+        if node_type == "client" and pubkey_prefix in client_prefixes:
+            return False
+        if node_type in ("contact", "unknown") and pubkey_prefix in live_contact_prefixes:
+            return False
+
+    return True
