@@ -340,6 +340,40 @@ action:
       message: "Device {{ 'connected' if trigger.event.event_type == 'meshcore_connected' else 'disconnected' }}"
 ```
 
+## execute_command Response Shapes
+
+When calling the `meshcore.execute_command` service with `return_response: true`, the
+integration normalizes the underlying SDK return value into one of three JSON-safe shapes.
+Callers should branch on these:
+
+1. **Pass-through dict** — for `send_*` / `set_*` commands (which return an SDK Event with a
+   `.payload` dict) and for `req_*_sync` commands that return a plain dict. The dict is
+   surfaced directly, with any `bytes` values hex-encoded to strings:
+
+   ```json
+   { "name": "MyRepeater", "owner": "alice" }
+   ```
+
+2. **Wrapped value** — for `req_*_sync` commands that return a list, scalar, or string
+   (for example `req_telemetry_sync` returns an LPP list, `req_regions_sync` returns a
+   region string). The value is wrapped under a `result` key:
+
+   ```json
+   { "result": [ { "channel": 1, "type": "temperature", "value": 21.5 } ] }
+   ```
+
+   ```json
+   { "result": "US" }
+   ```
+
+3. **No-response error** — when the SDK returns `None` (a timeout or no response), a
+   structured error is returned so callers can detect the failure rather than receiving a
+   bare `null`:
+
+   ```json
+   { "error": "no_response", "command": "req_status_sync" }
+   ```
+
 ## Common Automation Patterns
 
 ### Message Filtering by Channel
