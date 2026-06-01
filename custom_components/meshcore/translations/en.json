@@ -163,7 +163,8 @@
           "stale_contact_days": "Stale Contact Threshold (days)",
           "auto_cleanup_stale_neighbors": "Auto-Remove Stale Neighbors",
           "stale_neighbor_days": "Stale Neighbor Threshold (days)",
-          "adaptive_poll_wait": "Adaptive Channel Message Delivery"
+          "adaptive_poll_wait": "Adaptive Channel Message Delivery",
+          "flood_scopes": "Flood Scope Allowlist"
         },
         "data_description": {
           "self_diagnostics_enabled": "Creates roughly 15 local diagnostic sensors for the companion node (uptime, TX queue length, noise floor, last RSSI/SNR, TX/RX airtime, and packet counters). Off by default. Adds no mesh traffic — these are local queries to the attached radio, not mesh requests. The interval controls how often the sensors refresh (60–3600 seconds).",
@@ -171,7 +172,8 @@
           "auto_cleanup_stale_contacts": "When enabled, discovered contacts whose last update is older than the configured threshold are automatically removed once per day. Contacts saved to the node are always preserved.",
           "auto_cleanup_stale_neighbors": "Automatically remove neighbor entries and their sensor entities when they haven't been heard from in the configured number of days.",
           "stale_neighbor_days": "Number of days without hearing a neighbor before it is automatically removed (1–365).",
-          "adaptive_poll_wait": "When enabled, incoming channel messages fire as soon as RX_LOG data arrives (typically ~50ms) instead of always waiting the full 500ms. Late-arriving repeater data is delivered progressively. Disable if bots or automations depend on having all paths in the initial event."
+          "adaptive_poll_wait": "When enabled, incoming channel messages fire as soon as RX_LOG data arrives (typically ~50ms) instead of always waiting the full 500ms. Late-arriving repeater data is delivered progressively. Disable if bots or automations depend on having all paths in the initial event.",
+          "flood_scopes": "Comma-separated list of region scope names to match against incoming TC_FLOOD messages (e.g. pl-mz, pl-waw). When a match is found, rx_log_data will include a flood_scope field with the matched name. Leave empty to disable scope matching."
         },
         "description": "Configure global integration settings",
         "title": "Global Settings"
@@ -289,7 +291,8 @@
           "stale_contact_days": "Stale Contact Threshold (days)",
           "auto_cleanup_stale_neighbors": "Auto-Remove Stale Neighbors",
           "stale_neighbor_days": "Stale Neighbor Threshold (days)",
-          "adaptive_poll_wait": "Adaptive Channel Message Delivery"
+          "adaptive_poll_wait": "Adaptive Channel Message Delivery",
+          "flood_scopes": "Flood Scope Allowlist"
         },
         "data_description": {
           "self_diagnostics_enabled": "Creates roughly 15 local diagnostic sensors for the companion node (uptime, TX queue length, noise floor, last RSSI/SNR, TX/RX airtime, and packet counters). Off by default. Adds no mesh traffic — these are local queries to the attached radio, not mesh requests. The interval controls how often the sensors refresh (60–3600 seconds).",
@@ -297,7 +300,8 @@
           "auto_cleanup_stale_contacts": "When enabled, discovered contacts whose last update is older than the configured threshold are automatically removed once per day. Contacts saved to the node are always preserved.",
           "auto_cleanup_stale_neighbors": "Automatically remove neighbor entries and their sensor entities when they haven't been heard from in the configured number of days.",
           "stale_neighbor_days": "Number of days without hearing a neighbor before it is automatically removed (1–365).",
-          "adaptive_poll_wait": "When enabled, incoming channel messages fire as soon as RX_LOG data arrives (typically ~50ms) instead of always waiting the full 500ms. Late-arriving repeater data is delivered progressively. Disable if bots or automations depend on having all paths in the initial event."
+          "adaptive_poll_wait": "When enabled, incoming channel messages fire as soon as RX_LOG data arrives (typically ~50ms) instead of always waiting the full 500ms. Late-arriving repeater data is delivered progressively. Disable if bots or automations depend on having all paths in the initial event.",
+          "flood_scopes": "Comma-separated list of region scope names to match against incoming TC_FLOOD messages (e.g. pl-mz, pl-waw). When a match is found, rx_log_data will include a flood_scope field with the matched name. Leave empty to disable scope matching."
         },
         "description": "Configure global integration settings",
         "title": "Global Settings"

@@ -474,6 +474,56 @@ def create_message_correlation_key(channel_idx: int, timestamp: int) -> str:
     return hash_key
 
 
+def _normalize_flood_scope_name(name: str) -> str:
+    """Prepend '#' to a region name if not already present."""
+    name = name.strip()
+    if name and not name.startswith("#"):
+        return "#" + name
+    return name
+
+
+def load_flood_scope_keys(scopes_str: str) -> dict[str, bytes]:
+    """Parse a comma-separated flood_scopes string into a name→16-byte-key dict.
+
+    Key derivation mirrors the firmware's auto-key for #hashtag regions:
+    SHA256(scope_name_bytes)[:16].  Names are normalized to have a '#' prefix.
+    """
+    result: dict[str, bytes] = {}
+    if not scopes_str:
+        return result
+    for entry in scopes_str.split(","):
+        name = _normalize_flood_scope_name(entry)
+        if name and name not in ("*", "#"):
+            result[name] = hashlib.sha256(name.encode()).digest()[:16]
+    return result
+
+
+def match_flood_scope(
+    transport_code: int,
+    payload_type: int,
+    pkt_payload: bytes,
+    scope_keys: dict[str, bytes],
+) -> str | None:
+    """Return the scope name whose HMAC matches transport_code, or None.
+
+    Mirrors TransportKey::calcTransportCode from the firmware:
+    HMAC-SHA256(scope_key, [payload_type_byte] + pkt_payload)[0:2] as uint16 LE.
+    """
+    if not scope_keys or not pkt_payload:
+        return None
+    check_data = bytes([payload_type]) + pkt_payload
+    for name, key in scope_keys.items():
+        digest = hmac.new(key, check_data, hashlib.sha256).digest()
+        computed = int.from_bytes(digest[:2], "little")
+        if computed == 0:
+            computed = 1
+        elif computed == 0xFFFF:
+            computed = 0xFFFE
+        if computed == transport_code:
+            return name
+    return None
+
+
 def parse_rx_log_data(payload: Any) -> dict[str, Any]:
     """Parse RX_LOG event payload to extract LoRa packet details.
 

@@ -59,6 +59,7 @@ from .const import (
     CONF_STALE_CONTACT_DAYS,
     DEFAULT_STALE_CONTACT_DAYS,
     CONF_ADAPTIVE_POLL_WAIT,
+    CONF_FLOOD_SCOPES,
     CONF_AUTO_CLEANUP_STALE_NEIGHBORS,
     CONF_STALE_NEIGHBOR_DAYS,
     DEFAULT_STALE_NEIGHBOR_DAYS,
@@ -915,6 +916,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             new_data[CONF_AUTO_CLEANUP_STALE_CONTACTS] = user_input[CONF_AUTO_CLEANUP_STALE_CONTACTS]
             new_data[CONF_STALE_CONTACT_DAYS] = user_input[CONF_STALE_CONTACT_DAYS]
             new_data[CONF_ADAPTIVE_POLL_WAIT] = user_input[CONF_ADAPTIVE_POLL_WAIT]
+            new_data[CONF_FLOOD_SCOPES] = user_input.get(CONF_FLOOD_SCOPES, "")
             new_data[CONF_AUTO_CLEANUP_STALE_NEIGHBORS] = user_input[CONF_AUTO_CLEANUP_STALE_NEIGHBORS]
             new_data[CONF_STALE_NEIGHBOR_DAYS] = user_input[CONF_STALE_NEIGHBOR_DAYS]
             self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
@@ -941,6 +943,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         current_adaptive_poll_wait = self.config_entry.data.get(CONF_ADAPTIVE_POLL_WAIT, False)
         current_auto_cleanup_neighbors = self.config_entry.data.get(CONF_AUTO_CLEANUP_STALE_NEIGHBORS, False)
         current_stale_neighbor_days = self.config_entry.data.get(CONF_STALE_NEIGHBOR_DAYS, DEFAULT_STALE_NEIGHBOR_DAYS)
+        current_flood_scopes = self.config_entry.data.get(CONF_FLOOD_SCOPES, "")
 
         return self.async_show_form(
             step_id="global_settings",
@@ -956,6 +959,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_AUTO_CLEANUP_STALE_CONTACTS, default=current_auto_cleanup): cv.boolean,
                 vol.Optional(CONF_STALE_CONTACT_DAYS, default=current_stale_days): vol.All(cv.positive_int, vol.Range(min=1, max=365)),
                 vol.Optional(CONF_ADAPTIVE_POLL_WAIT, default=current_adaptive_poll_wait): cv.boolean,
+                vol.Optional(CONF_FLOOD_SCOPES, default=current_flood_scopes): str,
                 vol.Optional(CONF_AUTO_CLEANUP_STALE_NEIGHBORS, default=current_auto_cleanup_neighbors): cv.boolean,
                 vol.Optional(CONF_STALE_NEIGHBOR_DAYS, default=current_stale_neighbor_days): vol.All(cv.positive_int, vol.Range(min=1, max=365)),
             }),
