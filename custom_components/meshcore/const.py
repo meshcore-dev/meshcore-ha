@@ -97,6 +97,19 @@ CONF_SELF_TELEMETRY_ENABLED: Final = "self_telemetry_enabled"
 CONF_SELF_TELEMETRY_INTERVAL: Final = "self_telemetry_interval"
 DEFAULT_SELF_TELEMETRY_INTERVAL: Final = 300  # 5 minutes in seconds
 
+# Self diagnostics settings (local get_stats_core/radio/packets polling — no mesh traffic)
+CONF_SELF_DIAGNOSTICS_ENABLED: Final = "self_diagnostics_enabled"
+CONF_SELF_DIAGNOSTICS_INTERVAL: Final = "self_diagnostics_interval"
+DEFAULT_SELF_DIAGNOSTICS_INTERVAL: Final = 300  # 5 minutes in seconds
+
+# STATS_CORE `errors` is a bitmask of radio dispatcher fault events, not a
+# count. Each bit latches on first occurrence and clears only on a radio
+# reboot. Bit values mirror the firmware (_err_flags in MeshCore Dispatcher.h);
+# they are decoded into individual diagnostic `problem` binary sensors.
+SELF_DIAG_ERR_POOL_FULL: Final = 1 << 0       # packet pool exhausted (allocation failed)
+SELF_DIAG_ERR_CAD_TIMEOUT: Final = 1 << 1     # channel-activity-detection stayed busy too long
+SELF_DIAG_ERR_RX_TIMEOUT: Final = 1 << 2      # radio failed to (re)enter receive mode
+
 # Map Auto Uploader settings
 CONF_MAP_UPLOAD_ENABLED: Final = "map_upload_enabled"
 

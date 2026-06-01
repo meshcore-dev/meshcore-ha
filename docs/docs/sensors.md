@@ -222,6 +222,18 @@ Binary sensors showing node freshness:
   - On = Fresh (recent activity within 12 hours)
   - Off = Stale (no recent activity)
 
+#### Radio Fault Flags (Diagnostic)
+
+Three binary sensors decode the companion radio's `errors` bitmask. They are created only when **Self Diagnostics** is enabled. The firmware latches each flag on first occurrence and clears it only on a radio reboot, so **On** means "this fault has occurred at least once since the radio last booted," not "is occurring now."
+
+- **Entities**: `binary_sensor.meshcore_<pubkey>_err_pool_full_<name>`, `..._err_cad_timeout_...`, `..._err_rx_timeout_...`
+- **Device Class**: Problem
+- **Category**: Diagnostic
+- **Flags**:
+  - **Packet Pool Exhausted** — the packet buffer pool ran out and a packet was dropped.
+  - **CAD Timeout** — Channel Activity Detection stayed busy too long (channel congested, or the radio may be wedged).
+  - **RX-Start Timeout** — the radio failed to (re)enter receive mode (possible radio hang).
+
 #### Device Online Status
 
 A per-device connectivity sensor for each managed repeater and client. Unlike the integration-level connection sensor (which reports whether the companion device itself is reachable via USB/TCP/BLE), this sensor reflects whether a specific managed node is being successfully polled.

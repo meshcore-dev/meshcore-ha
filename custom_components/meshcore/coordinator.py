@@ -40,6 +40,9 @@ from .const import (
     CONF_SELF_TELEMETRY_ENABLED,
     CONF_SELF_TELEMETRY_INTERVAL,
     DEFAULT_SELF_TELEMETRY_INTERVAL,
+    CONF_SELF_DIAGNOSTICS_ENABLED,
+    CONF_SELF_DIAGNOSTICS_INTERVAL,
+    DEFAULT_SELF_DIAGNOSTICS_INTERVAL,
     CONF_AUTO_CLEANUP_STALE_CONTACTS,
     CONF_STALE_CONTACT_DAYS,
     DEFAULT_STALE_CONTACT_DAYS,
@@ -156,6 +159,11 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self._last_self_telemetry_update = 0
         self._self_telemetry_enabled = config_entry.data.get(CONF_SELF_TELEMETRY_ENABLED, False)
         self._self_telemetry_interval = config_entry.data.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL)
+
+        # Self diagnostics tracking (local get_stats_core/radio/packets — no mesh traffic)
+        self._last_self_diagnostics_update = 0
+        self._self_diagnostics_enabled = config_entry.data.get(CONF_SELF_DIAGNOSTICS_ENABLED, False)
+        self._self_diagnostics_interval = config_entry.data.get(CONF_SELF_DIAGNOSTICS_INTERVAL, DEFAULT_SELF_DIAGNOSTICS_INTERVAL)
 
         # Auto-cleanup of stale discovered contacts (daily)
         self._auto_cleanup_stale_contacts = config_entry.data.get(
@@ -556,6 +564,8 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         """Update telemetry settings from config entry."""
         self._self_telemetry_enabled = config_entry.data.get(CONF_SELF_TELEMETRY_ENABLED, False)
         self._self_telemetry_interval = config_entry.data.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL)
+        self._self_diagnostics_enabled = config_entry.data.get(CONF_SELF_DIAGNOSTICS_ENABLED, False)
+        self._self_diagnostics_interval = config_entry.data.get(CONF_SELF_DIAGNOSTICS_INTERVAL, DEFAULT_SELF_DIAGNOSTICS_INTERVAL)
         self._tracked_repeaters = config_entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, [])
         self._tracked_clients = config_entry.data.get(CONF_TRACKED_CLIENTS, [])
         self._auto_cleanup_stale_contacts = config_entry.data.get(
@@ -1334,7 +1344,26 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     self.logger.error(f"Exception getting self telemetry: {ex}")
             else:
                 self.logger.debug(f"Skipping self telemetry (next in {self._self_telemetry_interval - (current_time - self._last_self_telemetry_update):.1f}s)")
-            
+
+        # Check for self diagnostics updates if enabled.
+        # These are LOCAL-transport queries to the attached radio (a 2-byte
+        # GET_STATS opcode frame, no destination contact) — they add no mesh
+        # traffic and consume no airtime/duty-cycle. The SDK dispatches
+        # STATS_CORE/RADIO/PACKETS events that the diagnostic sensor entities
+        # subscribe to, so no return-value handling is needed here.
+        if self._self_diagnostics_enabled:
+            if current_time - self._last_self_diagnostics_update >= self._self_diagnostics_interval:
+                self.logger.debug(f"Getting self diagnostics (interval: {self._self_diagnostics_interval}s)")
+                try:
+                    await self.api.mesh_core.commands.get_stats_core()
+                    await self.api.mesh_core.commands.get_stats_radio()
+                    await self.api.mesh_core.commands.get_stats_packets()
+                    self._last_self_diagnostics_update = current_time
+                except Exception as ex:
+                    self.logger.debug(f"Exception getting self diagnostics: {ex}")
+            else:
+                self.logger.debug(f"Skipping self diagnostics (next in {self._self_diagnostics_interval - (current_time - self._last_self_diagnostics_update):.1f}s)")
+
         # --- Message handling ---
         # On first cycle: drain any messages queued while disconnected.
         # After that: only poll if no message activity in MSG_SAFETY_NET_INTERVAL.

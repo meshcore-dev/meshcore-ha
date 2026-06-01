@@ -30,6 +30,7 @@ from .const import (
     CONF_REPEATER_SUBSCRIPTIONS,
     CONF_REPEATER_NEIGHBORS_ENABLED,
     CONF_TRACKED_CLIENTS,
+    CONF_SELF_DIAGNOSTICS_ENABLED,
     SENSOR_AVAILABILITY_TIMEOUT_MULTIPLIER,
     NEIGHBOR_STALE_THRESHOLD,
     SEEN_WINDOW_SECS,
@@ -139,6 +140,106 @@ SENSORS = [
     SensorEntityDescription(
         key="spreading_factor",
         icon="mdi:radio"
+    ),
+]
+
+# Self-diagnostic sensors for the local companion node.
+# Created only when CONF_SELF_DIAGNOSTICS_ENABLED is set (default off). Sourced
+# from local get_stats_core/radio/packets polling (no mesh traffic). Definitions
+# mirror the matching REPEATER_SENSORS keys/device-classes/units/icons so units,
+# precision, and icons stay consistent across node types. Battery is intentionally
+# omitted (the companion already exposes battery_voltage/battery_percentage).
+# Unit conversions (seconds->minutes for uptime/airtime) are applied in the
+# async_added_to_hass handlers below.
+SELF_DIAGNOSTIC_SENSORS = [
+    # STATS_CORE
+    SensorEntityDescription(
+        key="uptime",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement="min",
+        suggested_unit_of_measurement="d",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:clock",
+    ),
+    SensorEntityDescription(
+        key="tx_queue_len",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:playlist-edit",
+    ),
+    # NOTE: STATS_CORE `errors` is intentionally NOT a sensor here — it is a
+    # latching bitmask of radio fault events, not a count, so it is decoded
+    # into individual `problem` binary sensors (see binary_sensor.py).
+    # STATS_RADIO
+    SensorEntityDescription(
+        key="noise_floor",
+        native_unit_of_measurement="dBm",
+        suggested_display_precision="0",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:waveform",
+    ),
+    SensorEntityDescription(
+        key="last_rssi",
+        native_unit_of_measurement="dBm",
+        suggested_display_precision="0",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:signal",
+    ),
+    SensorEntityDescription(
+        key="last_snr",
+        native_unit_of_measurement="dB",
+        suggested_display_precision="1",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:signal",
+    ),
+    SensorEntityDescription(
+        key="tx_airtime",
+        native_unit_of_measurement="min",
+        suggested_display_precision="1",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:radio",
+    ),
+    SensorEntityDescription(
+        key="rx_airtime",
+        native_unit_of_measurement="min",
+        suggested_display_precision="1",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:radio",
+    ),
+    # STATS_PACKETS
+    SensorEntityDescription(
+        key="nb_recv",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:message-arrow-left",
+    ),
+    SensorEntityDescription(
+        key="nb_sent",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:message-arrow-right",
+    ),
+    SensorEntityDescription(
+        key="sent_flood",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:message-arrow-right-outline",
+    ),
+    SensorEntityDescription(
+        key="sent_direct",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:message-arrow-right",
+    ),
+    SensorEntityDescription(
+        key="recv_flood",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:message-arrow-left-outline",
+    ),
+    SensorEntityDescription(
+        key="recv_direct",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:message-arrow-left",
+    ),
+    SensorEntityDescription(
+        key="recv_errors",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:message-alert",
     ),
 ]
 
@@ -391,6 +492,13 @@ async def async_setup_entry(
     # Create sensors for the main device
     for description in SENSORS:
         entities.append(MeshCoreSensor(coordinator, description))
+
+    # Create self-diagnostic sensors only when opted in (default off). These
+    # subscribe to the STATS_CORE/RADIO/PACKETS events emitted by the local
+    # get_stats_* polling added to the coordinator.
+    if entry.data.get(CONF_SELF_DIAGNOSTICS_ENABLED, False):
+        for description in SELF_DIAGNOSTIC_SENSORS:
+            entities.append(MeshCoreSensor(coordinator, description))
 
     # Add rate limiter monitoring sensor
     entities.append(RateLimiterSensor(coordinator))
@@ -1010,6 +1118,103 @@ class MeshCoreSensor(CoordinatorEntity, SensorEntity):
                 EventType.SELF_INFO,
                 update_sf,
             )
+
+        # --- Self-diagnostic sensors (local get_stats_* polling) ---
+        # STATS_CORE
+        elif key == "uptime":
+            def update_uptime(event: Event):
+                value = event.payload.get("uptime_secs")
+                self._native_value = round(value / 60, 1) if isinstance(value, (int, float)) else None
+                self.async_write_ha_state()
+            meshcore.dispatcher.subscribe(EventType.STATS_CORE, update_uptime)
+
+        elif key == "tx_queue_len":
+            def update_queue_len(event: Event):
+                self._native_value = event.payload.get("queue_len")
+                self.async_write_ha_state()
+            meshcore.dispatcher.subscribe(EventType.STATS_CORE, update_queue_len)
+
+        # STATS_CORE `errors` is decoded into `problem` binary sensors
+        # (see binary_sensor.py MeshCoreSelfDiagnosticBinarySensor) rather
+        # than a numeric sensor — it is a latching fault-flag bitmask.
+
+        # STATS_RADIO
+        elif key == "noise_floor":
+            def update_noise_floor(event: Event):
+                self._native_value = event.payload.get("noise_floor")
+                self.async_write_ha_state()
+            meshcore.dispatcher.subscribe(EventType.STATS_RADIO, update_noise_floor)
+
+        elif key == "last_rssi":
+            def update_last_rssi(event: Event):
+                self._native_value = event.payload.get("last_rssi")
+                self.async_write_ha_state()
+            meshcore.dispatcher.subscribe(EventType.STATS_RADIO, update_last_rssi)
+
+        elif key == "last_snr":
+            def update_last_snr(event: Event):
+                # SDK already unscales SNR (raw value was multiplied by 4)
+                self._native_value = event.payload.get("last_snr")
+                self.async_write_ha_state()
+            meshcore.dispatcher.subscribe(EventType.STATS_RADIO, update_last_snr)
+
+        elif key == "tx_airtime":
+            def update_tx_airtime(event: Event):
+                value = event.payload.get("tx_air_secs")
+                self._native_value = round(value / 60, 1) if isinstance(value, (int, float)) else None
+                self.async_write_ha_state()
+            meshcore.dispatcher.subscribe(EventType.STATS_RADIO, update_tx_airtime)
+
+        elif key == "rx_airtime":
+            def update_rx_airtime(event: Event):
+                value = event.payload.get("rx_air_secs")
+                self._native_value = round(value / 60, 1) if isinstance(value, (int, float)) else None
+                self.async_write_ha_state()
+            meshcore.dispatcher.subscribe(EventType.STATS_RADIO, update_rx_airtime)
+
+        # STATS_PACKETS
+        elif key == "nb_recv":
+            def update_nb_recv(event: Event):
+                self._native_value = event.payload.get("recv")
+                self.async_write_ha_state()
+            meshcore.dispatcher.subscribe(EventType.STATS_PACKETS, update_nb_recv)
+
+        elif key == "nb_sent":
+            def update_nb_sent(event: Event):
+                self._native_value = event.payload.get("sent")
+                self.async_write_ha_state()
+            meshcore.dispatcher.subscribe(EventType.STATS_PACKETS, update_nb_sent)
+
+        elif key == "sent_flood":
+            def update_sent_flood(event: Event):
+                self._native_value = event.payload.get("flood_tx")
+                self.async_write_ha_state()
+            meshcore.dispatcher.subscribe(EventType.STATS_PACKETS, update_sent_flood)
+
+        elif key == "sent_direct":
+            def update_sent_direct(event: Event):
+                self._native_value = event.payload.get("direct_tx")
+                self.async_write_ha_state()
+            meshcore.dispatcher.subscribe(EventType.STATS_PACKETS, update_sent_direct)
+
+        elif key == "recv_flood":
+            def update_recv_flood(event: Event):
+                self._native_value = event.payload.get("flood_rx")
+                self.async_write_ha_state()
+            meshcore.dispatcher.subscribe(EventType.STATS_PACKETS, update_recv_flood)
+
+        elif key == "recv_direct":
+            def update_recv_direct(event: Event):
+                self._native_value = event.payload.get("direct_rx")
+                self.async_write_ha_state()
+            meshcore.dispatcher.subscribe(EventType.STATS_PACKETS, update_recv_direct)
+
+        elif key == "recv_errors":
+            def update_recv_errors(event: Event):
+                # May be None on a legacy 26-byte STATS_PACKETS frame
+                self._native_value = event.payload.get("recv_errors")
+                self.async_write_ha_state()
+            meshcore.dispatcher.subscribe(EventType.STATS_PACKETS, update_recv_errors)
 
 
     @property
