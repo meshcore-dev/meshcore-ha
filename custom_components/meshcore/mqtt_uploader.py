@@ -50,11 +50,6 @@ def _as_int(value: str | int | None, default: int) -> int:
         return default
 
 
-def _utc_timestamp() -> str:
-    """Return an offset-aware UTC ISO-8601 timestamp."""
-    return datetime.now(timezone.utc).isoformat()
-
-
 @dataclass
 class BrokerConfig:
     """Configuration for one MQTT broker."""
@@ -824,7 +819,7 @@ class MeshCoreMqttUploader:
         """Build status payload compatible with other uploaders."""
         payload: dict[str, Any] = {
             "status": state,
-            "timestamp": _utc_timestamp(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "origin": self.node_name,
             "origin_id": self.public_key or "DEVICE",
             "source": "meshcore-ha",
@@ -1021,7 +1016,7 @@ class MeshCoreMqttUploader:
     def _build_raw_event_payload(self, event_type: str, payload: Any) -> dict[str, Any]:
         """Build raw event payload for non-normalized broker mode."""
         return {
-            "timestamp": _utc_timestamp(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "origin": self.node_name,
             "origin_id": self.public_key or "DEVICE",
             "source": "meshcore-ha",
