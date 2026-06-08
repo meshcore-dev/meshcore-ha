@@ -29,10 +29,12 @@
           "usb_path": "USB Device Path",
           "baudrate": "Connection Speed",
           "self_diagnostics_enabled": "Enable Self Diagnostics",
-          "self_diagnostics_interval": "Self Diagnostics Interval (seconds)"
+          "self_diagnostics_interval": "Self Diagnostics Interval (seconds)",
+          "large_mesh_mode": "Large Mesh Mode (data-only discovered contacts)"
         },
         "data_description": {
-          "self_diagnostics_enabled": "Creates roughly 15 local diagnostic sensors for the companion node (uptime, TX queue length, noise floor, last RSSI/SNR, TX/RX airtime, and packet counters). Off by default. Adds no mesh traffic — these are local queries to the attached radio, not mesh requests. The interval controls how often the sensors refresh (60–3600 seconds)."
+          "self_diagnostics_enabled": "Creates roughly 15 local diagnostic sensors for the companion node (uptime, TX queue length, noise floor, last RSSI/SNR, TX/RX airtime, and packet counters). Off by default. Adds no mesh traffic — these are local queries to the attached radio, not mesh requests. The interval controls how often the sensors refresh (60–3600 seconds).",
+          "large_mesh_mode": "Track discovered contacts as data instead of creating a Home Assistant entity for each one. Recommended for dense MeshCore areas. Added contacts still get entities. You can change this later in the integration's options."
         },
         "description": "Connect to your MeshCore node via USB",
         "title": "Configure USB Connection"
@@ -41,10 +43,12 @@
         "data": {
           "ble_address": "Bluetooth Device",
           "self_diagnostics_enabled": "Enable Self Diagnostics",
-          "self_diagnostics_interval": "Self Diagnostics Interval (seconds)"
+          "self_diagnostics_interval": "Self Diagnostics Interval (seconds)",
+          "large_mesh_mode": "Large Mesh Mode (data-only discovered contacts)"
         },
         "data_description": {
-          "self_diagnostics_enabled": "Creates roughly 15 local diagnostic sensors for the companion node (uptime, TX queue length, noise floor, last RSSI/SNR, TX/RX airtime, and packet counters). Off by default. Adds no mesh traffic — these are local queries to the attached radio, not mesh requests. The interval controls how often the sensors refresh (60–3600 seconds)."
+          "self_diagnostics_enabled": "Creates roughly 15 local diagnostic sensors for the companion node (uptime, TX queue length, noise floor, last RSSI/SNR, TX/RX airtime, and packet counters). Off by default. Adds no mesh traffic — these are local queries to the attached radio, not mesh requests. The interval controls how often the sensors refresh (60–3600 seconds).",
+          "large_mesh_mode": "Track discovered contacts as data instead of creating a Home Assistant entity for each one. Recommended for dense MeshCore areas. Added contacts still get entities. You can change this later in the integration's options."
         },
         "description": "Connect to your MeshCore node via Bluetooth",
         "title": "Configure Bluetooth Connection"
@@ -54,10 +58,12 @@
           "tcp_host": "Host Address",
           "tcp_port": "Port",
           "self_diagnostics_enabled": "Enable Self Diagnostics",
-          "self_diagnostics_interval": "Self Diagnostics Interval (seconds)"
+          "self_diagnostics_interval": "Self Diagnostics Interval (seconds)",
+          "large_mesh_mode": "Large Mesh Mode (data-only discovered contacts)"
         },
         "data_description": {
-          "self_diagnostics_enabled": "Creates roughly 15 local diagnostic sensors for the companion node (uptime, TX queue length, noise floor, last RSSI/SNR, TX/RX airtime, and packet counters). Off by default. Adds no mesh traffic — these are local queries to the attached radio, not mesh requests. The interval controls how often the sensors refresh (60–3600 seconds)."
+          "self_diagnostics_enabled": "Creates roughly 15 local diagnostic sensors for the companion node (uptime, TX queue length, noise floor, last RSSI/SNR, TX/RX airtime, and packet counters). Off by default. Adds no mesh traffic — these are local queries to the attached radio, not mesh requests. The interval controls how often the sensors refresh (60–3600 seconds).",
+          "large_mesh_mode": "Track discovered contacts as data instead of creating a Home Assistant entity for each one. Recommended for dense MeshCore areas. Added contacts still get entities. You can change this later in the integration's options."
         },
         "description": "Connect to your MeshCore node over the network",
         "title": "Configure Network Connection"
@@ -154,6 +160,7 @@
           "disable_contact_discovery": "Disable Contact Discovery",
           "limit_discovered_contacts": "Limit Discovered Contacts",
           "max_discovered_contacts": "Maximum Discovered Contacts",
+          "large_mesh_mode": "Large Mesh Mode (data-only discovered contacts)",
           "self_telemetry_enabled": "Enable Self Telemetry",
           "self_telemetry_interval": "Self Telemetry Interval (seconds)",
           "self_diagnostics_enabled": "Enable Self Diagnostics",
@@ -168,6 +175,7 @@
         },
         "data_description": {
           "self_diagnostics_enabled": "Creates roughly 15 local diagnostic sensors for the companion node (uptime, TX queue length, noise floor, last RSSI/SNR, TX/RX airtime, and packet counters). Off by default. Adds no mesh traffic — these are local queries to the attached radio, not mesh requests. The interval controls how often the sensors refresh (60–3600 seconds).",
+          "large_mesh_mode": "Track discovered contacts as data instead of creating a Home Assistant entity for each one. Recommended for dense MeshCore areas or if you've seen many 'no longer provided' contact entities accumulate. Added contacts still get entities. Turning this on removes the existing per-discovered-contact entities.",
           "map_upload_enabled": "When enabled, adverts from repeaters and room servers you receive are uploaded to map.meshcore.io. Those nodes appear on the official MeshCore map for the community. Requires private key export enabled on the firmware (`ENABLE_PRIVATE_KEY_EXPORT=1`); without it, uploads cannot be signed.",
           "auto_cleanup_stale_contacts": "When enabled, discovered contacts whose last update is older than the configured threshold are automatically removed once per day. Contacts saved to the node are always preserved.",
           "auto_cleanup_stale_neighbors": "Automatically remove neighbor entries and their sensor entities when they haven't been heard from in the configured number of days.",
@@ -282,6 +290,7 @@
           "disable_contact_discovery": "Disable Contact Discovery",
           "limit_discovered_contacts": "Limit Discovered Contacts",
           "max_discovered_contacts": "Maximum Discovered Contacts",
+          "large_mesh_mode": "Large Mesh Mode (data-only discovered contacts)",
           "self_telemetry_enabled": "Enable Self Telemetry",
           "self_telemetry_interval": "Self Telemetry Interval (seconds)",
           "self_diagnostics_enabled": "Enable Self Diagnostics",
@@ -296,6 +305,7 @@
         },
         "data_description": {
           "self_diagnostics_enabled": "Creates roughly 15 local diagnostic sensors for the companion node (uptime, TX queue length, noise floor, last RSSI/SNR, TX/RX airtime, and packet counters). Off by default. Adds no mesh traffic — these are local queries to the attached radio, not mesh requests. The interval controls how often the sensors refresh (60–3600 seconds).",
+          "large_mesh_mode": "Track discovered contacts as data instead of creating a Home Assistant entity for each one. Recommended for dense MeshCore areas or if you've seen many 'no longer provided' contact entities accumulate. Added contacts still get entities. Turning this on removes the existing per-discovered-contact entities.",
           "map_upload_enabled": "When enabled, adverts from repeaters and room servers you receive are uploaded to map.meshcore.io. Those nodes appear on the official MeshCore map for the community. Requires private key export enabled on the firmware (`ENABLE_PRIVATE_KEY_EXPORT=1`); without it, uploads cannot be signed.",
           "auto_cleanup_stale_contacts": "When enabled, discovered contacts whose last update is older than the configured threshold are automatically removed once per day. Contacts saved to the node are always preserved.",
           "auto_cleanup_stale_neighbors": "Automatically remove neighbor entries and their sensor entities when they haven't been heard from in the configured number of days.",
@@ -462,6 +472,20 @@
         "days_threshold": {
           "name": "Days Threshold",
           "description": "Only remove contacts whose last update is older than this many days. Contacts saved to the node are always preserved. If omitted, all discovered contacts are removed."
+        },
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device."
+        }
+      }
+    },
+    "get_discovered_contact": {
+      "name": "Get Discovered Contact",
+      "description": "Return the full data dict for a single discovered (un-added) contact, matched by public-key prefix. In large mesh mode discovered contacts have no per-contact entity, so this is the supported way to inspect one.",
+      "fields": {
+        "pubkey_prefix": {
+          "name": "Public Key Prefix",
+          "description": "The public key prefix (e.g. the 12-character prefix shown in the discovered-contact dropdown) of the contact to look up. A full public key also works."
         },
         "entry_id": {
           "name": "Config Entry ID",

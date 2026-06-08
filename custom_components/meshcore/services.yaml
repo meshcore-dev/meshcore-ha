@@ -206,6 +206,31 @@ get_contacts:
       selector:
         text:
 
+get_discovered_contact:
+  name: Get Discovered Contact
+  description: >-
+    Return the full data dict for a single discovered (un-added) contact,
+    matched by public-key prefix. In large mesh mode discovered contacts have
+    no per-contact entity, so this is the supported way to inspect one. The
+    returned data is the same already exposed via get_contacts and the
+    discovered-contact dropdown.
+  response: only
+  fields:
+    pubkey_prefix:
+      name: Public Key Prefix
+      description: The public key prefix (e.g. the 12-character prefix shown in the discovered-contact dropdown) of the contact to look up. A full public key also works.
+      required: true
+      example: "f293ac1b2c3d"
+      selector:
+        text:
+    entry_id:
+      name: Config Entry ID
+      description: The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device.
+      required: false
+      example: "abc123def456"
+      selector:
+        text:
+
 get_channels:
   name: Get Channels
   description: >-

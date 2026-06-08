@@ -46,6 +46,8 @@ from .const import (
     CONF_AUTO_CLEANUP_STALE_CONTACTS,
     CONF_STALE_CONTACT_DAYS,
     DEFAULT_STALE_CONTACT_DAYS,
+    CONF_LARGE_MESH_MODE,
+    DEFAULT_LARGE_MESH_MODE,
     CONF_DEVICE_DISABLED,
     AUTO_DISABLE_HOURS,
     RATE_LIMITER_CAPACITY,
@@ -314,10 +316,20 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
 
         entity_registry = er.async_get(self.hass)
 
+        # Large mesh mode: discovered contacts have no per-contact entity, so the
+        # registry-removal scan finds nothing. Skip it; the dict trim below still
+        # bounds the discovered set by max_contacts exactly as in default mode.
+        large_mesh = self.config_entry.data.get(
+            CONF_LARGE_MESH_MODE, DEFAULT_LARGE_MESH_MODE
+        )
+
         for public_key in keys_to_evict:
             pubkey_prefix = public_key[:12]
             del self._discovered_contacts[public_key]
             self.tracked_diagnostic_binary_contacts.discard(public_key)
+
+            if large_mesh:
+                continue
 
             # Post-PR-#236 contact unique_ids are scoped by entry_id; the
             # migration at __init__.py:_migrate_unique_ids_scope_contact_diagnostics
@@ -383,6 +395,13 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         # when stale_keys is empty; Phase 4 still runs.
         removed_count = 0
 
+        # Large mesh mode: discovered contacts have no per-contact entity, so
+        # the registry lookup/removal is a no-op. Skip it; the dict trim below
+        # still removes stale contacts from the discovered set as in default mode.
+        large_mesh = self.config_entry.data.get(
+            CONF_LARGE_MESH_MODE, DEFAULT_LARGE_MESH_MODE
+        )
+
         for i, public_key in enumerate(stale_keys):
             contact = self._discovered_contacts.get(public_key)
             if contact is None:
@@ -395,15 +414,16 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             del self._discovered_contacts[public_key]
             self.tracked_diagnostic_binary_contacts.discard(public_key)
 
-            # Post-PR-#236 contact unique_ids are scoped by entry_id; the
-            # migration at __init__.py:_migrate_unique_ids_scope_contact_diagnostics
-            # guarantees every existing entity uses this format.
-            unique_id = f"{self.config_entry.entry_id}_contact_{pubkey_prefix}"
-            entity_id = entity_registry.async_get_entity_id(
-                "binary_sensor", DOMAIN, unique_id
-            )
-            if entity_id:
-                entity_registry.async_remove(entity_id)
+            if not large_mesh:
+                # Post-PR-#236 contact unique_ids are scoped by entry_id; the
+                # migration at __init__.py:_migrate_unique_ids_scope_contact_diagnostics
+                # guarantees every existing entity uses this format.
+                unique_id = f"{self.config_entry.entry_id}_contact_{pubkey_prefix}"
+                entity_id = entity_registry.async_get_entity_id(
+                    "binary_sensor", DOMAIN, unique_id
+                )
+                if entity_id:
+                    entity_registry.async_remove(entity_id)
 
             removed_count += 1
             _LOGGER.debug(
@@ -471,6 +491,62 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             removed_count, skipped_node_contacts, orphan_count, days_threshold,
         )
         return removed_count
+
+    async def async_migrate_discovered_entities_to_data_only(self) -> int:
+        """Remove per-discovered-contact binary_sensor entities for this entry.
+
+        One-shot migration run from the options flow when large_mesh_mode flips
+        False->True. In large mesh mode discovered contacts are tracked as data
+        only, so any per-discovered-contact entities created under the old mode
+        would otherwise linger in the registry as "no longer provided". Walks
+        this entry's "<entry_id>_contact_<hex12>" binary_sensor entities and
+        removes any whose 12-hex pubkey prefix is NOT an added contact; added
+        contacts keep their entities in both modes.
+
+        The 12-hex suffix check is load-bearing: it excludes the
+        "<entry_id>_contact_select" selector entity, whose suffix ("select") is
+        not 12 hex characters. Scoped to this config entry via config_entry_id
+        so a multi-entry install never touches another entry's entities.
+
+        Returns the number of entities removed.
+        """
+        from homeassistant.helpers import entity_registry as er
+
+        entity_registry = er.async_get(self.hass)
+        entry_prefix = f"{self.config_entry.entry_id}_contact_"
+        added_prefixes = {
+            c.get("public_key", "")[:12]
+            for c in self._contacts.values()
+            if c.get("public_key")
+        }
+
+        removed = 0
+        batch_size = 10
+        for entity in list(entity_registry.entities.values()):
+            if entity.config_entry_id != self.config_entry.entry_id:
+                continue
+            if entity.platform != DOMAIN or entity.domain != "binary_sensor":
+                continue
+            if not entity.unique_id.startswith(entry_prefix):
+                continue
+            suffix = entity.unique_id[len(entry_prefix):]
+            if len(suffix) != 12 or any(c not in "0123456789abcdef" for c in suffix.lower()):
+                continue
+            if suffix in added_prefixes:
+                continue
+            entity_registry.async_remove(entity.entity_id)
+            removed += 1
+            # Yield the event loop periodically so large removals don't block.
+            if removed % batch_size == 0:
+                await asyncio.sleep(0)
+
+        if removed:
+            _LOGGER.info(
+                "Large mesh mode: removed %d per-discovered-contact entities "
+                "(added contacts retain their entities)",
+                removed,
+            )
+        return removed
 
     def get_contact_by_prefix(self, prefix: str) -> Dict[str, Any]:
         """Get a contact by its public key prefix.

@@ -16,7 +16,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.device_registry import async_get as async_get_device_registry
 from homeassistant.helpers.update_coordinator import (
@@ -31,9 +31,13 @@ from .const import (
     CONF_REPEATER_NEIGHBORS_ENABLED,
     CONF_TRACKED_CLIENTS,
     CONF_SELF_DIAGNOSTICS_ENABLED,
+    CONF_LIMIT_DISCOVERED_CONTACTS,
+    CONF_MAX_DISCOVERED_CONTACTS,
+    DEFAULT_MAX_DISCOVERED_CONTACTS,
     SENSOR_AVAILABILITY_TIMEOUT_MULTIPLIER,
     NEIGHBOR_STALE_THRESHOLD,
     SEEN_WINDOW_SECS,
+    NodeType,
 )
 from .utils import (
     format_entity_id,
@@ -47,6 +51,12 @@ _LOGGER = logging.getLogger(__name__)
 # Sensor key suffixes
 UTILIZATION_SUFFIX = "_utilization"
 RATE_SUFFIX = "_rate"
+
+# A discovered contact is "fresh" if its last advert was heard within this
+# window. Mirrors the per-contact binary_sensor freshness threshold
+# (binary_sensor.py: 12 hours) so the summary's fresh/stale split matches what
+# users already see on the individual contact entities.
+DISCOVERED_FRESH_WINDOW_SECS = 3600 * 12
 
 # Path tracking sensors for repeaters and clients
 PATH_SENSORS = [
@@ -633,6 +643,12 @@ async def async_setup_entry(
     # Add message delivery status sensor (tracks repeater count for channel msgs, ACK for direct msgs)
     delivery_sensor = LastMessageDeliverySensor(coordinator)
     entities.append(delivery_sensor)
+
+    # Add the aggregate discovered-contact summary sensor. Created in both
+    # modes (useful to default-mode users deciding whether to enable large
+    # mesh mode), but registered disabled-by-default so it imposes no recorder
+    # cost until a user opts to chart it. See MeshCoreDiscoveredSummarySensor.
+    entities.append(MeshCoreDiscoveredSummarySensor(coordinator))
 
     async_add_entities(entities)
 
@@ -2084,3 +2100,141 @@ class MeshCoreNeighborCountSensor(CoordinatorEntity, SensorEntity):
             if n.get("secs_ago", 0) < NEIGHBOR_STALE_THRESHOLD
         )
         return {"active": active, "stale": len(neighbors) - active}
+
+
+class MeshCoreDiscoveredSummarySensor(CoordinatorEntity, SensorEntity):
+    """Aggregate summary of discovered (un-added) contacts on the main device.
+
+    State is the total discovered-contact count. Attributes carry a small,
+    bounded rollup (fresh/stale split, per-type counts, the single most-recent
+    advert, and capacity headroom) so the data-only contacts in large mesh mode
+    remain inspectable at a glance without one entity per contact.
+
+    Registered disabled-by-default and under the diagnostic category. The state
+    is a count that changes on every advert, so leaving it enabled would write
+    a recorder time-series on every install -- including dense-mesh users who
+    never opted in -- which is the exact recorder churn large mesh mode exists
+    to reduce. Disabled-by-default keeps it free until a user chooses to chart
+    it. The attribute payload is counts + one sample, so its size is constant
+    regardless of how many contacts are discovered.
+    """
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_entity_registry_enabled_default = False
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:account-search"
+    _attr_name = "Discovered Contacts"
+
+    def __init__(self, coordinator: MeshCoreDataUpdateCoordinator) -> None:
+        """Initialize the discovered-contact summary sensor."""
+        super().__init__(coordinator)
+        self.coordinator = coordinator
+
+        public_key_short = coordinator.pubkey[:6] if coordinator.pubkey else ""
+
+        self._attr_unique_id = "_".join([
+            coordinator.config_entry.entry_id,
+            "discovered_summary",
+        ])
+
+        self.entity_id = format_entity_id(
+            ENTITY_DOMAIN_SENSOR,
+            public_key_short,
+            "discovered_summary",
+            sanitize_name(coordinator.name or "Unknown"),
+        )
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device info (attach to the main companion device)."""
+        return self.coordinator.device_info
+
+    @property
+    def translation_key(self) -> str:
+        """Return the translation key."""
+        return "discovered_summary"
+
+    @property
+    def available(self) -> bool:  # type: ignore[override]
+        """Return if entity is available."""
+        return self.coordinator.last_update_success
+
+    @property
+    def native_value(self) -> int:  # type: ignore[override]
+        """Return the total number of discovered (un-added) contacts."""
+        return len(self.coordinator._discovered_contacts)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:  # type: ignore[override]
+        """Return a bounded rollup of the discovered-contact set.
+
+        Shape is constant regardless of contact count: scalar counts, a
+        fixed-key per-type breakdown, one newest-advert sample, and capacity
+        headroom. No per-contact detail is emitted.
+        """
+        discovered = self.coordinator._discovered_contacts
+        now = time.time()
+
+        # Fixed-key per-type breakdown so the attribute shape never changes.
+        by_type: Dict[str, int] = {
+            "chat": 0,           # NodeType.CLIENT
+            "repeater": 0,       # NodeType.REPEATER
+            "room_server": 0,    # NodeType.ROOM_SERVER
+            "sensor": 0,         # NodeType.SENSOR
+            "unknown": 0,        # missing / unrecognized type
+        }
+        type_key = {
+            NodeType.CLIENT: "chat",
+            NodeType.REPEATER: "repeater",
+            NodeType.ROOM_SERVER: "room_server",
+            NodeType.SENSOR: "sensor",
+        }
+
+        fresh_count = 0
+        newest_contact = None
+        newest_advert = -1.0
+        for contact in discovered.values():
+            last_advert = contact.get("last_advert", 0) or 0
+            if last_advert and (now - last_advert) < DISCOVERED_FRESH_WINDOW_SECS:
+                fresh_count += 1
+            by_type[type_key.get(contact.get("type"), "unknown")] += 1
+            if last_advert > newest_advert:
+                newest_advert = last_advert
+                newest_contact = contact
+
+        total = len(discovered)
+
+        if newest_contact is not None:
+            newest_pubkey = newest_contact.get("public_key", "") or ""
+            newest = {
+                "adv_name": newest_contact.get("adv_name", "Unknown"),
+                "pubkey_short": newest_pubkey[:12],
+                "last_advert": newest_contact.get("last_advert", 0) or 0,
+            }
+        else:
+            newest = None
+
+        # Capacity headroom: only meaningful when the discovered-contact limit
+        # is enabled; otherwise the set is unbounded by count.
+        if self.coordinator.config_entry.data.get(CONF_LIMIT_DISCOVERED_CONTACTS, False):
+            max_contacts = self.coordinator.config_entry.data.get(
+                CONF_MAX_DISCOVERED_CONTACTS, DEFAULT_MAX_DISCOVERED_CONTACTS
+            )
+            capacity: Any = max_contacts
+            capacity_used_pct: Any = (
+                round(100.0 * total / max_contacts, 1) if max_contacts else None
+            )
+        else:
+            capacity = "unlimited"
+            capacity_used_pct = None
+
+        return {
+            "fresh_count": fresh_count,
+            "stale_count": total - fresh_count,
+            "by_type": by_type,
+            "newest": newest,
+            "capacity": capacity,
+            "capacity_used_pct": capacity_used_pct,
+        }
