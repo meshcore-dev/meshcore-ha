@@ -100,6 +100,8 @@ If the node cannot export its private key (firmware/export disabled), auth-token
 
 MQTT publishing behavior depends on broker `Payload Mode`.
 
+MQTT payload timestamps are UTC offset-aware ISO 8601 strings, for example `2026-06-04T21:42:31+00:00`.
+
 ### `packet` mode
 
 - Publishes packet-style payloads only (RX/RF/PACKET path)

@@ -12,7 +12,7 @@ import ssl
 import subprocess
 import time
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import Any
 
@@ -819,7 +819,7 @@ class MeshCoreMqttUploader:
         """Build status payload compatible with other uploaders."""
         payload: dict[str, Any] = {
             "status": state,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "origin": self.node_name,
             "origin_id": self.public_key or "DEVICE",
             "source": "meshcore-ha",
@@ -1016,7 +1016,7 @@ class MeshCoreMqttUploader:
     def _build_raw_event_payload(self, event_type: str, payload: Any) -> dict[str, Any]:
         """Build raw event payload for non-normalized broker mode."""
         return {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "origin": self.node_name,
             "origin_id": self.public_key or "DEVICE",
             "source": "meshcore-ha",
@@ -1145,7 +1145,7 @@ class MeshCoreMqttUploader:
         if "RX_LOG" not in et and "RF_LOG" not in et and "PACKET" not in et:
             return None
 
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         payload_hex = str(payload.get("payload") or "").strip()
         raw_hex_fallback = str(payload.get("raw_hex") or "").strip()
         # Match packet-capture behavior: prefer payload, fallback to raw_hex without first 2 bytes.
