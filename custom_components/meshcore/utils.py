@@ -6,7 +6,7 @@ import hashlib
 import hmac
 import logging
 import re
-from typing import Any
+from typing import Any, Final
 
 from Crypto.Cipher import AES
 from homeassistant.util import slugify
@@ -482,19 +482,38 @@ def _normalize_flood_scope_name(name: str) -> str:
     return name
 
 
+# Tokens that denote the global/unscoped wildcard rather than a named
+# region. An unscoped flood already reaches every repeater through the
+# '*' wildcard region they all carry, so the wildcard has no transport
+# key and is never hashed into the inbound keyset. Mirrors the SDK's
+# set_flood_scope disable set ('*', '0', 'None', '') — capital-N "None"
+# only; lowercase "none" is a valid (lowercase-only) region name — plus
+# the parser-specific '#'.
+FLOOD_SCOPE_WILDCARD_TOKENS: Final = ("*", "0", "None", "#", "")
+
+
 def load_flood_scope_keys(scopes_str: str) -> dict[str, bytes]:
     """Parse a comma-separated flood_scopes string into a name→16-byte-key dict.
 
     Key derivation mirrors the firmware's auto-key for #hashtag regions:
     SHA256(scope_name_bytes)[:16].  Names are normalized to have a '#' prefix.
+    The '*' wildcard (and its empty/'0'/'#' equivalents) is the global scope,
+    not a named region — it carries no key and is skipped.
     """
     result: dict[str, bytes] = {}
     if not scopes_str:
         return result
     for entry in scopes_str.split(","):
-        name = _normalize_flood_scope_name(entry)
-        if name and name not in ("*", "#"):
-            result[name] = hashlib.sha256(name.encode()).digest()[:16]
+        raw = entry.strip()
+        # Guard the RAW token BEFORE normalization. _normalize_flood_scope_name
+        # prepends '#', turning a bare '*' into '#*' — which the previous
+        # post-normalize `name not in ("*", "#")` guard failed to catch, so a
+        # junk SHA256('#*') key leaked into the matcher. Guarding the raw token
+        # skips every wildcard form cleanly.
+        if raw in FLOOD_SCOPE_WILDCARD_TOKENS:
+            continue
+        name = _normalize_flood_scope_name(raw)
+        result[name] = hashlib.sha256(name.encode()).digest()[:16]
     return result
 
 
