@@ -38,6 +38,7 @@ SERVICE_REMOVE_DISCOVERED_CONTACT: Final = "remove_discovered_contact"
 SERVICE_CLEANUP_UNAVAILABLE_CONTACTS: Final = "cleanup_unavailable_contacts"
 SERVICE_CLEAR_DISCOVERED_CONTACTS: Final = "clear_discovered_contacts"
 SERVICE_GET_CONTACTS: Final = "get_contacts"
+SERVICE_GET_DISCOVERED_CONTACT: Final = "get_discovered_contact"
 SERVICE_GET_CHANNELS: Final = "get_channels"
 SERVICE_TRACE: Final = "trace"
 
@@ -93,6 +94,12 @@ CONF_DISABLE_CONTACT_DISCOVERY: Final = "disable_contact_discovery"
 CONF_LIMIT_DISCOVERED_CONTACTS: Final = "limit_discovered_contacts"
 CONF_MAX_DISCOVERED_CONTACTS: Final = "max_discovered_contacts"
 DEFAULT_MAX_DISCOVERED_CONTACTS: Final = 100
+
+# Large mesh mode: when enabled, discovered (un-added) contacts are tracked as
+# data only and do not get a per-contact binary_sensor entity. Added/curated
+# contacts still get entities. Default off preserves today's behaviour exactly.
+CONF_LARGE_MESH_MODE: Final = "large_mesh_mode"
+DEFAULT_LARGE_MESH_MODE: Final = False
 
 # Self telemetry settings
 CONF_SELF_TELEMETRY_ENABLED: Final = "self_telemetry_enabled"

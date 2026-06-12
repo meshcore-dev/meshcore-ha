@@ -37,6 +37,8 @@ _SELF_INFO_COMMANDS = frozenset({
 
 from .const import (
     ATTR_PUBKEY_PREFIX,
+    CONF_LARGE_MESH_MODE,
+    DEFAULT_LARGE_MESH_MODE,
     DOMAIN,
     SERVICE_SEND_MESSAGE,
     SERVICE_SEND_CHANNEL_MESSAGE,
@@ -49,6 +51,7 @@ from .const import (
     SERVICE_CLEANUP_UNAVAILABLE_CONTACTS,
     SERVICE_CLEAR_DISCOVERED_CONTACTS,
     SERVICE_GET_CONTACTS,
+    SERVICE_GET_DISCOVERED_CONTACT,
     SERVICE_GET_CHANNELS,
     SERVICE_TRACE,
     SELECT_NO_CONTACTS,
@@ -156,6 +159,21 @@ def _resolve_contact(arg: str, command_name: str, api: Any, coordinator: Any) ->
     if contact:
         return _ensure_contact_compat(contact)
     return contact
+
+
+def _node_has_tracked_subscription(coordinator, pubkey_prefix: str) -> bool:
+    """True when the node has a repeater/client tracking subscription.
+
+    Subscription-backed telemetry/GPS entities recreate dynamically, so
+    demote-cleanup must not sweep them; their lifecycle follows the
+    subscription. Bidirectional startswith matches the convention used
+    for subscription lookups elsewhere (varying prefix lengths).
+    """
+    for cfg in list(coordinator._tracked_repeaters or []) + list(coordinator._tracked_clients or []):
+        cp = cfg.get("pubkey_prefix", "")
+        if cp and (pubkey_prefix.startswith(cp) or cp.startswith(pubkey_prefix)):
+            return True
+    return False
 
 
 async def async_setup_services(hass: HomeAssistant) -> None:
@@ -743,6 +761,86 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                                 # Mark contact as dirty so binary sensors update
                                 coordinator.mark_contact_dirty(prefix)
 
+                                # Large mesh mode: a demoted contact (added ->
+                                # discovered) becomes data-only, so its per-contact
+                                # binary_sensor must be removed. Nothing else deletes
+                                # it -- eviction/stale-cleanup skip the registry side
+                                # in large-mesh mode, and the toggle-on migration
+                                # only fires on the mode transition. In default mode
+                                # the contact stays a valid discovered entity, so this
+                                # block is gated off and the entity is left untouched.
+                                # NOTE: gating is the INVERSE of the discovered-cleanup
+                                # paths (which use `if large_mesh: continue` to SKIP
+                                # removal); here large-mesh mode is exactly when the
+                                # entity must go. Discard the FULL public_key (the key
+                                # create_contact_sensor added), not the 12-hex prefix.
+                                if coordinator.config_entry.data.get(
+                                    CONF_LARGE_MESH_MODE, DEFAULT_LARGE_MESH_MODE
+                                ):
+                                    coordinator.tracked_diagnostic_binary_contacts.discard(pubkey)
+                                    entity_registry = er.async_get(hass)
+                                    unique_id = f"{coordinator.config_entry.entry_id}_contact_{prefix}"
+                                    entity_id = entity_registry.async_get_entity_id(
+                                        "binary_sensor", DOMAIN, unique_id
+                                    )
+                                    if entity_id:
+                                        _LOGGER.info(
+                                            "Large mesh mode: removing entity for demoted contact %s",
+                                            entity_id,
+                                        )
+                                        entity_registry.async_remove(entity_id)
+
+                                    # Telemetry sensors and the GPS tracker are created
+                                    # dynamically while a contact is added and have no
+                                    # other demote teardown. Sweep them too -- except
+                                    # for nodes with a tracked-device subscription,
+                                    # whose entities are subscription-backed and would
+                                    # recreate on the next response.
+                                    # Allowlist by unique_id SHAPE (prefix + suffix):
+                                    # a bare "contains pubkey" match would wrongly hit
+                                    # repeater-neighbor sensors (they embed OTHER
+                                    # nodes' pubkeys) and tracked-client entities.
+                                    if not _node_has_tracked_subscription(coordinator, prefix):
+                                        uid_prefix = (
+                                            f"{coordinator.config_entry.entry_id}_{prefix}_"
+                                        )
+                                        to_remove = [
+                                            e.entity_id
+                                            for e in er.async_entries_for_config_entry(
+                                                entity_registry,
+                                                coordinator.config_entry.entry_id,
+                                            )
+                                            if (e.unique_id or "").startswith(uid_prefix)
+                                            and (
+                                                e.unique_id.endswith("_telemetry")
+                                                or e.unique_id.endswith("_gps_tracker")
+                                            )
+                                        ]
+                                        for stale_entity_id in to_remove:
+                                            _LOGGER.info(
+                                                "Large mesh mode: removing telemetry/GPS entity for demoted contact %s",
+                                                stale_entity_id,
+                                            )
+                                            entity_registry.async_remove(stale_entity_id)
+
+                                        # In-memory dedup maps: without these discards
+                                        # the managers keep updating deregistered
+                                        # entities and a same-session re-add will not
+                                        # recreate the sensors (same desync class as
+                                        # the tracked-set discard above).
+                                        tm = getattr(coordinator, "telemetry_manager", None)
+                                        if tm is not None:
+                                            for key in [
+                                                k for k in tm.discovered_sensors if k.startswith(prefix)
+                                            ]:
+                                                del tm.discovered_sensors[key]
+                                        dtm = getattr(coordinator, "device_tracker_manager", None)
+                                        if dtm is not None:
+                                            for key in [
+                                                k for k in dtm.discovered_trackers if k.startswith(prefix)
+                                            ]:
+                                                del dtm.discovered_trackers[key]
+
                                 updated_data = dict(coordinator.data) if coordinator.data else {}
                                 updated_data["contacts"] = coordinator.get_all_contacts()
                                 coordinator.async_set_updated_data(updated_data)
@@ -1057,18 +1155,23 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         updated_data["contacts"] = coordinator.get_all_contacts()
         coordinator.async_set_updated_data(updated_data)
 
-        # Remove the binary sensor entity for this contact.
+        # Remove the binary sensor entity for this contact. In large mesh mode
+        # discovered contacts have no entity, so there is nothing to remove --
+        # the dict removal above is the whole operation.
         # Post-PR-#236 contact unique_ids are scoped by entry_id; the migration
         # at __init__.py:_migrate_unique_ids_scope_contact_diagnostics guarantees
         # every existing entity uses this format.
-        entity_registry = er.async_get(hass)
-        unique_id = f"{coordinator.config_entry.entry_id}_contact_{pubkey_prefix}"
-        entity_id = entity_registry.async_get_entity_id(
-            "binary_sensor", DOMAIN, unique_id
-        )
-        if entity_id:
-            _LOGGER.info(f"Removing binary sensor entity: {entity_id}")
-            entity_registry.async_remove(entity_id)
+        if not coordinator.config_entry.data.get(
+            CONF_LARGE_MESH_MODE, DEFAULT_LARGE_MESH_MODE
+        ):
+            entity_registry = er.async_get(hass)
+            unique_id = f"{coordinator.config_entry.entry_id}_contact_{pubkey_prefix}"
+            entity_id = entity_registry.async_get_entity_id(
+                "binary_sensor", DOMAIN, unique_id
+            )
+            if entity_id:
+                _LOGGER.info(f"Removing binary sensor entity: {entity_id}")
+                entity_registry.async_remove(entity_id)
 
     # Register the contact management services
     hass.services.async_register(
@@ -1160,9 +1263,19 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             entity_registry = er.async_get(hass)
             removed_count = len(coordinator._discovered_contacts)
 
+            # Large mesh mode: discovered contacts have no per-contact entity,
+            # so skip the registry-removal scan; the dict clear below is the
+            # whole operation.
+            large_mesh = coordinator.config_entry.data.get(
+                CONF_LARGE_MESH_MODE, DEFAULT_LARGE_MESH_MODE
+            )
+
             for public_key in list(coordinator._discovered_contacts.keys()):
                 pubkey_prefix = public_key[:12]
                 coordinator.tracked_diagnostic_binary_contacts.discard(public_key)
+
+                if large_mesh:
+                    continue
 
                 # Post-PR-#236 contact unique_ids are scoped by entry_id; the
                 # migration at __init__.py:_migrate_unique_ids_scope_contact_diagnostics
@@ -1256,6 +1369,53 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         SERVICE_GET_CONTACTS,
         async_get_contacts_service,
         schema=vol.Schema({vol.Optional(ATTR_ENTRY_ID): cv.string}),
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    async def async_get_discovered_contact_service(call: ServiceCall) -> dict:
+        """Return the full data dict for a single discovered contact.
+
+        In large mesh mode discovered contacts have no per-contact entity, so
+        this is the supported way to inspect one. ``pubkey_prefix`` matches any
+        discovered contact whose full public key starts with the given value
+        (the 12-char prefix shown in the discovered-contact dropdown works, as
+        does a full key). The returned dict carries only data already exposed
+        via ``get_contacts`` and the dropdown -- pubkeys are mesh-advertised,
+        not secret -- so this opens no new data-exposure surface.
+        """
+        entry_id = call.data.get(ATTR_ENTRY_ID)
+        pubkey_prefix = call.data.get(ATTR_PUBKEY_PREFIX)
+        coordinator = _resolve_coordinator(entry_id)
+        if coordinator is None:
+            return {"contact": None, "error": "no_coordinator"}
+
+        match = None
+        try:
+            for pubkey, contact in coordinator._discovered_contacts.items():
+                if pubkey.startswith(pubkey_prefix):
+                    match = contact
+                    break
+        except Exception as ex:
+            _LOGGER.error("get_discovered_contact: coordinator access failed: %s", ex)
+            return {"contact": None, "error": "coordinator_error"}
+
+        if match is None:
+            return {"contact": None, "error": "not_found", "pubkey_prefix": pubkey_prefix}
+
+        c = _ensure_contact_compat(dict(match))
+        pk = c.get("public_key") or ""
+        if pk and "pubkey_prefix" not in c:
+            c["pubkey_prefix"] = pk[:12]
+        return {"contact": c}
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_DISCOVERED_CONTACT,
+        async_get_discovered_contact_service,
+        schema=vol.Schema({
+            vol.Required(ATTR_PUBKEY_PREFIX): cv.string,
+            vol.Optional(ATTR_ENTRY_ID): cv.string,
+        }),
         supports_response=SupportsResponse.ONLY,
     )
 
@@ -1664,6 +1824,9 @@ async def async_unload_services(hass: HomeAssistant) -> None:
 
     if hass.services.has_service(DOMAIN, SERVICE_GET_CONTACTS):
         hass.services.async_remove(DOMAIN, SERVICE_GET_CONTACTS)
+
+    if hass.services.has_service(DOMAIN, SERVICE_GET_DISCOVERED_CONTACT):
+        hass.services.async_remove(DOMAIN, SERVICE_GET_DISCOVERED_CONTACT)
 
     if hass.services.has_service(DOMAIN, SERVICE_GET_CHANNELS):
         hass.services.async_remove(DOMAIN, SERVICE_GET_CHANNELS)

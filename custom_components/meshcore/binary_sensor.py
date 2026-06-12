@@ -22,6 +22,8 @@ from homeassistant.helpers.update_coordinator import (
 from .const import (
     CONF_DISABLE_CONTACT_DISCOVERY,
     CONF_SELF_DIAGNOSTICS_ENABLED,
+    CONF_LARGE_MESH_MODE,
+    DEFAULT_LARGE_MESH_MODE,
     DOMAIN,
     ENTITY_DOMAIN_BINARY_SENSOR,
     MESSAGES_SUFFIX,
@@ -53,8 +55,30 @@ def create_contact_sensor(coordinator, contact: dict):
 
     contact_name = contact.get("adv_name", "Unknown")
     public_key = contact.get("public_key", "")
+    if not public_key:
+        return None
 
-    if public_key and public_key not in coordinator.tracked_diagnostic_binary_contacts:
+    # Large mesh mode: discovered (un-added) contacts are tracked as data
+    # only -- no per-contact entity. Added/curated contacts still get one.
+    # NOTE: do NOT gate on contact.get("added_to_node") here -- that field is
+    # computed only in coordinator.get_all_contacts(); raw event-payload
+    # contacts reaching this function via handle_contacts_update do not carry
+    # it, so it would falsely block added contacts too. Test membership in the
+    # added-contact set (coordinator._contacts), the same source
+    # get_all_contacts() derives added_pubkeys from. This governs both callers:
+    # the event path (no added_to_node) and the setup path (has it).
+    if coordinator.config_entry.data.get(
+        CONF_LARGE_MESH_MODE, DEFAULT_LARGE_MESH_MODE
+    ):
+        added_pubkeys = {
+            c.get("public_key")
+            for c in coordinator._contacts.values()
+            if c.get("public_key")
+        }
+        if public_key not in added_pubkeys:
+            return None  # discovered-only: data-only in large mesh mode
+
+    if public_key not in coordinator.tracked_diagnostic_binary_contacts:
         coordinator.tracked_diagnostic_binary_contacts.add(public_key)
         return MeshCoreContactDiagnosticBinarySensor(
             coordinator,

@@ -48,6 +48,8 @@ from .const import (
     CONF_LIMIT_DISCOVERED_CONTACTS,
     CONF_MAX_DISCOVERED_CONTACTS,
     DEFAULT_MAX_DISCOVERED_CONTACTS,
+    CONF_LARGE_MESH_MODE,
+    DEFAULT_LARGE_MESH_MODE,
     CONF_SELF_TELEMETRY_ENABLED,
     CONF_SELF_TELEMETRY_INTERVAL,
     DEFAULT_SELF_TELEMETRY_INTERVAL,
@@ -362,6 +364,7 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                     CONF_SELF_TELEMETRY_INTERVAL: user_input.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL),
                     CONF_SELF_DIAGNOSTICS_ENABLED: user_input.get(CONF_SELF_DIAGNOSTICS_ENABLED, False),
                     CONF_SELF_DIAGNOSTICS_INTERVAL: user_input.get(CONF_SELF_DIAGNOSTICS_INTERVAL, DEFAULT_SELF_DIAGNOSTICS_INTERVAL),
+                    CONF_LARGE_MESH_MODE: user_input.get(CONF_LARGE_MESH_MODE, DEFAULT_LARGE_MESH_MODE),
                     CONF_NAME: info.get("name"),
                     CONF_PUBKEY: info.get("pubkey"),
                     CONF_REPEATER_SUBSCRIPTIONS: [],
@@ -385,6 +388,7 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                 vol.Optional(CONF_SELF_TELEMETRY_INTERVAL, default=DEFAULT_SELF_TELEMETRY_INTERVAL): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
                 vol.Optional(CONF_SELF_DIAGNOSTICS_ENABLED, default=False): cv.boolean,
                 vol.Optional(CONF_SELF_DIAGNOSTICS_INTERVAL, default=DEFAULT_SELF_DIAGNOSTICS_INTERVAL): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
+                vol.Optional(CONF_LARGE_MESH_MODE, default=DEFAULT_LARGE_MESH_MODE): cv.boolean,
             }),
             errors=errors
         )
@@ -403,6 +407,7 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                     CONF_SELF_TELEMETRY_INTERVAL: user_input.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL),
                     CONF_SELF_DIAGNOSTICS_ENABLED: user_input.get(CONF_SELF_DIAGNOSTICS_ENABLED, False),
                     CONF_SELF_DIAGNOSTICS_INTERVAL: user_input.get(CONF_SELF_DIAGNOSTICS_INTERVAL, DEFAULT_SELF_DIAGNOSTICS_INTERVAL),
+                    CONF_LARGE_MESH_MODE: user_input.get(CONF_LARGE_MESH_MODE, DEFAULT_LARGE_MESH_MODE),
                     CONF_NAME: info.get("name"),
                     CONF_PUBKEY: info.get("pubkey"),
                     CONF_REPEATER_SUBSCRIPTIONS: [],
@@ -435,6 +440,7 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                     vol.Optional(CONF_SELF_TELEMETRY_INTERVAL, default=DEFAULT_SELF_TELEMETRY_INTERVAL): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
                     vol.Optional(CONF_SELF_DIAGNOSTICS_ENABLED, default=False): cv.boolean,
                     vol.Optional(CONF_SELF_DIAGNOSTICS_INTERVAL, default=DEFAULT_SELF_DIAGNOSTICS_INTERVAL): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
+                    vol.Optional(CONF_LARGE_MESH_MODE, default=DEFAULT_LARGE_MESH_MODE): cv.boolean,
                 }
             )
         else:
@@ -445,6 +451,7 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                 vol.Optional(CONF_SELF_TELEMETRY_INTERVAL, default=DEFAULT_SELF_TELEMETRY_INTERVAL): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
                 vol.Optional(CONF_SELF_DIAGNOSTICS_ENABLED, default=False): cv.boolean,
                 vol.Optional(CONF_SELF_DIAGNOSTICS_INTERVAL, default=DEFAULT_SELF_DIAGNOSTICS_INTERVAL): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
+                vol.Optional(CONF_LARGE_MESH_MODE, default=DEFAULT_LARGE_MESH_MODE): cv.boolean,
             })
 
         return self.async_show_form(
@@ -466,6 +473,7 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                     CONF_SELF_TELEMETRY_INTERVAL: user_input.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL),
                     CONF_SELF_DIAGNOSTICS_ENABLED: user_input.get(CONF_SELF_DIAGNOSTICS_ENABLED, False),
                     CONF_SELF_DIAGNOSTICS_INTERVAL: user_input.get(CONF_SELF_DIAGNOSTICS_INTERVAL, DEFAULT_SELF_DIAGNOSTICS_INTERVAL),
+                    CONF_LARGE_MESH_MODE: user_input.get(CONF_LARGE_MESH_MODE, DEFAULT_LARGE_MESH_MODE),
                     CONF_NAME: info.get("name"),
                     CONF_PUBKEY: info.get("pubkey"),
                     CONF_REPEATER_SUBSCRIPTIONS: [],
@@ -487,6 +495,7 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                 vol.Optional(CONF_SELF_TELEMETRY_INTERVAL, default=DEFAULT_SELF_TELEMETRY_INTERVAL): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
                 vol.Optional(CONF_SELF_DIAGNOSTICS_ENABLED, default=False): cv.boolean,
                 vol.Optional(CONF_SELF_DIAGNOSTICS_INTERVAL, default=DEFAULT_SELF_DIAGNOSTICS_INTERVAL): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
+                vol.Optional(CONF_LARGE_MESH_MODE, default=DEFAULT_LARGE_MESH_MODE): cv.boolean,
             }),
             errors=errors
         )
@@ -904,10 +913,14 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_global_settings(self, user_input=None):
         """Handle global settings."""
         if user_input is not None:
+            old_large_mesh = self.config_entry.data.get(
+                CONF_LARGE_MESH_MODE, DEFAULT_LARGE_MESH_MODE
+            )
             new_data = copy.deepcopy(dict(self.config_entry.data))
             new_data[CONF_DISABLE_CONTACT_DISCOVERY] = user_input[CONF_DISABLE_CONTACT_DISCOVERY]
             new_data[CONF_LIMIT_DISCOVERED_CONTACTS] = user_input[CONF_LIMIT_DISCOVERED_CONTACTS]
             new_data[CONF_MAX_DISCOVERED_CONTACTS] = user_input[CONF_MAX_DISCOVERED_CONTACTS]
+            new_data[CONF_LARGE_MESH_MODE] = user_input[CONF_LARGE_MESH_MODE]
             new_data[CONF_SELF_TELEMETRY_ENABLED] = user_input[CONF_SELF_TELEMETRY_ENABLED]
             new_data[CONF_SELF_TELEMETRY_INTERVAL] = user_input[CONF_SELF_TELEMETRY_INTERVAL]
             new_data[CONF_SELF_DIAGNOSTICS_ENABLED] = user_input[CONF_SELF_DIAGNOSTICS_ENABLED]
@@ -928,11 +941,23 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         new_data[CONF_MAX_DISCOVERED_CONTACTS]
                     )
 
+            # Large mesh mode toggled on: one-shot removal of the now-orphaned
+            # per-discovered-contact entities. The reload triggered by the entry
+            # update only re-creates entities for added contacts, so without this
+            # the discovered entities would linger as "no longer provided".
+            # Gated to the False->True transition so it never runs on an
+            # ordinary reload.
+            if new_data[CONF_LARGE_MESH_MODE] and not old_large_mesh:
+                coordinator = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id)
+                if coordinator:
+                    await coordinator.async_migrate_discovered_entities_to_data_only()
+
             return await self.async_step_init()
 
         current_disable_discovery = self.config_entry.data.get(CONF_DISABLE_CONTACT_DISCOVERY, False)
         current_limit_enabled = self.config_entry.data.get(CONF_LIMIT_DISCOVERED_CONTACTS, False)
         current_max_contacts = self.config_entry.data.get(CONF_MAX_DISCOVERED_CONTACTS, DEFAULT_MAX_DISCOVERED_CONTACTS)
+        current_large_mesh = self.config_entry.data.get(CONF_LARGE_MESH_MODE, DEFAULT_LARGE_MESH_MODE)
         current_telemetry_enabled = self.config_entry.data.get(CONF_SELF_TELEMETRY_ENABLED, False)
         current_telemetry_interval = self.config_entry.data.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL)
         current_diagnostics_enabled = self.config_entry.data.get(CONF_SELF_DIAGNOSTICS_ENABLED, False)
@@ -951,6 +976,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_DISABLE_CONTACT_DISCOVERY, default=current_disable_discovery): cv.boolean,
                 vol.Optional(CONF_LIMIT_DISCOVERED_CONTACTS, default=current_limit_enabled): cv.boolean,
                 vol.Optional(CONF_MAX_DISCOVERED_CONTACTS, default=current_max_contacts): vol.All(cv.positive_int, vol.Range(min=1, max=10000)),
+                vol.Optional(CONF_LARGE_MESH_MODE, default=current_large_mesh): cv.boolean,
                 vol.Optional(CONF_SELF_TELEMETRY_ENABLED, default=current_telemetry_enabled): cv.boolean,
                 vol.Optional(CONF_SELF_TELEMETRY_INTERVAL, default=current_telemetry_interval): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
                 vol.Optional(CONF_SELF_DIAGNOSTICS_ENABLED, default=current_diagnostics_enabled): cv.boolean,

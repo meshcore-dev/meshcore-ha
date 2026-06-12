@@ -60,6 +60,12 @@ A companion Lovelace card is available at [meshcore-card](https://github.com/jpe
 
 For detailed configuration instructions, see the [documentation](https://meshcore-dev.github.io/meshcore-ha/).
 
+## Large Mesh Mode
+
+On dense meshes, creating one Home Assistant entity per discovered contact produces hundreds of low-utility entities and a lot of entity-registry churn. **Large Mesh Mode** (opt-in, off by default) tracks discovered (un-added) contacts as data only — no per-contact entity — while contacts you add to your node keep their entities as usual. Enable it at install time or later in **Configure → Global Settings**.
+
+The discovered-contact dropdown, messaging, services, and the chat panel all keep working; the data-only contacts stay inspectable via an aggregate summary sensor and the `meshcore.get_discovered_contact` service. The only trade-off is no individual connectivity sensor / charting / automation for un-added contacts. See [Contact Management → Large Mesh Mode](https://meshcore-dev.github.io/meshcore-ha/contacts#large-mesh-mode).
+
 ## MQTT Upload (Addon/Container Env)
 
 Configuration can be done in the Home Assistant Web UI:
