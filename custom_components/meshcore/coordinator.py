@@ -59,6 +59,10 @@ from .const import (
     CONF_AUTO_CLEANUP_STALE_NEIGHBORS,
     CONF_STALE_NEIGHBOR_DAYS,
     DEFAULT_STALE_NEIGHBOR_DAYS,
+    MODE_FULL,
+    MODE_DATA_ONLY,
+    MODE_OFF,
+    get_contact_discovery_mode,
 )
 from .meshcore_api import MeshCoreAPI
 
@@ -299,6 +303,189 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
 
         return list(contacts_dict.values())
 
+    def _remove_discovered_contact_entities(self, public_key: str) -> bool:
+        """Remove the per-contact entities for one discovered (un-added) contact.
+
+        Removes the contact-diagnostic ``binary_sensor`` and, unless the node
+        has a repeater/client tracking subscription (whose telemetry/GPS
+        entities recreate dynamically), its telemetry and GPS-tracker entities.
+        Allowlists by unique_id SHAPE (``<entry_id>_<prefix>_*`` ending in
+        ``_telemetry`` / ``_gps_tracker``) so a bare substring match cannot hit
+        a repeater-neighbor sensor (which embeds another node's pubkey) or a
+        subscription-backed entity. Returns True if a contact binary_sensor was
+        removed.
+
+        This mirrors the data-only demote teardown in
+        ``services.async_execute_command_service`` (keep the two in sync); the
+        mode reconciler reuses it to bring the existing discovered population
+        into the configured mode.
+        """
+        # Imported in-function to avoid a module-level import cycle
+        # (services -> binary_sensor -> ... ; coordinator stays a leaf).
+        from .services import _node_has_tracked_subscription
+
+        prefix = public_key[:12]
+        entity_registry = er.async_get(self.hass)
+
+        tracked = getattr(self, "tracked_diagnostic_binary_contacts", None)
+        if tracked is not None:
+            tracked.discard(public_key)
+
+        removed = False
+        unique_id = f"{self.config_entry.entry_id}_contact_{prefix}"
+        entity_id = entity_registry.async_get_entity_id(
+            "binary_sensor", DOMAIN, unique_id
+        )
+        if entity_id:
+            entity_registry.async_remove(entity_id)
+            removed = True
+
+        if not _node_has_tracked_subscription(self, prefix):
+            uid_prefix = f"{self.config_entry.entry_id}_{prefix}_"
+            to_remove = [
+                e.entity_id
+                for e in er.async_entries_for_config_entry(
+                    entity_registry, self.config_entry.entry_id
+                )
+                if (e.unique_id or "").startswith(uid_prefix)
+                and (
+                    e.unique_id.endswith("_telemetry")
+                    or e.unique_id.endswith("_gps_tracker")
+                )
+            ]
+            for stale_entity_id in to_remove:
+                entity_registry.async_remove(stale_entity_id)
+
+            # In-memory dedup maps: without these discards the managers keep
+            # updating deregistered entities and a same-session re-add will not
+            # recreate the sensors.
+            tm = getattr(self, "telemetry_manager", None)
+            if tm is not None:
+                for key in [k for k in tm.discovered_sensors if k.startswith(prefix)]:
+                    del tm.discovered_sensors[key]
+            dtm = getattr(self, "device_tracker_manager", None)
+            if dtm is not None:
+                for key in [
+                    k for k in dtm.discovered_trackers if k.startswith(prefix)
+                ]:
+                    del dtm.discovered_trackers[key]
+
+        return removed
+
+    async def async_reconcile_discovered_for_mode(self) -> None:
+        """Enforce the configured contact discovery mode on EXISTING contacts.
+
+        ``contact_discovery_mode`` is otherwise a creation-time gate: switching
+        modes governs new contacts but leaves the existing discovered
+        population as-is. This pass reconciles what already exists so each mode
+        is the source of truth on every setup (start / reload — and because a
+        mode change reloads the entry, on every mode switch too):
+
+        - ``full``      -- ensure every discovered contact has a per-contact
+                           entity (idempotent safety net; the platform setup
+                           create-pass and the NEW_CONTACT event path already
+                           cover the common cases).
+        - ``data_only`` -- remove the per-contact entities for discovered
+                           contacts; keep the discovered data (summary sensor /
+                           dropdown / get_discovered_contact).
+        - ``off``       -- remove the per-contact entities AND clear + persist
+                           the discovered set so it does not repopulate on the
+                           next store-load. The advert handler is gated
+                           separately (NEW_CONTACT off early-return).
+
+        Added/curated contacts are never touched: membership is tested against
+        the added set (the same source create_contact_sensor uses), unioned
+        with the SDK's authoritative contact list as a safety net so a
+        transient-empty ``_contacts`` cannot misclassify an added contact as
+        discovered. Entirely HA-side -- the companion is in manual mode and
+        never stored discovered contacts. Runs in the coordinator at
+        post-reload setup with the correct (new) coordinator reference, so it
+        does not reintroduce the pre-reload race.
+        """
+        # Reconciliation needs a trustworthy contact picture; skip when the
+        # device is not connected and reconcile on the next connected setup.
+        mesh_core = getattr(self.api, "mesh_core", None)
+        if not getattr(self.api, "connected", False) or mesh_core is None:
+            _LOGGER.debug(
+                "Contact-mode reconcile skipped: device not connected"
+            )
+            return
+
+        mode = get_contact_discovery_mode(self.config_entry)
+
+        sdk_contacts = getattr(mesh_core, "contacts", None) or {}
+        added_pubkeys = {
+            c.get("public_key")
+            for c in list(self._contacts.values()) + list(sdk_contacts.values())
+            if isinstance(c, dict) and c.get("public_key")
+        }
+
+        if mode == MODE_FULL:
+            # Create an entity for any discovered contact still lacking one.
+            # create_contact_sensor dedups via tracked_diagnostic_binary_contacts
+            # so already-created contacts are skipped (no double-create).
+            add_entities = getattr(self, "binary_sensor_async_add_entities", None)
+            if add_entities is None:
+                return
+            from .binary_sensor import create_contact_sensor
+
+            new_entities = []
+            for contact in list(self._discovered_contacts.values()):
+                if not isinstance(contact, dict):
+                    continue
+                pubkey = contact.get("public_key")
+                if pubkey and pubkey in added_pubkeys:
+                    continue  # added contacts use the normal create path
+                try:
+                    sensor = create_contact_sensor(self, contact)
+                except Exception as ex:  # noqa: BLE001
+                    _LOGGER.error(
+                        "Contact-mode reconcile (full): error creating sensor: %s",
+                        ex,
+                    )
+                    continue
+                if sensor:
+                    new_entities.append(sensor)
+            if new_entities:
+                add_entities(new_entities)
+                _LOGGER.info(
+                    "Contact-mode reconcile (full): created %d missing "
+                    "discovered contact entities",
+                    len(new_entities),
+                )
+            return
+
+        # data_only / off: remove per-contact entities for discovered contacts.
+        removed = 0
+        for public_key in list(self._discovered_contacts.keys()):
+            if public_key in added_pubkeys:
+                continue  # never touch added contacts
+            if self._remove_discovered_contact_entities(public_key):
+                removed += 1
+
+        if mode == MODE_OFF:
+            # Disabled: do not keep/track discovered contacts. Clear and persist
+            # the empty set so the next store-load does not repopulate it.
+            self._discovered_contacts.clear()
+            try:
+                await self._store.async_save(self._discovered_contacts)
+            except Exception as ex:  # noqa: BLE001
+                _LOGGER.error(
+                    "Contact-mode reconcile (off): error saving cleared set: %s",
+                    ex,
+                )
+
+        if removed or mode == MODE_OFF:
+            updated_data = dict(self.data) if self.data else {}
+            updated_data["contacts"] = self.get_all_contacts()
+            self.async_set_updated_data(updated_data)
+            _LOGGER.info(
+                "Contact-mode reconcile (%s): removed %d discovered contact "
+                "entities",
+                mode,
+                removed,
+            )
+
     async def async_evict_discovered_contacts(self, max_contacts: int) -> bool:
         """Evict oldest discovered contacts using FIFO ordering when over the limit.
 
@@ -314,6 +501,11 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
 
         entity_registry = er.async_get(self.hass)
 
+        # Removal runs unconditionally. In data-only/off modes discovered
+        # contacts have no per-contact entity, so async_get_entity_id below
+        # returns None and the removal is a harmless no-op; the dict trim still
+        # bounds the discovered set by max_contacts. Running it in every mode
+        # also clears any entity orphaned by a prior mode switch.
         for public_key in keys_to_evict:
             pubkey_prefix = public_key[:12]
             del self._discovered_contacts[public_key]
@@ -383,6 +575,11 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         # when stale_keys is empty; Phase 4 still runs.
         removed_count = 0
 
+        # Removal runs unconditionally. In data-only/off modes discovered
+        # contacts have no per-contact entity, so the registry lookup returns
+        # None and removal is a no-op; the dict trim still removes stale
+        # contacts. Running it in every mode also clears any entity orphaned by
+        # a prior mode switch.
         for i, public_key in enumerate(stale_keys):
             contact = self._discovered_contacts.get(public_key)
             if contact is None:

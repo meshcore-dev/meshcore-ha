@@ -20,7 +20,6 @@ from homeassistant.helpers.update_coordinator import (
 )
 
 from .const import (
-    CONF_DISABLE_CONTACT_DISCOVERY,
     CONF_SELF_DIAGNOSTICS_ENABLED,
     DOMAIN,
     ENTITY_DOMAIN_BINARY_SENSOR,
@@ -31,6 +30,9 @@ from .const import (
     SELF_DIAG_ERR_CAD_TIMEOUT,
     SELF_DIAG_ERR_POOL_FULL,
     SELF_DIAG_ERR_RX_TIMEOUT,
+    MODE_DATA_ONLY,
+    MODE_OFF,
+    get_contact_discovery_mode,
     NodeType,
 )
 from .utils import (
@@ -53,8 +55,37 @@ def create_contact_sensor(coordinator, contact: dict):
 
     contact_name = contact.get("adv_name", "Unknown")
     public_key = contact.get("public_key", "")
+    if not public_key:
+        return None
 
-    if public_key and public_key not in coordinator.tracked_diagnostic_binary_contacts:
+    # Suppress the per-contact entity for discovered (un-added) contacts in
+    # both data_only and off: data_only tracks them as data only, and off
+    # disables discovery entirely -- neither should materialize a per-
+    # discovered-contact entity. Added/curated contacts still get one in every
+    # mode; only full creates an entity for discovered contacts. The off case
+    # matters because the setup path (async_setup_entry) has no off early-return
+    # of its own -- gating only on data_only here let a reload in off mode
+    # create a per-contact entity for every contact (the opposite of disabled).
+    # NOTE: do NOT gate on contact.get("added_to_node") here -- that field is
+    # computed only in coordinator.get_all_contacts(); raw event-payload
+    # contacts reaching this function via handle_contacts_update do not carry
+    # it, so it would falsely block added contacts too. Test membership in the
+    # added-contact set (coordinator._contacts), the same source
+    # get_all_contacts() derives added_pubkeys from. This governs both callers:
+    # the event path (no added_to_node) and the setup path (has it).
+    if get_contact_discovery_mode(coordinator.config_entry) in (
+        MODE_DATA_ONLY,
+        MODE_OFF,
+    ):
+        added_pubkeys = {
+            c.get("public_key")
+            for c in coordinator._contacts.values()
+            if c.get("public_key")
+        }
+        if public_key not in added_pubkeys:
+            return None  # discovered-only: suppressed in data_only and off
+
+    if public_key not in coordinator.tracked_diagnostic_binary_contacts:
         coordinator.tracked_diagnostic_binary_contacts.add(public_key)
         return MeshCoreContactDiagnosticBinarySensor(
             coordinator,
@@ -78,8 +109,8 @@ def handle_contacts_update(event, coordinator, async_add_entities):
     if not event or not hasattr(event, "payload") or not event.payload:
         return
 
-    # Skip contact discovery if disabled in settings
-    if coordinator.config_entry.data.get(CONF_DISABLE_CONTACT_DISCOVERY, False):
+    # Skip contact discovery entirely when discovery is disabled (mode off).
+    if get_contact_discovery_mode(coordinator.config_entry) == MODE_OFF:
         return
 
     # Initialize tracking sets if needed

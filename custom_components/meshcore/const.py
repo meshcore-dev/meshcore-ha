@@ -38,6 +38,7 @@ SERVICE_REMOVE_DISCOVERED_CONTACT: Final = "remove_discovered_contact"
 SERVICE_CLEANUP_UNAVAILABLE_CONTACTS: Final = "cleanup_unavailable_contacts"
 SERVICE_CLEAR_DISCOVERED_CONTACTS: Final = "clear_discovered_contacts"
 SERVICE_GET_CONTACTS: Final = "get_contacts"
+SERVICE_GET_DISCOVERED_CONTACT: Final = "get_discovered_contact"
 SERVICE_GET_CHANNELS: Final = "get_channels"
 SERVICE_TRACE: Final = "trace"
 
@@ -89,10 +90,32 @@ CONF_DEVICE_DISABLED: Final = "disabled"
 AUTO_DISABLE_HOURS: Final = 120  # Auto-disable devices after this many hours without success
 
 # Contact discovery settings
-CONF_DISABLE_CONTACT_DISCOVERY: Final = "disable_contact_discovery"
 CONF_LIMIT_DISCOVERED_CONTACTS: Final = "limit_discovered_contacts"
 CONF_MAX_DISCOVERED_CONTACTS: Final = "max_discovered_contacts"
 DEFAULT_MAX_DISCOVERED_CONTACTS: Final = 100
+
+# Contact discovery mode: a single tri-state setting controlling how much
+# discovered-contact machinery runs. Supersedes the legacy per-flag discovery
+# settings, mapped on entry migration from the old "disable_contact_discovery"
+# and "large_mesh_mode" keys (see async_migrate_entry). Machine values are
+# stored in config_entry.data; the user-facing labels come from the translations.
+#   full      - every discovered contact gets a per-contact binary_sensor (default)
+#   data_only - discovered contacts are tracked as data only, no per-contact entity
+#   off       - discovered contacts are not processed at all
+CONF_CONTACT_DISCOVERY_MODE: Final = "contact_discovery_mode"
+MODE_FULL: Final = "full"
+MODE_DATA_ONLY: Final = "data_only"
+MODE_OFF: Final = "off"
+DEFAULT_CONTACT_DISCOVERY_MODE: Final = MODE_FULL
+CONTACT_DISCOVERY_MODES: Final = (MODE_FULL, MODE_DATA_ONLY, MODE_OFF)
+
+
+def get_contact_discovery_mode(config_entry) -> str:
+    """Return the contact-discovery mode from entry data (default full)."""
+    return config_entry.data.get(
+        CONF_CONTACT_DISCOVERY_MODE, DEFAULT_CONTACT_DISCOVERY_MODE
+    )
+
 
 # Self telemetry settings
 CONF_SELF_TELEMETRY_ENABLED: Final = "self_telemetry_enabled"
