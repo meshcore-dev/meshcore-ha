@@ -20,7 +20,8 @@ from .utils import (
     format_entity_id, 
     build_device_name, 
     get_device_model, 
-    build_device_id
+    build_device_id,
+    extract_pubkey_hex,
 )
 from . import MeshCoreDataUpdateCoordinator
 
@@ -132,7 +133,7 @@ class DeviceTrackerManager:
         # Default to unknown contact
         contacts = (self.coordinator.data or {}).get("contacts", [])
         for contact in contacts:
-            contact_pubkey = contact.get("public_key", {}).get("hex", "")
+            contact_pubkey = extract_pubkey_hex(contact)
             if contact_pubkey.startswith(pubkey_prefix):
                 return {
                     "name": contact.get("name", f"Node {pubkey_prefix[:6]}"),

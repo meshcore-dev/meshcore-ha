@@ -26,6 +26,20 @@ def extract_pubkey_from_selection(selection: str) -> str | None:
     return match.group(1) if match else None
 
 
+def extract_pubkey_hex(contact: dict[str, Any]) -> str:
+    """Return a contact's public key as a hex string.
+
+    Coordinator contacts carry ``public_key`` as a plain hex string. Older
+    code paths represented it as a ``{"hex": ...}`` dict; handle both so a
+    string-shaped key never raises ``AttributeError`` when callers expect a
+    string (e.g. ``.startswith(...)`` in the node-info lookup loops).
+    """
+    pk = contact.get("public_key", "")
+    if isinstance(pk, dict):
+        return pk.get("hex", "")
+    return pk or ""
+
+
 def get_node_type_str(node_type: str | None) -> str:
     """Convert NodeType to a human-readable string."""
     if node_type == NodeType.CLIENT:
