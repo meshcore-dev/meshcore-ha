@@ -69,6 +69,23 @@ _LOGGER = logging.getLogger(__name__)
 MSG_SAFETY_NET_INTERVAL: int = 60
 
 
+def _log_get_msg_error(action: str, payload: Any) -> None:
+    """Log a ``get_msg()`` ERROR result at the appropriate level.
+
+    The ``no_event_received`` reason is a benign startup race: a flush or poll
+    fired before the radio link produced its first event, and the next cycle
+    recovers. It is logged at DEBUG to avoid ERROR-tier noise (e.g. on a
+    config-entry re-add). Every other failure is logged at ERROR. ``action``
+    is the gerund used in the message ("flushing" / "retrieving").
+    """
+    if isinstance(payload, dict) and payload.get("reason") == "no_event_received":
+        _LOGGER.debug(
+            "Skipped %s messages, radio link still coming up: %s", action, payload
+        )
+    else:
+        _LOGGER.error("Error %s messages: %s", action, payload)
+
+
 class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
     """Class to manage fetching data from the MeshCore node and trigger event-generating commands."""
 
@@ -1238,9 +1255,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     if result.type == EventType.NO_MORE_MSGS:
                         break
                     elif result.type == EventType.ERROR:
-                        _LOGGER.error(
-                            "Error flushing messages: %s", result.payload
-                        )
+                        _log_get_msg_error("flushing", result.payload)
                         break
                     else:
                         _LOGGER.debug(
@@ -1424,7 +1439,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                             _LOGGER.debug("No messages in device queue")
                             break
                         elif result.type == EventType.ERROR:
-                            _LOGGER.error("Error retrieving messages: %s", result.payload)
+                            _log_get_msg_error("retrieving", result.payload)
                             break
                         else:
                             _LOGGER.debug("Drained queued message: %s", result.type)
