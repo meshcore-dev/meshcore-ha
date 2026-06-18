@@ -8,3 +8,7 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    ignore:
+      # phcc 0.13.317+ requires Python 3.14; the integration CI job runs 3.13.
+      # Remove this ignore when moving the integration job (and HA) to 3.14.
+      - dependency-name: "pytest-homeassistant-custom-component"
