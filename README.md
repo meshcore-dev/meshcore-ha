@@ -60,6 +60,16 @@ A companion Lovelace card is available at [meshcore-card](https://github.com/jpe
 
 For detailed configuration instructions, see the [documentation](https://meshcore-dev.github.io/meshcore-ha/).
 
+## Contact Discovery Mode
+
+A single **Contact Discovery Mode** setting controls how much per-discovered-contact machinery the integration creates, with three choices:
+
+- **Entity per contact** (default) — every discovered contact gets its own diagnostic binary sensor, as before.
+- **Data only** — discovered (un-added) contacts are tracked as data only, with no per-contact entity, while contacts you add to your node keep their entities as usual. On dense meshes this avoids hundreds of low-utility entities and the entity-registry churn they drive.
+- **Disabled** — no discovered-contact processing at all (no contact sensors, no persistence, empty selectors) — for when you only track specific repeaters or clients.
+
+Set it at install time or later in **Configure → Global Settings**. In **Data only** mode the discovered-contact dropdown, messaging, services, and the chat panel all keep working, and the data-only contacts stay inspectable via an aggregate summary sensor and the `meshcore.get_discovered_contact` service; the only trade-off is no individual connectivity sensor / charting / automation for un-added contacts. See [Contact Management → Contact Discovery Mode](https://meshcore-dev.github.io/meshcore-ha/contacts#contact-discovery-mode).
+
 ## MQTT Upload (Addon/Container Env)
 
 Configuration can be done in the Home Assistant Web UI:

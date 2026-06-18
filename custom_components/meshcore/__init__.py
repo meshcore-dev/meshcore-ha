@@ -42,6 +42,11 @@ from .const import (
     CONF_MESSAGES_INTERVAL,
     DEFAULT_UPDATE_TICK,
     REPAIR_PUBKEY_CHANGED,
+    CONF_CONTACT_DISCOVERY_MODE,
+    MODE_FULL,
+    MODE_DATA_ONLY,
+    MODE_OFF,
+    get_contact_discovery_mode,
 )
 from .coordinator import MeshCoreDataUpdateCoordinator
 from .meshcore_api import MeshCoreAPI
@@ -79,7 +84,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     _LOGGER.debug("Migrating configuration from version %s", config_entry.version)
     
     # Don't allow downgrading from future versions
-    if config_entry.version > 2:
+    if config_entry.version > 3:
         _LOGGER.error("Cannot downgrade from version %s", config_entry.version)
         return False
     
@@ -108,6 +113,26 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         
         _LOGGER.info("Migrated configuration from version %s to version 2", config_entry.version)
     
+    # Migrate from version 2 to version 3: collapse the two overlapping
+    # discovery booleans into the single contact_discovery_mode tri-state.
+    # Standalone `if` (not `elif`): a v1 entry's v1->v2 block above sets
+    # version=2, so it falls into this block and chains v1->v3 in one pass.
+    if config_entry.version == 2:
+        new_data = dict(config_entry.data)
+        # Read the legacy keys as string literals so the migration is
+        # independent of the const definitions.
+        disable = new_data.pop("disable_contact_discovery", False)
+        large_mesh = new_data.pop("large_mesh_mode", False)
+        if disable:
+            mode = MODE_OFF  # "off" wins the tie-break: no discovery, nothing to be data-only
+        elif large_mesh:
+            mode = MODE_DATA_ONLY
+        else:
+            mode = MODE_FULL
+        new_data[CONF_CONTACT_DISCOVERY_MODE] = mode
+        hass.config_entries.async_update_entry(config_entry, data=new_data, version=3)
+        _LOGGER.info("Migrated contact-discovery settings to %s (version 3)", mode)
+
     _LOGGER.debug("Migration to configuration version %s successful", config_entry.version)
     return True
 
@@ -518,7 +543,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Set up all platforms for this device
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    
+
+    # Bring the EXISTING discovered-contact population into line with the
+    # configured contact discovery mode now that platforms are up (entities,
+    # the binary_sensor add-callback, and the tracking sets all exist). Runs
+    # once per setup with the correct post-reload coordinator, so it covers
+    # start, reload, and the reload a mode switch triggers -- without the
+    # pre-reload race. full is a near no-op (the setup create-pass already
+    # built entities); data_only/off remove the discovered per-contact
+    # entities, and off also clears the discovered set.
+    try:
+        await coordinator.async_reconcile_discovered_for_mode()
+    except Exception as ex:
+        _LOGGER.error("Error reconciling discovered contacts to mode: %s", ex)
+
     # Register static paths for icons
     should_cache = False
     icons_path = Path(__file__).parent / "www" / "icons"
@@ -663,6 +701,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         async def handle_new_contact(event):
             """Handle NEW_CONTACT events for discovered but not-yet-added contacts."""
             if not event or not event.payload:
+                return
+
+            # Discovery disabled (mode off): drop incoming adverts so they do
+            # not repopulate the discovered set (mirrors the off early-return in
+            # binary_sensor.handle_contacts_update). HA-side only -- the radio
+            # still hears and forwards the advert; HA just stops keeping it.
+            if get_contact_discovery_mode(entry) == MODE_OFF:
                 return
 
             contact = event.payload

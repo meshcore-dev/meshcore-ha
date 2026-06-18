@@ -10,6 +10,11 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 import homeassistant.helpers.config_validation as cv
+from homeassistant.helpers.selector import (
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+)
 from bleak import BleakScanner
 from meshcore.events import EventType
 
@@ -44,10 +49,13 @@ from .const import (
     CONF_CLIENT_DISABLE_PATH_RESET,
     DEFAULT_CLIENT_UPDATE_INTERVAL,
     CONF_DEVICE_DISABLED,
-    CONF_DISABLE_CONTACT_DISCOVERY,
     CONF_LIMIT_DISCOVERED_CONTACTS,
     CONF_MAX_DISCOVERED_CONTACTS,
     DEFAULT_MAX_DISCOVERED_CONTACTS,
+    CONF_CONTACT_DISCOVERY_MODE,
+    DEFAULT_CONTACT_DISCOVERY_MODE,
+    CONTACT_DISCOVERY_MODES,
+    get_contact_discovery_mode,
     CONF_SELF_TELEMETRY_ENABLED,
     CONF_SELF_TELEMETRY_INTERVAL,
     DEFAULT_SELF_TELEMETRY_INTERVAL,
@@ -113,6 +121,23 @@ TCP_SCHEMA = vol.Schema(
         vol.Optional(CONF_SELF_TELEMETRY_INTERVAL, default=DEFAULT_SELF_TELEMETRY_INTERVAL): vol.All(cv.positive_int, vol.Range(min=60, max=3600))
     }
 )
+
+def _contact_discovery_mode_selector() -> SelectSelector:
+    """Build the translation-keyed select for the contact-discovery mode.
+
+    The option labels (Entity per contact / Data only / Disabled) come from the
+    selector translation key (translations/en.json -> selector.
+    contact_discovery_mode.options); the stored value is the machine string
+    ("full" / "data_only" / "off").
+    """
+    return SelectSelector(
+        SelectSelectorConfig(
+            options=list(CONTACT_DISCOVERY_MODES),
+            mode=SelectSelectorMode.DROPDOWN,
+            translation_key="contact_discovery_mode",
+        )
+    )
+
 
 async def validate_common(api: MeshCoreAPI) -> Dict[str, Any]:
     """Validate the user input allows us to connect to the USB device."""
@@ -186,7 +211,7 @@ async def validate_tcp_input(hass: HomeAssistant, data: Dict[str, Any]) -> Dict[
 class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: ignore
     """Handle a config flow for MeshCore."""
 
-    VERSION = 2
+    VERSION = 3
 
     def __init__(self) -> None:
         """Initialize flow."""
@@ -362,6 +387,7 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                     CONF_SELF_TELEMETRY_INTERVAL: user_input.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL),
                     CONF_SELF_DIAGNOSTICS_ENABLED: user_input.get(CONF_SELF_DIAGNOSTICS_ENABLED, False),
                     CONF_SELF_DIAGNOSTICS_INTERVAL: user_input.get(CONF_SELF_DIAGNOSTICS_INTERVAL, DEFAULT_SELF_DIAGNOSTICS_INTERVAL),
+                    CONF_CONTACT_DISCOVERY_MODE: user_input.get(CONF_CONTACT_DISCOVERY_MODE, DEFAULT_CONTACT_DISCOVERY_MODE),
                     CONF_NAME: info.get("name"),
                     CONF_PUBKEY: info.get("pubkey"),
                     CONF_REPEATER_SUBSCRIPTIONS: [],
@@ -385,6 +411,7 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                 vol.Optional(CONF_SELF_TELEMETRY_INTERVAL, default=DEFAULT_SELF_TELEMETRY_INTERVAL): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
                 vol.Optional(CONF_SELF_DIAGNOSTICS_ENABLED, default=False): cv.boolean,
                 vol.Optional(CONF_SELF_DIAGNOSTICS_INTERVAL, default=DEFAULT_SELF_DIAGNOSTICS_INTERVAL): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
+                vol.Optional(CONF_CONTACT_DISCOVERY_MODE, default=DEFAULT_CONTACT_DISCOVERY_MODE): _contact_discovery_mode_selector(),
             }),
             errors=errors
         )
@@ -403,6 +430,7 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                     CONF_SELF_TELEMETRY_INTERVAL: user_input.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL),
                     CONF_SELF_DIAGNOSTICS_ENABLED: user_input.get(CONF_SELF_DIAGNOSTICS_ENABLED, False),
                     CONF_SELF_DIAGNOSTICS_INTERVAL: user_input.get(CONF_SELF_DIAGNOSTICS_INTERVAL, DEFAULT_SELF_DIAGNOSTICS_INTERVAL),
+                    CONF_CONTACT_DISCOVERY_MODE: user_input.get(CONF_CONTACT_DISCOVERY_MODE, DEFAULT_CONTACT_DISCOVERY_MODE),
                     CONF_NAME: info.get("name"),
                     CONF_PUBKEY: info.get("pubkey"),
                     CONF_REPEATER_SUBSCRIPTIONS: [],
@@ -435,6 +463,7 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                     vol.Optional(CONF_SELF_TELEMETRY_INTERVAL, default=DEFAULT_SELF_TELEMETRY_INTERVAL): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
                     vol.Optional(CONF_SELF_DIAGNOSTICS_ENABLED, default=False): cv.boolean,
                     vol.Optional(CONF_SELF_DIAGNOSTICS_INTERVAL, default=DEFAULT_SELF_DIAGNOSTICS_INTERVAL): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
+                    vol.Optional(CONF_CONTACT_DISCOVERY_MODE, default=DEFAULT_CONTACT_DISCOVERY_MODE): _contact_discovery_mode_selector(),
                 }
             )
         else:
@@ -445,6 +474,7 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                 vol.Optional(CONF_SELF_TELEMETRY_INTERVAL, default=DEFAULT_SELF_TELEMETRY_INTERVAL): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
                 vol.Optional(CONF_SELF_DIAGNOSTICS_ENABLED, default=False): cv.boolean,
                 vol.Optional(CONF_SELF_DIAGNOSTICS_INTERVAL, default=DEFAULT_SELF_DIAGNOSTICS_INTERVAL): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
+                vol.Optional(CONF_CONTACT_DISCOVERY_MODE, default=DEFAULT_CONTACT_DISCOVERY_MODE): _contact_discovery_mode_selector(),
             })
 
         return self.async_show_form(
@@ -466,6 +496,7 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                     CONF_SELF_TELEMETRY_INTERVAL: user_input.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL),
                     CONF_SELF_DIAGNOSTICS_ENABLED: user_input.get(CONF_SELF_DIAGNOSTICS_ENABLED, False),
                     CONF_SELF_DIAGNOSTICS_INTERVAL: user_input.get(CONF_SELF_DIAGNOSTICS_INTERVAL, DEFAULT_SELF_DIAGNOSTICS_INTERVAL),
+                    CONF_CONTACT_DISCOVERY_MODE: user_input.get(CONF_CONTACT_DISCOVERY_MODE, DEFAULT_CONTACT_DISCOVERY_MODE),
                     CONF_NAME: info.get("name"),
                     CONF_PUBKEY: info.get("pubkey"),
                     CONF_REPEATER_SUBSCRIPTIONS: [],
@@ -487,6 +518,7 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                 vol.Optional(CONF_SELF_TELEMETRY_INTERVAL, default=DEFAULT_SELF_TELEMETRY_INTERVAL): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
                 vol.Optional(CONF_SELF_DIAGNOSTICS_ENABLED, default=False): cv.boolean,
                 vol.Optional(CONF_SELF_DIAGNOSTICS_INTERVAL, default=DEFAULT_SELF_DIAGNOSTICS_INTERVAL): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
+                vol.Optional(CONF_CONTACT_DISCOVERY_MODE, default=DEFAULT_CONTACT_DISCOVERY_MODE): _contact_discovery_mode_selector(),
             }),
             errors=errors
         )
@@ -905,7 +937,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         """Handle global settings."""
         if user_input is not None:
             new_data = copy.deepcopy(dict(self.config_entry.data))
-            new_data[CONF_DISABLE_CONTACT_DISCOVERY] = user_input[CONF_DISABLE_CONTACT_DISCOVERY]
+            new_data[CONF_CONTACT_DISCOVERY_MODE] = user_input[CONF_CONTACT_DISCOVERY_MODE]
             new_data[CONF_LIMIT_DISCOVERED_CONTACTS] = user_input[CONF_LIMIT_DISCOVERED_CONTACTS]
             new_data[CONF_MAX_DISCOVERED_CONTACTS] = user_input[CONF_MAX_DISCOVERED_CONTACTS]
             new_data[CONF_SELF_TELEMETRY_ENABLED] = user_input[CONF_SELF_TELEMETRY_ENABLED]
@@ -930,7 +962,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
             return await self.async_step_init()
 
-        current_disable_discovery = self.config_entry.data.get(CONF_DISABLE_CONTACT_DISCOVERY, False)
+        current_contact_discovery_mode = get_contact_discovery_mode(self.config_entry)
         current_limit_enabled = self.config_entry.data.get(CONF_LIMIT_DISCOVERED_CONTACTS, False)
         current_max_contacts = self.config_entry.data.get(CONF_MAX_DISCOVERED_CONTACTS, DEFAULT_MAX_DISCOVERED_CONTACTS)
         current_telemetry_enabled = self.config_entry.data.get(CONF_SELF_TELEMETRY_ENABLED, False)
@@ -948,7 +980,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         return self.async_show_form(
             step_id="global_settings",
             data_schema=vol.Schema({
-                vol.Optional(CONF_DISABLE_CONTACT_DISCOVERY, default=current_disable_discovery): cv.boolean,
+                vol.Optional(CONF_CONTACT_DISCOVERY_MODE, default=current_contact_discovery_mode): _contact_discovery_mode_selector(),
                 vol.Optional(CONF_LIMIT_DISCOVERED_CONTACTS, default=current_limit_enabled): cv.boolean,
                 vol.Optional(CONF_MAX_DISCOVERED_CONTACTS, default=current_max_contacts): vol.All(cv.positive_int, vol.Range(min=1, max=10000)),
                 vol.Optional(CONF_SELF_TELEMETRY_ENABLED, default=current_telemetry_enabled): cv.boolean,

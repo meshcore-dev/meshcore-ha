@@ -222,6 +222,10 @@ Binary sensors showing node freshness:
   - On = Fresh (recent activity within 12 hours)
   - Off = Stale (no recent activity)
 
+:::note
+In [Data only mode](contacts.md#contact-discovery-mode) these per-contact binary sensors are **not** created for discovered (un-added) contacts — they are tracked as data only. Added contacts keep their status sensor. The aggregate [Discovered Contact Summary sensor](contacts.md#discovered-contact-summary-sensor) provides a rollup count in every mode.
+:::
+
 #### Radio Fault Flags (Diagnostic)
 
 Three binary sensors decode the companion radio's `errors` bitmask. They are created only when **Self Diagnostics** is enabled. The firmware latches each flag on first occurrence and clears it only on a radio reboot, so **On** means "this fault has occurred at least once since the radio last booted," not "is occurring now."

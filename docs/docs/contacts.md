@@ -44,30 +44,33 @@ When a device broadcasts on the mesh network, the integration:
 3. Creates a diagnostic binary sensor showing the contact as "discovered"
 4. Makes it available in the "Discovered Contacts" dropdown
 
-#### Disabling Contact Discovery
+#### Contact Discovery Mode
 
-If you have many contacts on your mesh network but only want to track specific repeaters or clients, you can disable automatic contact discovery:
+How much per-discovered-contact machinery the integration creates is controlled by a single **Contact Discovery Mode** setting with three choices:
 
-**To disable:**
+- **Entity per contact** (default) — every discovered contact gets its own diagnostic binary sensor, exactly as before. Choose this if you rely on per-discovered-contact connectivity state, history charting, or per-contact automations.
+- **Data only** — discovered (un-added) contacts are tracked as data only, with no per-contact entity, while contacts you add to your node keep their entities exactly as before. This mirrors the firmware's own two-tier model: a transient "advert heard" tier (discovered → data only) versus a durable "stored contact" tier (added → always an entity). On dense meshes this avoids hundreds of low-utility binary sensors sitting permanently in the `discovered` state, and the entity-registry churn their create/evict/cleanup drives.
+- **Disabled** — no discovered-contact processing at all: no contact binary sensors are created, discovered contacts are not persisted to storage, and the discovered/added selectors do not populate. Choose this if you only ever track specific repeaters or clients and want the lowest possible entity count.
+
+**To set it:**
 1. Go to **Settings → Devices & Services**
 2. Find your MeshCore integration
 3. Click **Configure**
 4. Select **Global Settings**
-5. Enable **Disable Contact Discovery**
+5. Choose a **Contact Discovery Mode**
 6. Click **Submit**
 
-**When disabled:**
-- No contact binary sensors are automatically created
-- Discovered contacts are not persisted to storage
-- Contact selectors (discovered/added) will not populate
-- Reduces overhead if you have 50+ contacts on the network
-- You can still manually track specific devices using repeater/client tracking
+It can also be set at install time — the **Contact Discovery Mode** selector appears in the USB, Bluetooth, and Network setup steps. The same setting is used either way, so it can be changed later in Global Settings.
 
-**When to use:**
-- Large mesh networks with many nodes you don't need to monitor
-- Performance optimization when you only care about tracked repeaters/clients
-- Reducing entity count in Home Assistant
-- You want to use services/automations without contact entities
+**What still works in Data only mode:**
+- The **Discovered Contacts** dropdown still lists every discovered contact (it reads coordinator data, not entities)
+- Adding a discovered contact still works — promotion to your node creates its entity exactly as before
+- Messaging, channels, repeater/neighbor telemetry, the chat panel, and all services are unaffected (none are per-discovered-contact)
+- The aggregate [Discovered Contact Summary sensor](#discovered-contact-summary-sensor) and the [`get_discovered_contact` service](#get-discovered-contact) keep the data-only contacts inspectable
+
+**The one trade-off (Data only):** discovered contacts no longer have an individual `binary_sensor`, so you lose per-discovered-contact connectivity state, history charting, and per-contact automations *for un-added contacts*. Added contacts are unaffected. If you rely on per-discovered-contact entities, use **Entity per contact** (the default).
+
+Switching an existing install to **Data only** or **Disabled** leaves any per-discovered-contact entities created under a previous mode in place until the next discovered-contact cleanup removes them; run the [Clear Discovered Contacts](#clearing-discovered-contacts) service after switching to remove them immediately. The contact-selector entities and all added-contact entities are always preserved.
 
 #### Limiting Discovered Contacts
 
@@ -215,6 +218,35 @@ service: meshcore.remove_discovered_contact
 
 **Note**: This only removes the contact from Home Assistant's discovered list and removes the binary sensor entity. It does **NOT** remove the contact from your node's contact list. Use this to clean up discovered contacts you don't want to track.
 
+### Get Discovered Contact
+
+Return the full data dict for a single discovered (un-added) contact, matched by public-key prefix. This is the supported way to inspect a discovered contact in [Data only mode](#contact-discovery-mode), where discovered contacts have no per-contact entity:
+
+```yaml
+service: meshcore.get_discovered_contact
+data:
+  pubkey_prefix: 1a2b3c4d5e6f
+```
+
+The `pubkey_prefix` accepts the 12-character prefix shown in the discovered-contact dropdown, or a full public key. This service returns a response (`SupportsResponse.ONLY`); call it from a script/automation with `response_variable`, or use **Developer Tools → Actions** and check **Return response**:
+
+```yaml
+action: meshcore.get_discovered_contact
+data:
+  pubkey_prefix: 1a2b3c4d5e6f
+response_variable: result
+```
+
+The response is `{"contact": { ...full contact dict... }}` on a match, or `{"contact": null, "error": "not_found", "pubkey_prefix": "..."}` when no discovered contact starts with that prefix. The returned data is the same already exposed via `get_contacts` and the dropdown — pubkeys are mesh-advertised, not secret.
+
+For multiple devices, specify the entry_id:
+```yaml
+service: meshcore.get_discovered_contact
+data:
+  pubkey_prefix: 1a2b3c4d5e6f
+  entry_id: "abc123def456"
+```
+
 ### Cleanup Unavailable Contacts
 
 After removing contacts, their sensors become unavailable but remain in your entity list. Use this service to remove all unavailable contact sensors at once:
@@ -354,6 +386,20 @@ Sensors show different icons based on node type and state:
 ### Entity Pictures
 
 Contact sensors include custom entity pictures showing the node type and status with visual indicators.
+
+### Discovered Contact Summary Sensor
+
+The integration also creates one aggregate summary sensor per device, `sensor.meshcore_<node>_discovered_summary`, whose state is the total count of discovered contacts. It is useful in every mode — and is the at-a-glance rollup for the data-only contacts in [Data only mode](#contact-discovery-mode).
+
+Attributes are a small, bounded rollup (constant in size regardless of how many contacts are discovered):
+
+- `fresh_count` / `stale_count` — split on the 12-hour advert freshness window
+- `by_type` — counts by node type: `chat`, `repeater`, `room_server`, `sensor`, `unknown`
+- `newest` — the most-recently-heard advert: `adv_name`, `pubkey_short` (12-char prefix), `last_advert`
+- `capacity` — `max_discovered_contacts` when **Limit Discovered Contacts** is enabled, otherwise `unlimited`
+- `capacity_used_pct` — percent of capacity in use (only when the limit is enabled)
+
+This sensor is **disabled by default** and lives under the **diagnostic** category. Its state changes on every advert, so leaving it always-on would write a recorder time-series on every install — exactly the recorder churn the Data only and Disabled modes exist to reduce. Enable it from the entity's settings only if you want to chart the discovered count; the `by_type` / `newest` attributes are then chartable too.
 
 ## Automatic Contact Syncing
 
