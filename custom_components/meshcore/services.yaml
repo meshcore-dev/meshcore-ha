@@ -92,8 +92,6 @@ execute_command:
     Execute a command provided by the MeshCore Python library. This is an advanced feature
     that provides direct access to the underlying commands interface.
     CAUTION: Some commands will make PERMANENT CHANGES to your node's configuration. Use with care.
-  response:
-    optional: true
   fields:
     command:
       name: Command
@@ -197,8 +195,6 @@ get_contacts:
     Use this instead of string-scraping execute_command output — the response
     shape is stable across releases. See the companion-integration API docs for
     the full schema.
-  response:
-    optional: true
   fields:
     entry_id:
       name: Config Entry ID
@@ -216,8 +212,6 @@ get_discovered_contact:
     no per-contact entity, so this is the supported way to inspect one. The
     returned data is the same already exposed via get_contacts and the
     discovered-contact dropdown.
-  response:
-    optional: false
   fields:
     pubkey_prefix:
       name: Public Key Prefix
@@ -240,8 +234,6 @@ get_channels:
     Return the device's configured channels as a structured list. The shared
     secret is never leaked — only its presence is reported via
     shared_secret_present.
-  response:
-    optional: true
   fields:
     entry_id:
       name: Config Entry ID
@@ -260,8 +252,6 @@ trace:
     flood contacts a path-discovery pass runs first; the result is used to
     build the trace. On timeout or any failure, returns {"trace": null,
     "error": "..."} so automations always get a structured response.
-  response:
-    optional: true
   fields:
     pubkey_prefix:
       name: Public Key Prefix

@@ -1,13 +1,13 @@
 {
   "domain": "meshcore",
   "name": "MeshCore",
-  "documentation": "https://github.com/meshcore-dev/meshcore-ha",
-  "issue_tracker": "https://github.com/meshcore-dev/meshcore-ha/issues",
-  "dependencies": ["logbook", "http"],
   "codeowners": ["@awolden"],
+  "config_flow": true,
+  "dependencies": ["logbook", "http"],
+  "documentation": "https://github.com/meshcore-dev/meshcore-ha",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/meshcore-dev/meshcore-ha/issues",
   "loggers": ["custom_components.meshcore"],
   "requirements": ["meshcore>=2.3.7", "meshcore-cli>=0.0.0", "pycryptodome>=3.20.0", "cachetools>=5.3.0", "paho-mqtt>=1.6.0", "pynacl>=1.5.0"],
-  "iot_class": "local_polling",
-  "version": "2.8.0",
-  "config_flow": true
+  "version": "2.8.0"
 }
