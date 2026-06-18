@@ -1,0 +1,16 @@
+[tool.pytest.ini_options]
+# asyncio_mode = "auto" treats every `async def test_*` as an asyncio test
+# without needing a per-test marker. This prevents the silent-skip failure
+# mode where an async test missing @pytest.mark.asyncio is collected but
+# never actually run.
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+# E501 (line-too-long) is intentionally omitted; `ruff format` owns wrapping.
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]

@@ -1,0 +1,25 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Guards the manual release flow: a v-tag must match manifest.json's
+      # version, or HACS ships a mismatched release.
+      - name: Tag matches manifest version
+        run: |
+          MANIFEST=$(jq -r .version custom_components/meshcore/manifest.json)
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "manifest=$MANIFEST tag=$TAG"
+          if [ "$MANIFEST" != "$TAG" ]; then
+            echo "::error::tag $TAG does not match manifest version $MANIFEST"
+            exit 1
+          fi

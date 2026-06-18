@@ -1,0 +1,27 @@
+name: Validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Weekly run catches upstream hassfest/HACS rule drift.
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  hassfest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master
+
+  hacs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hacs/action@main
+        with:
+          category: integration
