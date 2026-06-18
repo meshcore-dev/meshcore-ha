@@ -26,7 +26,7 @@ jobs:
       # --strict-markers turns an unregistered/typo'd marker into an error
       # rather than a silently-skipped test.
       - run: pytest tests --strict-markers --cov=custom_components/meshcore --cov-report=xml --cov-report=term
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: matrix.python-version == '3.13'
         with:
           name: coverage-xml
