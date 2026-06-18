@@ -156,6 +156,7 @@ def test_accessor_defaults_to_full_when_absent():
 
 # --- Change 2: v2->v3 migration mappings -------------------------------------
 
+@pytest.mark.asyncio
 async def test_migrate_disable_maps_to_off():
     ok, entry = await _run(2, {_LEGACY_DISABLE: True})
     assert ok is True
@@ -165,6 +166,7 @@ async def test_migrate_disable_maps_to_off():
     assert _LEGACY_LARGE_MESH not in entry.data
 
 
+@pytest.mark.asyncio
 async def test_migrate_large_mesh_maps_to_data_only():
     ok, entry = await _run(2, {_LEGACY_LARGE_MESH: True})
     assert ok is True
@@ -173,6 +175,7 @@ async def test_migrate_large_mesh_maps_to_data_only():
     assert _LEGACY_LARGE_MESH not in entry.data
 
 
+@pytest.mark.asyncio
 async def test_migrate_neither_maps_to_full():
     ok, entry = await _run(2, {})
     assert ok is True
@@ -180,6 +183,7 @@ async def test_migrate_neither_maps_to_full():
     assert entry.data[CONF_MODE] == MODE_FULL
 
 
+@pytest.mark.asyncio
 async def test_migrate_both_true_off_wins_tiebreak():
     ok, entry = await _run(2, {_LEGACY_DISABLE: True, _LEGACY_LARGE_MESH: True})
     assert entry.data[CONF_MODE] == MODE_OFF
@@ -187,6 +191,7 @@ async def test_migrate_both_true_off_wins_tiebreak():
     assert _LEGACY_LARGE_MESH not in entry.data
 
 
+@pytest.mark.asyncio
 async def test_migrate_drops_explicit_false_legacy_keys():
     """Even when the legacy flags are explicitly False, they are dropped."""
     ok, entry = await _run(2, {_LEGACY_DISABLE: False, _LEGACY_LARGE_MESH: False})
@@ -195,6 +200,7 @@ async def test_migrate_drops_explicit_false_legacy_keys():
     assert _LEGACY_LARGE_MESH not in entry.data
 
 
+@pytest.mark.asyncio
 async def test_migrate_preserves_unrelated_keys():
     ok, entry = await _run(2, {_LEGACY_LARGE_MESH: True, "name": "MattDub", "baudrate": 115200})
     assert entry.data["name"] == "MattDub"
@@ -202,6 +208,7 @@ async def test_migrate_preserves_unrelated_keys():
     assert entry.data[CONF_MODE] == MODE_DATA_ONLY
 
 
+@pytest.mark.asyncio
 async def test_migrate_v1_chains_to_v3():
     """A v1 entry must run v1->v2 then fall through to v2->v3 in one pass.
 
@@ -216,6 +223,7 @@ async def test_migrate_v1_chains_to_v3():
     assert _LEGACY_LARGE_MESH not in entry.data
 
 
+@pytest.mark.asyncio
 async def test_migrate_v1_with_large_mesh_chains_to_data_only():
     """A v1 entry that already carried large_mesh_mode=True lands on data_only at v3."""
     ok, entry = await _run(1, {_LEGACY_LARGE_MESH: True})
@@ -225,6 +233,7 @@ async def test_migrate_v1_with_large_mesh_chains_to_data_only():
     assert _LEGACY_LARGE_MESH not in entry.data
 
 
+@pytest.mark.asyncio
 async def test_migrate_rejects_downgrade_from_future_version():
     ok, entry = await _run(4, {})
     assert ok is False
