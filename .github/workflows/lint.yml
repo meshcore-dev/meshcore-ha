@@ -1,0 +1,27 @@
+name: Lint
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ruff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install ruff
+      # Advisory until the one-time normalization PR lands. `--exit-zero`
+      # annotates findings on the PR without failing the check; the format
+      # step is non-fatal for the same reason. Flip both to hard gates after
+      # the tree is normalized.
+      - name: ruff check (advisory)
+        run: ruff check --output-format=github --exit-zero .
+      - name: ruff format --check (advisory)
+        run: ruff format --check --diff . || true
