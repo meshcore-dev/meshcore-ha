@@ -3,7 +3,7 @@
 # custom_components.meshcore package imports and sets up. This tier runs as a
 # SEPARATE pytest invocation from the unit tier (tests/), which MagicMock-stubs
 # Home Assistant in sys.modules and therefore cannot share a process with this.
-pytest-homeassistant-custom-component==0.13.316
+pytest-homeassistant-custom-component==0.13.339
 # Pulled in because the integration depends on logbook -> frontend.
 home-assistant-frontend
 meshcore>=2.3.7
