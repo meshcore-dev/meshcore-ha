@@ -1219,30 +1219,18 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     return
 
                 try:
-                    login_result = await self.api.mesh_core.commands.send_login(
+                    login_result = await self.api.mesh_core.commands.send_login_sync(
                         contact,
                         repeater_config.get(CONF_REPEATER_PASSWORD, "")
                     )
 
-                    # send_login returns MSG_SENT (login packet queued) or ERROR.
-                    # Wait for the actual LOGIN_SUCCESS event from the repeater.
-                    if login_result and login_result.type == EventType.MSG_SENT:
-                        login_event = await self.api.mesh_core.wait_for_event(
-                            EventType.LOGIN_SUCCESS,
-                            timeout=10.0,
-                        )
-                        if login_event:
-                            self.logger.info(f"Successfully logged in to repeater {repeater_name}")
-                            self._increment_success(pubkey_prefix)
-                            self._repeater_login_times[pubkey_prefix] = self._current_time()
-                            self._repeater_consecutive_failures[pubkey_prefix] = 0
-                        else:
-                            self.logger.error(f"Login to repeater {repeater_name} timed out waiting for LOGIN_SUCCESS")
-                            self._increment_failure(pubkey_prefix)
-                            self._repeater_login_times[pubkey_prefix] = self._current_time()
+                    if login_result:
+                        self.logger.info(f"Successfully logged in to repeater {repeater_name}")
+                        self._increment_success(pubkey_prefix)
+                        self._repeater_login_times[pubkey_prefix] = self._current_time()
+                        self._repeater_consecutive_failures[pubkey_prefix] = 0
                     else:
-                        error_msg = login_result.payload if login_result and login_result.type == EventType.ERROR else "send failed"
-                        self.logger.error(f"Login to repeater {repeater_name} failed: {error_msg}")
+                        self.logger.error(f"Login to repeater {repeater_name} failed or timed out")
                         self._increment_failure(pubkey_prefix)
                         self._repeater_login_times[pubkey_prefix] = self._current_time()
 

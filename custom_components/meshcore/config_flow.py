@@ -716,23 +716,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             return self._show_add_repeater_form(repeater_dict, errors, user_input)
             
         # Try to login
-        send_result = await meshcore.commands.send_login(contact, password)
-        
-        if send_result.type == EventType.ERROR:
-            error_message = send_result.payload
-            _LOGGER.error("Failed to login to repeater - received error: %s", error_message)
-            errors["base"] = "Failed to log in to repeater. Check password and try again."
-            return self._show_add_repeater_form(repeater_dict, errors, user_input)
-        
-        result = await meshcore.wait_for_event(EventType.LOGIN_SUCCESS, timeout=10)
+        result = await meshcore.commands.send_login_sync(contact, password)
         if not result:
-            _LOGGER.error("Timed out waiting for login success")
-            errors["base"] = "Timed out waiting for login response"
-            return self._show_add_repeater_form(repeater_dict, errors, user_input)
-        
-        if result.type == EventType.ERROR:
-            error_message = result.payload if hasattr(result, 'payload') else "Unknown error"
-            _LOGGER.error("Failed to login to repeater - received error: %s", error_message)
+            _LOGGER.error("Login to repeater failed or timed out")
             errors["base"] = "Failed to log in to repeater. Check password and try again."
             return self._show_add_repeater_form(repeater_dict, errors, user_input)
             
