@@ -9,5 +9,5 @@ home-assistant-frontend
 meshcore>=2.3.7
 pycryptodome>=3.23.0
 cachetools>=7.1.4
-paho-mqtt>=1.6.0
+paho-mqtt>=2.1.0
 pynacl>=1.6.2
