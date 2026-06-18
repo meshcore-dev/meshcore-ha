@@ -3,6 +3,6 @@
 # tests/conftest.py, so only what the suite really imports is needed here.
 pytest>=9.1.0
 pytest-asyncio>=1.4.0
-pytest-cov>=5.0
+pytest-cov>=7.1.0
 pycryptodome>=3.23.0
 ruff>=0.6
