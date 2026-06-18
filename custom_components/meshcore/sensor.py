@@ -1025,14 +1025,15 @@ class MeshCoreSensor(CoordinatorEntity, SensorEntity):
 
         if key == "node_status":
             def update_status(event: Event):
-                if self.coordinator.api.connected:
-                    self._native_value = "online"
-                else:
-                    self._native_value = "offline"
+                self._native_value = "online" if self.coordinator.api.connected else "offline"
+                self.async_write_ha_state()
             meshcore.dispatcher.subscribe(
                 None,
                 update_status,
             )
+            # Seed initial state from the current connection: the API may
+            # already be connected before the first event arrives post-restart.
+            self._native_value = "online" if self.coordinator.api.connected else "offline"
 
         elif key == "battery_voltage":
             def update_battery(event: Event):
