@@ -1,7 +1,7 @@
 # Test/CI dependencies. The integration's runtime deps (homeassistant,
 # meshcore, voluptuous, paho-mqtt, pynacl) are MagicMock-stubbed in
 # tests/conftest.py, so only what the suite really imports is needed here.
-pytest>=8.0
+pytest>=9.1.0
 pytest-asyncio>=1.4.0
 pytest-cov>=5.0
 pycryptodome>=3.23.0
