@@ -11,7 +11,7 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       # Guards the manual release flow: a v-tag must match manifest.json's
       # version, or HACS ships a mismatched release.
       - name: Tag matches manifest version
