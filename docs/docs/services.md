@@ -179,6 +179,52 @@ service: meshcore.execute_command_ui
 data: {}
 ```
 
+### CLI Command
+Run a command against the local companion radio **and record the command and
+its response to the CLI Console sensor**, so the output is visible in the UI
+(unlike `execute_command_ui`, which discards the response). Same command syntax
+and capabilities as `execute_command`. Enable the CLI Console under **Global
+Settings → Enable CLI Console** to get the `sensor.*_cli_console` output entity.
+The console records only command/response pairs — it does not stream the
+radio's continuous diagnostic/noise-floor log.
+
+**Service:** `meshcore.cli_command`
+
+**Fields:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `command` | string | Yes | Command with parameters, e.g. `get_bat`, `get_stats_radio`, `set_tx_power 20` |
+| `entry_id` | string | No | Config entry ID for multiple devices |
+
+**Example:**
+
+```yaml
+service: meshcore.cli_command
+data:
+  command: get_stats_radio
+```
+
+### CLI Command UI
+Run the command in `text.meshcore_command` through the CLI Console (so the
+response is recorded to the transcript) and clear the input afterwards. This is
+the CLI-Console equivalent of `execute_command_ui`.
+
+**Service:** `meshcore.cli_command_ui`
+
+**Fields:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `entry_id` | string | No | Config entry ID for multiple devices |
+
+**Example:**
+
+```yaml
+service: meshcore.cli_command_ui
+data: {}
+```
+
 ## Usage in Automations
 
 ### Battery Check Automation

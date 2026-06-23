@@ -86,6 +86,55 @@ cards:
     icon_height: 24px
 ```
 
+### CLI Console
+
+The `execute_command` / `execute_command_ui` services run a command but the
+response is only visible in Developer Tools or the logs. The **CLI Console**
+gives you an interactive terminal-style surface that shows the output of each
+command directly on the dashboard.
+
+Enable it first under **Settings → Devices & Services → MeshCore → Configure →
+Global Settings → Enable CLI Console**. That creates a `sensor.*_cli_console`
+entity whose `transcript` attribute holds a rolling log of the commands you run
+and their responses. It records only command/response pairs — it does **not**
+stream the radio's continuous diagnostic/noise-floor output.
+
+Use the `cli_command_ui` service (instead of `execute_command_ui`) so the
+output is captured, and render the transcript with a markdown card:
+
+```yaml
+type: vertical-stack
+cards:
+  - type: entities
+    entities:
+      - entity: text.meshcore_command
+        name: MeshCore CLI
+  - show_name: true
+    show_icon: true
+    type: button
+    tap_action:
+      action: call-service
+      service: meshcore.cli_command_ui
+    name: Run Command
+    icon: mdi:console-line
+    icon_height: 24px
+  - type: markdown
+    content: >-
+      ```
+      {{ state_attr('sensor.YOUR_NODE_cli_console', 'transcript') }}
+      ```
+```
+
+Replace `sensor.YOUR_NODE_cli_console` with your node's actual entity id (find
+it under the device's entities). You can also call the service directly with a
+command, e.g. from an automation or script:
+
+```yaml
+action: meshcore.cli_command
+data:
+  command: get_stats_radio
+```
+
 ### Network Map
 
 Display all Meshcore contacts on a map using their location data.

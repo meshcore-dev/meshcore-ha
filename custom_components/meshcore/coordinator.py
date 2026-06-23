@@ -5,6 +5,7 @@ import asyncio
 import logging
 import random
 import time
+from collections import deque
 from datetime import timedelta
 from typing import Any, Dict
 
@@ -40,6 +41,7 @@ from .const import (
     CONF_SELF_TELEMETRY_ENABLED,
     CONF_SELF_TELEMETRY_INTERVAL,
     DEFAULT_SELF_TELEMETRY_INTERVAL,
+    CLI_CONSOLE_MAX_LINES,
     CONF_SELF_DIAGNOSTICS_ENABLED,
     CONF_SELF_DIAGNOSTICS_INTERVAL,
     DEFAULT_SELF_DIAGNOSTICS_INTERVAL,
@@ -127,6 +129,16 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         # Get name and pubkey from config_entry.data (not options)
         self.name = config_entry.data.get(CONF_NAME)
         self.pubkey = config_entry.data.get(CONF_PUBKEY)
+
+        # Rolling transcript for the CLI console sensor: each entry is a dict of
+        # {timestamp, command, response, is_error}. Bounded so the sensor's
+        # attribute payload stays small regardless of how much the console is
+        # used. The sensor (when CONF_CLI_CONSOLE_ENABLED) registers itself here
+        # so record_cli_console() can push fresh state immediately.
+        self.cli_console_history: deque[dict[str, Any]] = deque(
+            maxlen=CLI_CONSOLE_MAX_LINES
+        )
+        self.cli_console_sensor: Any = None
         
         # Set up device info that entities can reference
         self._firmware_version = None
@@ -255,6 +267,29 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         # Dirty contacts tracking for performance optimization
         # Set of pubkey prefixes that have been updated and need sensor refresh
         self._dirty_contacts = set()
+
+    def record_cli_console(
+        self, command: str, response: Any, is_error: bool = False
+    ) -> None:
+        """Append a command/response pair to the CLI console transcript.
+
+        Pushes fresh state to the console sensor immediately when one is
+        registered (CONF_CLI_CONSOLE_ENABLED). No-ops gracefully when the
+        console is disabled, so the cli_command service can call this
+        unconditionally.
+        """
+        self.cli_console_history.append({
+            "timestamp": int(time.time()),
+            "command": command,
+            "response": response,
+            "is_error": bool(is_error),
+        })
+        sensor = self.cli_console_sensor
+        if sensor is not None:
+            try:
+                sensor.async_write_ha_state()
+            except Exception as ex:  # pragma: no cover - defensive
+                _LOGGER.debug("Failed to update CLI console sensor: %s", ex)
 
     def mark_contact_dirty(self, pubkey_prefix: str):
         """Mark a contact as needing update (for performance optimization).

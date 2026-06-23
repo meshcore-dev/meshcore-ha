@@ -31,6 +31,8 @@ from .const import (
     CONF_REPEATER_NEIGHBORS_ENABLED,
     CONF_TRACKED_CLIENTS,
     CONF_SELF_DIAGNOSTICS_ENABLED,
+    CONF_CLI_CONSOLE_ENABLED,
+    CLI_CONSOLE_MAX_LINES,
     CONF_LIMIT_DISCOVERED_CONTACTS,
     CONF_MAX_DISCOVERED_CONTACTS,
     DEFAULT_MAX_DISCOVERED_CONTACTS,
@@ -515,6 +517,12 @@ async def async_setup_entry(
 
     # Add companion prefix sensor (first byte of public key, used in routing paths)
     entities.append(MeshCoreCompanionPrefixSensor(coordinator))
+
+    # Add the CLI console transcript sensor only when opted in (default off).
+    # The cli_command service records command/response pairs into this entity
+    # so the output is visible in the UI without a custom card.
+    if entry.data.get(CONF_CLI_CONSOLE_ENABLED, False):
+        entities.append(MeshCoreCLIConsoleSensor(coordinator))
 
     # Store the async_add_entities function for later use
     coordinator.sensor_add_entities = async_add_entities
@@ -1331,6 +1339,108 @@ class MeshCoreCompanionPrefixSensor(CoordinatorEntity, SensorEntity):
             "public_key": self._full_key,
             "path_hash_mode": self._path_hash_mode,
             "prefix_length": mode_labels.get(self._path_hash_mode, "unknown"),
+        }
+
+
+def _format_cli_response(response: Any) -> str:
+    """Render a command response as a compact, human-readable string.
+
+    Responses are JSON-safe dicts (from execute_command normalization),
+    primitives, or None. Dicts are rendered as `key: value` lines so a
+    markdown card shows them cleanly without the caller needing to parse.
+    """
+    if response is None:
+        return "(no response)"
+    if isinstance(response, dict):
+        if not response:
+            return "(empty response)"
+        return "\n".join(f"{k}: {v}" for k, v in response.items())
+    return str(response)
+
+
+class MeshCoreCLIConsoleSensor(CoordinatorEntity, SensorEntity):
+    """Interactive CLI console transcript for the local companion radio.
+
+    Records command/response pairs produced by the ``meshcore.cli_command``
+    service so output is visible in the UI — unlike ``execute_command_ui``,
+    which runs a command but discards its response. Created only when
+    CONF_CLI_CONSOLE_ENABLED is set (default off).
+
+    State is the most recent command (so the entity badge shows activity at a
+    glance). The full rolling transcript lives in attributes: ``history`` is a
+    structured list of {timestamp, command, response, is_error}, and
+    ``transcript`` is a pre-rendered markdown string for a markdown card. The
+    transcript intentionally contains only command/response pairs — it never
+    streams LOG_DATA / RX_LOG packet noise.
+    """
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_icon = "mdi:console"
+    _attr_name = "CLI Console"
+
+    def __init__(self, coordinator: MeshCoreDataUpdateCoordinator) -> None:
+        """Initialize the CLI console sensor."""
+        super().__init__(coordinator)
+        self.coordinator = coordinator
+        public_key_short = coordinator.pubkey[:6] if coordinator.pubkey else ""
+
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_cli_console"
+        self.entity_id = format_entity_id(
+            ENTITY_DOMAIN_SENSOR, public_key_short, "cli_console"
+        )
+
+    async def async_added_to_hass(self) -> None:
+        """Register with the coordinator so the service can push updates."""
+        await super().async_added_to_hass()
+        self.coordinator.cli_console_sensor = self
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Detach from the coordinator on teardown (e.g. options reload)."""
+        if self.coordinator.cli_console_sensor is self:
+            self.coordinator.cli_console_sensor = None
+        await super().async_will_remove_from_hass()
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device info (attach to the main companion device)."""
+        return DeviceInfo(**self.coordinator.device_info)
+
+    @property
+    def native_value(self) -> str:
+        """Return the most recent command (truncated to the state length cap)."""
+        history = self.coordinator.cli_console_history
+        if not history:
+            return "ready"
+        # HA state values are capped at 255 chars; keep headroom.
+        return str(history[-1].get("command", ""))[:250] or "ready"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return the rolling transcript and the most recent command/response."""
+        history = list(self.coordinator.cli_console_history)
+        last = history[-1] if history else None
+
+        transcript_lines = []
+        for entry in history:
+            cmd = entry.get("command", "")
+            rendered = _format_cli_response(entry.get("response"))
+            prefix = "ERROR" if entry.get("is_error") else ""
+            transcript_lines.append(f"> {cmd}")
+            if prefix:
+                transcript_lines.append(f"[{prefix}] {rendered}")
+            else:
+                transcript_lines.append(rendered)
+        transcript = "\n".join(transcript_lines)
+
+        return {
+            "history": history,
+            "transcript": transcript,
+            "last_command": last.get("command") if last else None,
+            "last_response": last.get("response") if last else None,
+            "last_is_error": last.get("is_error") if last else None,
+            "command_count": len(history),
+            "max_lines": CLI_CONSOLE_MAX_LINES,
         }
 
 

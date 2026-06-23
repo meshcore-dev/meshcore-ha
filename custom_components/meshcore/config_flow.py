@@ -61,6 +61,7 @@ from .const import (
     DEFAULT_SELF_TELEMETRY_INTERVAL,
     CONF_SELF_DIAGNOSTICS_ENABLED,
     CONF_SELF_DIAGNOSTICS_INTERVAL,
+    CONF_CLI_CONSOLE_ENABLED,
     DEFAULT_SELF_DIAGNOSTICS_INTERVAL,
     CONF_MAP_UPLOAD_ENABLED,
     CONF_AUTO_CLEANUP_STALE_CONTACTS,
@@ -930,6 +931,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             new_data[CONF_SELF_TELEMETRY_INTERVAL] = user_input[CONF_SELF_TELEMETRY_INTERVAL]
             new_data[CONF_SELF_DIAGNOSTICS_ENABLED] = user_input[CONF_SELF_DIAGNOSTICS_ENABLED]
             new_data[CONF_SELF_DIAGNOSTICS_INTERVAL] = user_input[CONF_SELF_DIAGNOSTICS_INTERVAL]
+            new_data[CONF_CLI_CONSOLE_ENABLED] = user_input[CONF_CLI_CONSOLE_ENABLED]
             new_data[CONF_MAP_UPLOAD_ENABLED] = user_input[CONF_MAP_UPLOAD_ENABLED]
             new_data[CONF_AUTO_CLEANUP_STALE_CONTACTS] = user_input[CONF_AUTO_CLEANUP_STALE_CONTACTS]
             new_data[CONF_STALE_CONTACT_DAYS] = user_input[CONF_STALE_CONTACT_DAYS]
@@ -955,6 +957,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         current_telemetry_interval = self.config_entry.data.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL)
         current_diagnostics_enabled = self.config_entry.data.get(CONF_SELF_DIAGNOSTICS_ENABLED, False)
         current_diagnostics_interval = self.config_entry.data.get(CONF_SELF_DIAGNOSTICS_INTERVAL, DEFAULT_SELF_DIAGNOSTICS_INTERVAL)
+        current_cli_console_enabled = self.config_entry.data.get(CONF_CLI_CONSOLE_ENABLED, False)
         current_map_upload_enabled = self.config_entry.data.get(CONF_MAP_UPLOAD_ENABLED, False)
         current_auto_cleanup = self.config_entry.data.get(CONF_AUTO_CLEANUP_STALE_CONTACTS, False)
         current_stale_days = self.config_entry.data.get(CONF_STALE_CONTACT_DAYS, DEFAULT_STALE_CONTACT_DAYS)
@@ -973,6 +976,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_SELF_TELEMETRY_INTERVAL, default=current_telemetry_interval): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
                 vol.Optional(CONF_SELF_DIAGNOSTICS_ENABLED, default=current_diagnostics_enabled): cv.boolean,
                 vol.Optional(CONF_SELF_DIAGNOSTICS_INTERVAL, default=current_diagnostics_interval): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
+                vol.Optional(CONF_CLI_CONSOLE_ENABLED, default=current_cli_console_enabled): cv.boolean,
                 vol.Optional(CONF_MAP_UPLOAD_ENABLED, default=current_map_upload_enabled): cv.boolean,
                 vol.Optional(CONF_AUTO_CLEANUP_STALE_CONTACTS, default=current_auto_cleanup): cv.boolean,
                 vol.Optional(CONF_STALE_CONTACT_DAYS, default=current_stale_days): vol.All(cv.positive_int, vol.Range(min=1, max=365)),
