@@ -46,6 +46,7 @@ from .const import (
     SERVICE_EXECUTE_COMMAND_UI,
     SERVICE_CLI_COMMAND,
     SERVICE_CLI_COMMAND_UI,
+    SERVICE_CLI_CLEAR,
     EVENT_CLI_RESPONSE,
     SERVICE_MESSAGE_SCRIPT,
     SERVICE_ADD_SELECTED_CONTACT,
@@ -1023,6 +1024,20 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
         return response
 
+    async def async_cli_clear_service(call: ServiceCall) -> None:
+        """Clear the CLI console transcript.
+
+        Clears the resolved coordinator when an entry_id is given, otherwise
+        clears every configured coordinator's console.
+        """
+        entry_id = call.data.get(ATTR_ENTRY_ID)
+        for config_entry_id, coordinator in hass.data[DOMAIN].items():
+            if not hasattr(coordinator, "clear_cli_console"):
+                continue
+            if entry_id and entry_id != config_entry_id:
+                continue
+            coordinator.clear_cli_console()
+
     # Register services
     hass.services.async_register(
         DOMAIN,
@@ -1072,6 +1087,13 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         async_cli_command_ui_service,
         schema=UI_MESSAGE_SCHEMA,
         supports_response=SupportsResponse.OPTIONAL,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CLI_CLEAR,
+        async_cli_clear_service,
+        schema=UI_MESSAGE_SCHEMA,
     )
 
     # Register the combined UI message service
@@ -1910,6 +1932,9 @@ async def async_unload_services(hass: HomeAssistant) -> None:
 
     if hass.services.has_service(DOMAIN, SERVICE_CLI_COMMAND_UI):
         hass.services.async_remove(DOMAIN, SERVICE_CLI_COMMAND_UI)
+
+    if hass.services.has_service(DOMAIN, SERVICE_CLI_CLEAR):
+        hass.services.async_remove(DOMAIN, SERVICE_CLI_CLEAR)
 
     if hass.services.has_service(DOMAIN, SERVICE_MESSAGE_SCRIPT):
         hass.services.async_remove(DOMAIN, SERVICE_MESSAGE_SCRIPT)

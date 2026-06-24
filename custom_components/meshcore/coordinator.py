@@ -291,6 +291,16 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             except Exception as ex:  # pragma: no cover - defensive
                 _LOGGER.debug("Failed to update CLI console sensor: %s", ex)
 
+    def clear_cli_console(self) -> None:
+        """Empty the CLI console transcript and refresh the sensor."""
+        self.cli_console_history.clear()
+        sensor = self.cli_console_sensor
+        if sensor is not None:
+            try:
+                sensor.async_write_ha_state()
+            except Exception as ex:  # pragma: no cover - defensive
+                _LOGGER.debug("Failed to update CLI console sensor: %s", ex)
+
     def mark_contact_dirty(self, pubkey_prefix: str):
         """Mark a contact as needing update (for performance optimization).
 

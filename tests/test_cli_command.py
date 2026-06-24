@@ -212,3 +212,15 @@ async def test_cli_command_ui_noop_on_empty_input():
 
     assert result is None
     coord.record_cli_console.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cli_clear_service_clears_console():
+    """cli_console_clear clears the resolved coordinator's transcript."""
+    coord = _build_coordinator("get_bat", _Event(_ET.MSG_SENT, {"x": 1}))
+    hass, registered = await _setup(coord)
+    handler = registered["async_cli_clear_service"][0]
+
+    await handler(MagicMock(data={ATTR_ENTRY_ID: None}))
+
+    coord.clear_cli_console.assert_called_once()

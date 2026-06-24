@@ -97,11 +97,13 @@ command directly on the dashboard. See the
 Enable it first under **Settings → Devices & Services → MeshCore → Configure →
 Global Settings → Enable CLI Console**. That creates a `sensor.*_cli_console`
 entity whose `transcript` attribute holds a rolling log of the commands you run
-and their responses. It records only command/response pairs — it does **not**
-stream the radio's continuous diagnostic/noise-floor output.
+and their responses (it records only command/response pairs — it does **not**
+stream the radio's continuous diagnostic/noise-floor output), plus two compact
+button entities on the device: **CLI Run Command** and **CLI Clear Console**.
 
-Use the `cli_command_ui` service (instead of `execute_command_ui`) so the
-output is captured, and render the transcript with a markdown card:
+The recommended card puts the input and the **button entities** in a single
+`entities` card (compact rows) so you don't get the oversized `button` *card*,
+then renders the transcript with a markdown card:
 
 ```yaml
 type: vertical-stack
@@ -109,13 +111,11 @@ cards:
   - type: entities
     entities:
       - entity: text.meshcore_command
-        name: MeshCore CLI
-  - type: button
-    name: Run Command
-    icon: mdi:console-line
-    tap_action:
-      action: perform-action
-      perform_action: meshcore.cli_command_ui
+        name: Command
+      - entity: button.YOUR_NODE_cli_run
+        name: Run
+      - entity: button.YOUR_NODE_cli_clear
+        name: Clear
   - type: markdown
     content: |
       ```
@@ -123,14 +123,25 @@ cards:
       ```
 ```
 
-The markdown `content` uses a literal block (`|`), not a folded one (`>-`) — a
-folded scalar collapses the newlines and renders the transcript on a single
-line. Use `perform_action`/`perform-action` on recent Home Assistant
-(`service`/`call-service` on older versions).
+Notes:
+- Replace `YOUR_NODE` with your node's prefix (e.g. `meshcore_49d715_…`) — find
+  the exact ids under the device's entities or in Developer Tools → States.
+- The markdown `content` uses a literal block (`|`), not a folded one (`>-`); a
+  folded scalar collapses the newlines and renders the transcript on one line.
+- Prefer the **button entities** over a `type: button` card — the button card
+  renders as a large full-width tile, while the entity rows are compact.
 
-Replace `sensor.YOUR_NODE_cli_console` with your node's actual entity id (find
-it under the device's entities). You can also call the service directly with a
-command, e.g. from an automation or script:
+### Placing it on the right / on the device page
+
+The auto-generated **device page** (Settings → Devices → your node) lists these
+entities automatically but isn't customizable — you can't add the markdown
+transcript card there or control left/right placement. For a controlled
+layout (e.g. console on the right), use a **dashboard** with a two-column
+[sections view](https://www.home-assistant.io/dashboards/sections/) or a
+`horizontal-stack`, and put the `vertical-stack` above in the right column.
+
+You can also call the services directly with a command, e.g. from an automation
+or script:
 
 ```yaml
 action: meshcore.cli_command

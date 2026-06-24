@@ -175,6 +175,19 @@ cli_command_ui:
       selector:
         text:
 
+cli_console_clear:
+  name: Clear CLI Console
+  description: >-
+    Clear the CLI Console transcript. With no entry_id, clears every configured device's console.
+  fields:
+    entry_id:
+      name: Config Entry ID
+      description: The config entry ID if you have multiple MeshCore devices. Leave empty to clear all.
+      required: false
+      example: "abc123def456"
+      selector:
+        text:
+
 add_selected_contact:
   name: Add Selected Contact
   description: Add the contact selected in the discovered contact select entity to your node's contact list.
