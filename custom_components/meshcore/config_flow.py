@@ -208,6 +208,54 @@ async def validate_tcp_input(hass: HomeAssistant, data: Dict[str, Any]) -> Dict[
     return await validate_common(api)
 
 
+async def _login_to_repeater(meshcore, contact, password, timeout: float = 20.0) -> str:
+    """Log in to a repeater and wait for an explicit outcome.
+
+    Returns "success", "rejected", or "timeout".
+
+    The SDK's send_login_sync only waits for LOGIN_SUCCESS within a tight
+    window (suggested_timeout / 800 — a few seconds), so a multi-hop or slow
+    repeater reply times out, and a rejected password (which the firmware
+    reports as a distinct LOGIN_FAILED frame) is indistinguishable from
+    no-response. This waits for BOTH LOGIN_SUCCESS and LOGIN_FAILED with more
+    headroom, so the caller can tell "password rejected" from "no response".
+    """
+    # Register the waiters before sending so a fast reply can't be missed.
+    success = asyncio.ensure_future(
+        meshcore.wait_for_event(EventType.LOGIN_SUCCESS, timeout=timeout)
+    )
+    failed = asyncio.ensure_future(
+        meshcore.wait_for_event(EventType.LOGIN_FAILED, timeout=timeout)
+    )
+    await asyncio.sleep(0)  # let the waiters subscribe before we transmit
+
+    try:
+        send = await meshcore.commands.send_login(contact, password)
+    except Exception as ex:
+        _LOGGER.error("Error sending login to repeater: %s", ex)
+        send = None
+
+    if send is None or getattr(send, "type", None) == EventType.ERROR:
+        for task in (success, failed):
+            task.cancel()
+        return "timeout"
+
+    try:
+        done, _pending = await asyncio.wait(
+            {success, failed}, return_when=asyncio.FIRST_COMPLETED
+        )
+    finally:
+        for task in (success, failed):
+            if not task.done():
+                task.cancel()
+
+    if success in done and not success.cancelled() and success.result():
+        return "success"
+    if failed in done and not failed.cancelled() and failed.result():
+        return "rejected"
+    return "timeout"
+
+
 class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: ignore
     """Handle a config flow for MeshCore."""
 
@@ -715,14 +763,19 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             errors["base"] = "Contact not found"
             return self._show_add_repeater_form(repeater_dict, errors, user_input)
             
-        # Try to login
-        result = await meshcore.commands.send_login_sync(contact, password)
-        if not result:
-            _LOGGER.error("Login to repeater failed or timed out")
-            errors["base"] = "Failed to log in to repeater. Check password and try again."
+        # Try to login. Distinguish a rejected password from no-response so the
+        # user gets an actionable message (and give a slow repeater reply room).
+        outcome = await _login_to_repeater(meshcore, contact, password)
+        if outcome == "rejected":
+            _LOGGER.error("Repeater rejected login (incorrect password)")
+            errors["base"] = "login_failed"
             return self._show_add_repeater_form(repeater_dict, errors, user_input)
-            
-            
+        if outcome != "success":
+            _LOGGER.error("No login response from repeater (timed out)")
+            errors["base"] = "login_timeout"
+            return self._show_add_repeater_form(repeater_dict, errors, user_input)
+
+
         # Login successful, now optionally check for version
         send_result = await meshcore.commands.send_cmd(contact, "ver")
         
