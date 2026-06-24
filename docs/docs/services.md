@@ -188,6 +188,9 @@ Settings → Enable CLI Console** to get the `sensor.*_cli_console` output entit
 The console records only command/response pairs — it does not stream the
 radio's continuous diagnostic/noise-floor log.
 
+> See the [CLI Command Reference](./cli-commands) for the full list of commands
+> and their arguments.
+
 **Service:** `meshcore.cli_command`
 
 **Fields:**

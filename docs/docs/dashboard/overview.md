@@ -91,7 +91,8 @@ cards:
 The `execute_command` / `execute_command_ui` services run a command but the
 response is only visible in Developer Tools or the logs. The **CLI Console**
 gives you an interactive terminal-style surface that shows the output of each
-command directly on the dashboard.
+command directly on the dashboard. See the
+[CLI Command Reference](../cli-commands) for what you can type.
 
 Enable it first under **Settings → Devices & Services → MeshCore → Configure →
 Global Settings → Enable CLI Console**. That creates a `sensor.*_cli_console`
@@ -109,21 +110,23 @@ cards:
     entities:
       - entity: text.meshcore_command
         name: MeshCore CLI
-  - show_name: true
-    show_icon: true
-    type: button
-    tap_action:
-      action: call-service
-      service: meshcore.cli_command_ui
+  - type: button
     name: Run Command
     icon: mdi:console-line
-    icon_height: 24px
+    tap_action:
+      action: perform-action
+      perform_action: meshcore.cli_command_ui
   - type: markdown
-    content: >-
+    content: |
       ```
       {{ state_attr('sensor.YOUR_NODE_cli_console', 'transcript') }}
       ```
 ```
+
+The markdown `content` uses a literal block (`|`), not a folded one (`>-`) — a
+folded scalar collapses the newlines and renders the transcript on a single
+line. Use `perform_action`/`perform-action` on recent Home Assistant
+(`service`/`call-service` on older versions).
 
 Replace `sensor.YOUR_NODE_cli_console` with your node's actual entity id (find
 it under the device's entities). You can also call the service directly with a
