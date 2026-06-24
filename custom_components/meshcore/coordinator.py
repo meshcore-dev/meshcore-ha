@@ -36,6 +36,7 @@ from .const import (
     REPEATER_BACKOFF_BASE,
     MAX_FAILURES_BEFORE_PATH_RESET,
     MAX_RANDOM_DELAY,
+    MESH_COMMAND_TIMEOUT,
     CONF_REPEATER_TELEMETRY_ENABLED,
     CONF_SELF_TELEMETRY_ENABLED,
     CONF_SELF_TELEMETRY_INTERVAL,
@@ -52,6 +53,7 @@ from .const import (
     RATE_LIMITER_REFILL_RATE_SECONDS,
     RX_LOG_CACHE_MAX_SIZE,
     RX_LOG_CACHE_TTL_SECONDS,
+    NEIGHBOR_FETCH_TIMEOUT,
     NEIGHBOR_PUBKEY_PREFIX_LENGTH,
     NEIGHBOR_STALE_THRESHOLD,
     SEEN_WINDOW_SECS,
@@ -803,7 +805,10 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             return False
             
         try:
-            result = await self.api.mesh_core.commands.reset_path(contact)
+            result = await asyncio.wait_for(
+                self.api.mesh_core.commands.reset_path(contact),
+                timeout=MESH_COMMAND_TIMEOUT,
+            )
             if result and result.type != EventType.ERROR:
                 self.logger.info(f"Successfully reset path for {node_name}")
                 return True
@@ -827,14 +832,25 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         return an awaitable. Returns ``(result, contact)`` — contact may be
         refreshed after a path reset.
         """
-        result = await command_factory(contact)
+        node_name = node_config.get("name", "unknown")
+
+        async def _bounded(c):
+            # Cap the call so a wedged link can't hang the whole poll task.
+            try:
+                return await asyncio.wait_for(command_factory(c), timeout=MESH_COMMAND_TIMEOUT)
+            except TimeoutError:
+                self.logger.warning(
+                    f"{label} for {node_name} exceeded {MESH_COMMAND_TIMEOUT}s; treating as no response"
+                )
+                return None
+
+        result = await _bounded(contact)
         # Only intervene when the request timed out AND a direct path exists to
         # clear. Once flooding (out_path_len == -1) there is nothing to reset, so
         # this never spins into a flood-spam loop.
         if result or not contact or contact.get("out_path_len", -1) <= -1:
             return result, contact
 
-        node_name = node_config.get("name", "unknown")
         self.logger.info(
             f"No response for {label} from {node_name}; resetting path to flood and retrying"
         )
@@ -844,7 +860,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         await asyncio.sleep(0.5)
         # Re-fetch the contact in case the path reset mutated the stored entry.
         contact = self.api.mesh_core.get_contact_by_key_prefix(pubkey_prefix) or contact
-        result = await command_factory(contact)
+        result = await _bounded(contact)
         return result, contact
 
     def update_telemetry_settings(self, config_entry: ConfigEntry) -> None:
@@ -902,9 +918,19 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 return
 
             self.logger.debug(f"Fetching neighbors for repeater {repeater_name} ({pubkey_prefix})")
-            result = await self.api.mesh_core.commands.fetch_all_neighbours(
-                contact, pubkey_prefix_length=NEIGHBOR_PUBKEY_PREFIX_LENGTH
-            )
+            try:
+                result = await asyncio.wait_for(
+                    self.api.mesh_core.commands.fetch_all_neighbours(
+                        contact, pubkey_prefix_length=NEIGHBOR_PUBKEY_PREFIX_LENGTH
+                    ),
+                    timeout=NEIGHBOR_FETCH_TIMEOUT,
+                )
+            except TimeoutError:
+                self.logger.warning(
+                    f"Neighbor fetch for {repeater_name} exceeded {NEIGHBOR_FETCH_TIMEOUT}s; "
+                    f"skipping this cycle"
+                )
+                return
 
             if not result or "neighbours" not in result:
                 self.logger.debug(f"No neighbor data returned for {repeater_name}")

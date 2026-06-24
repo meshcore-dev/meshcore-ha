@@ -11,13 +11,25 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 
-async def _call_with_path_recovery(coord, command_factory, contact, node_config, pubkey_prefix, label):
+async def _call_with_path_recovery(
+    coord, command_factory, contact, node_config, pubkey_prefix, label, timeout=0.05
+):
     """Standalone copy of the coordinator method for testability."""
-    result = await command_factory(contact)
+    node_name = node_config.get("name", "unknown")
+
+    async def _bounded(c):
+        try:
+            return await asyncio.wait_for(command_factory(c), timeout=timeout)
+        except TimeoutError:
+            coord.logger.warning(
+                f"{label} for {node_name} exceeded {timeout}s; treating as no response"
+            )
+            return None
+
+    result = await _bounded(contact)
     if result or not contact or contact.get("out_path_len", -1) <= -1:
         return result, contact
 
-    node_name = node_config.get("name", "unknown")
     coord.logger.info(
         f"No response for {label} from {node_name}; resetting path to flood and retrying"
     )
@@ -26,7 +38,7 @@ async def _call_with_path_recovery(coord, command_factory, contact, node_config,
 
     await asyncio.sleep(0)
     contact = coord.api.mesh_core.get_contact_by_key_prefix(pubkey_prefix) or contact
-    result = await command_factory(contact)
+    result = await _bounded(contact)
     return result, contact
 
 
@@ -121,6 +133,33 @@ async def test_missing_contact_returns_without_reset():
     assert result is None
     assert out_contact is None
     coord._reset_node_path.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_hanging_command_is_treated_as_no_response_and_recovers():
+    """A command that hangs past the timeout must be treated as no-response so a
+    wedged link can't freeze the poll task — it then triggers path recovery."""
+    refreshed = {"out_path_len": -1}
+    coord = _make_coordinator(reset_ok=True, refreshed_contact=refreshed)
+    contact = {"out_path_len": 5}
+
+    calls = {"n": 0}
+
+    async def factory(c):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            await asyncio.sleep(10)  # hang well past the timeout
+            return {"uptime": 1}
+        return {"uptime": 99}  # retry after path reset succeeds fast
+
+    result, out_contact = await _call_with_path_recovery(
+        coord, factory, contact, {"name": "rptr"}, "ab12", "status request", timeout=0.02
+    )
+
+    assert result == {"uptime": 99}
+    assert out_contact is refreshed
+    coord._reset_node_path.assert_awaited_once()
+    coord.logger.warning.assert_called()  # logged the timeout
 
 
 @pytest.mark.asyncio

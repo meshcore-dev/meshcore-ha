@@ -183,6 +183,14 @@ REPAIR_PUBKEY_CHANGED: Final = "pubkey_changed"
 # Other constants
 CONNECTION_TIMEOUT: Final = 10  # seconds
 
+# Hard upper bound (seconds) on a single mesh SDK command. The "_sync" SDK
+# commands have their own short internal timeouts, but a wedged BLE/serial link
+# can leave an await hanging indefinitely; without a cap that hangs the whole
+# repeater poll task, which the "still running, skipping" guard then skips every
+# tick forever. These caps turn a hang into an ordinary (recoverable) failure.
+MESH_COMMAND_TIMEOUT: Final = 60
+NEIGHBOR_FETCH_TIMEOUT: Final = 60  # fetch_all_neighbours can be slow with many neighbors
+
 # Rate limiter settings
 RATE_LIMITER_CAPACITY: Final = 20
 RATE_LIMITER_REFILL_RATE_SECONDS: Final = 120
