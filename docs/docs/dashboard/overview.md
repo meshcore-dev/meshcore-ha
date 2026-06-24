@@ -99,7 +99,12 @@ Global Settings → Enable CLI Console**. That creates a `sensor.*_cli_console`
 entity whose `transcript` attribute holds a rolling log of the commands you run
 and their responses (it records only command/response pairs — it does **not**
 stream the radio's continuous diagnostic/noise-floor output), plus two compact
-button entities on the device: **CLI Run Command** and **CLI Clear Console**.
+button entities: **CLI Run Command** and **CLI Clear Console**.
+
+These entities are intentionally **hidden by default and not shown on the device
+page** — the console only works as a dashboard card (a device page can't render
+the transcript), so you reference them by entity_id in the card below. Find the
+exact ids in Developer Tools → States (filter `cli`).
 
 The recommended card puts the input and the **button entities** in a single
 `entities` card (compact rows) so you don't get the oversized `button` *card*,
@@ -125,18 +130,17 @@ cards:
 
 Notes:
 - Replace `YOUR_NODE` with your node's prefix (e.g. `meshcore_49d715_…`) — find
-  the exact ids under the device's entities or in Developer Tools → States.
+  the exact ids in Developer Tools → States (filter `cli`).
 - The markdown `content` uses a literal block (`|`), not a folded one (`>-`); a
   folded scalar collapses the newlines and renders the transcript on one line.
 - Prefer the **button entities** over a `type: button` card — the button card
   renders as a large full-width tile, while the entity rows are compact.
 
-### Placing it on the right / on the device page
+### Placing it on the right
 
-The auto-generated **device page** (Settings → Devices → your node) lists these
-entities automatically but isn't customizable — you can't add the markdown
-transcript card there or control left/right placement. For a controlled
-layout (e.g. console on the right), use a **dashboard** with a two-column
+The console lives on a **dashboard**, not the auto-generated device page (a
+device page can't render the transcript card or control placement). For a
+console on the right, use a two-column
 [sections view](https://www.home-assistant.io/dashboards/sections/) or a
 `horizontal-stack`, and put the `vertical-stack` above in the right column.
 

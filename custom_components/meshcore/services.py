@@ -165,6 +165,33 @@ def _resolve_contact(arg: str, command_name: str, api: Any, coordinator: Any) ->
     return contact
 
 
+def _contact_error(arg: str, command_name: str, api: Any) -> dict:
+    """Build a clear, structured error for a failed contact lookup.
+
+    Returned as the command response (instead of a silent None) so the CLI
+    Console / execute_command caller sees *why* a contact-typed argument
+    failed rather than a vague "(no response)".
+    """
+    if len(arg) < 6:
+        detail = (
+            f"'{arg}' is too short — use at least 6 hex characters of the "
+            "contact's public key, or its exact name"
+        )
+        reason = "pubkey_prefix_too_short"
+    elif not api or not api.mesh_core:
+        detail = "device not connected"
+        reason = "not_connected"
+    else:
+        detail = f"no contact matches '{arg}' by key prefix or name"
+        reason = "contact_not_found"
+    return {
+        "error": reason,
+        "command": command_name,
+        "argument": arg,
+        "detail": detail,
+    }
+
+
 def _node_has_tracked_subscription(coordinator, pubkey_prefix: str) -> bool:
     """True when the node has a repeater/client tracking subscription.
 
@@ -632,7 +659,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                             if ptype == "contact":
                                 contact = _resolve_contact(str(val), command_name, api, coordinator)
                                 if contact is None:
-                                    return
+                                    return _contact_error(str(val), command_name, api)
                                 prepared_args.append(contact)
                             else:
                                 prepared_args.append(val)
@@ -641,13 +668,14 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                             for kw_name, kw_val in kw_literals.items():
                                 if kw_name not in sig_params:
                                     _LOGGER.error("Unknown keyword '%s' for command '%s'", kw_name, command_name)
-                                    return
+                                    return {"error": "unknown_keyword", "command": command_name, "argument": kw_name}
                                 idx = sig_params.index(kw_name)
                                 ptype = param_types[idx] if idx < len(param_types) else None
                                 if ptype == "contact":
-                                    kw_val = _resolve_contact(str(kw_val), command_name, api, coordinator)
+                                    original_kw = str(kw_val)
+                                    kw_val = _resolve_contact(original_kw, command_name, api, coordinator)
                                     if kw_val is None:
-                                        return
+                                        return _contact_error(original_kw, command_name, api)
                                 prepared_kwargs[kw_name] = kw_val
                     else:
                         # Space-separated format: convert string arguments by declared type
@@ -656,7 +684,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                             if param_type == "contact":
                                 contact = _resolve_contact(arg, command_name, api, coordinator)
                                 if contact is None:
-                                    return
+                                    return _contact_error(arg, command_name, api)
                                 prepared_args.append(contact)
                             elif param_type == "int":
                                 try:

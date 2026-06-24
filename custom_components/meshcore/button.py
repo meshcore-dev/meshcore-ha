@@ -11,7 +11,6 @@ import logging
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -42,19 +41,21 @@ async def async_setup_entry(
 
 
 class _MeshCoreCLIButton(CoordinatorEntity, ButtonEntity):
-    """Shared base for CLI Console buttons (attached to the companion device)."""
+    """Shared base for CLI Console buttons.
+
+    Deliberately NOT attached to the companion device and hidden by default:
+    the console only works as a dashboard card (the device page can't render the
+    transcript), so surfacing these on the device page would be misleading.
+    They're used by referencing their entity_id in the CLI Console card.
+    """
 
     _attr_has_entity_name = True
     _attr_should_poll = False
+    _attr_entity_registry_visible_default = False
 
     def __init__(self, coordinator) -> None:
         super().__init__(coordinator)
         self.coordinator = coordinator
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Attach to the main companion device so it shows on the device page."""
-        return DeviceInfo(**self.coordinator.device_info)
 
 
 class MeshCoreCLIRunButton(_MeshCoreCLIButton):

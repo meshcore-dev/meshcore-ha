@@ -1374,8 +1374,13 @@ class MeshCoreCLIConsoleSensor(CoordinatorEntity, SensorEntity):
     streams LOG_DATA / RX_LOG packet noise.
     """
 
+    # Not attached to the companion device and hidden by default: the console
+    # only works as a dashboard card (a device page can't render the transcript),
+    # so surfacing it on the device page would be misleading. The CLI Console
+    # card references this entity by entity_id.
     _attr_has_entity_name = True
     _attr_should_poll = False
+    _attr_entity_registry_visible_default = False
     _attr_icon = "mdi:console"
     _attr_name = "CLI Console"
 
@@ -1400,11 +1405,6 @@ class MeshCoreCLIConsoleSensor(CoordinatorEntity, SensorEntity):
         if self.coordinator.cli_console_sensor is self:
             self.coordinator.cli_console_sensor = None
         await super().async_will_remove_from_hass()
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device info (attach to the main companion device)."""
-        return DeviceInfo(**self.coordinator.device_info)
 
     @property
     def native_value(self) -> str:
