@@ -32,6 +32,18 @@ MeshCoreAPI = _module.MeshCoreAPI
 # the same objects production code compares against.
 CONNECTION_TYPE_BLE = _module.CONNECTION_TYPE_BLE
 
+# The pairing-agent module has no package-relative imports, so it can be loaded
+# standalone (dbus_fast is imported lazily inside register_pairing_agent).
+_AGENT_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)),
+    "custom_components", "meshcore", "ble_pairing_agent.py",
+)
+_agent_spec = importlib.util.spec_from_file_location(
+    "custom_components.meshcore.ble_pairing_agent", _AGENT_PATH
+)
+_agent_module = importlib.util.module_from_spec(_agent_spec)
+_agent_spec.loader.exec_module(_agent_module)
+
 
 def _make_api(ble_pin):
     return MeshCoreAPI(
@@ -105,3 +117,12 @@ async def test_connect_forwards_none_pin_when_unset():
     assert ok is True
     _, kwargs = _module.MeshCore.create_ble.call_args
     assert kwargs.get("pin") is None
+
+
+# ─── Pairing agent graceful fallback ───────────────────────────────────
+@pytest.mark.asyncio
+async def test_register_pairing_agent_returns_none_without_dbus():
+    # dbus_fast is not installed in the test venv, so registration must fail
+    # softly and return None rather than raising.
+    result = await _agent_module.register_pairing_agent("123456")
+    assert result is None
