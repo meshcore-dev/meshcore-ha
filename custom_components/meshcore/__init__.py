@@ -30,6 +30,7 @@ from .const import (
     CONF_NAME,
     CONF_USB_PATH,
     CONF_BLE_ADDRESS,
+    CONF_BLE_PIN,
     CONF_TCP_HOST,
     CONF_TCP_PORT,
     CONF_BAUDRATE,
@@ -350,6 +351,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         api_kwargs["baudrate"] = entry.data[CONF_BAUDRATE]
     if CONF_BLE_ADDRESS in entry.data:
         api_kwargs["ble_address"] = entry.data[CONF_BLE_ADDRESS]
+    if CONF_BLE_PIN in entry.data:
+        api_kwargs["ble_pin"] = entry.data[CONF_BLE_PIN]
     if CONF_TCP_HOST in entry.data:
         api_kwargs["tcp_host"] = entry.data[CONF_TCP_HOST]
     if CONF_TCP_PORT in entry.data:

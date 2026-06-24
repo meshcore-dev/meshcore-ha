@@ -31,6 +31,7 @@ class MeshCoreAPI:
         usb_path: Optional[str] = None,
         baudrate: int = DEFAULT_BAUDRATE,
         ble_address: Optional[str] = None,
+        ble_pin: Optional[str] = None,
         tcp_host: Optional[str] = None,
         tcp_port: int = DEFAULT_TCP_PORT,
     ) -> None:
@@ -40,6 +41,10 @@ class MeshCoreAPI:
         self.usb_path = usb_path
         self.baudrate = baudrate
         self.ble_address = ble_address
+        # Normalize blank/whitespace PIN to None so the SDK skips pairing
+        # (it only pairs when pin is not None). Radios with no PIN set must
+        # not trigger a pairing attempt with an empty passkey.
+        self.ble_pin = (str(ble_pin).strip() or None) if ble_pin is not None else None
         self.tcp_host = tcp_host
         self.tcp_port = tcp_port
         
@@ -115,12 +120,17 @@ class MeshCoreAPI:
                 )
                 
             elif self.connection_type == CONNECTION_TYPE_BLE:
-                _LOGGER.info(f"Using BLE connection with address {self.ble_address}")
+                _LOGGER.info(
+                    "Using BLE connection with address %s (pairing %s)",
+                    self.ble_address,
+                    "with PIN" if self.ble_pin else "without PIN",
+                )
                 self._mesh_core = await MeshCore.create_ble(
-                    self.ble_address if self.ble_address else "", 
+                    self.ble_address if self.ble_address else "",
                     debug=False,
                     auto_reconnect=True,
-                    max_reconnect_attempts=100
+                    max_reconnect_attempts=100,
+                    pin=self.ble_pin,
                 )
                 
             elif self.connection_type == CONNECTION_TYPE_TCP and self.tcp_host:

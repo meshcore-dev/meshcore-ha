@@ -25,6 +25,7 @@ from .const import (
     CONF_CONNECTION_TYPE,
     CONF_USB_PATH,
     CONF_BLE_ADDRESS,
+    CONF_BLE_PIN,
     CONF_TCP_HOST,
     CONF_TCP_PORT,
     CONF_BAUDRATE,
@@ -193,7 +194,8 @@ async def validate_ble_input(hass: HomeAssistant, data: Dict[str, Any]) -> Dict[
         hass=hass,
         connection_type=CONNECTION_TYPE_BLE,
         ble_address=data[CONF_BLE_ADDRESS],
-    ) 
+        ble_pin=data.get(CONF_BLE_PIN),
+    )
     return await validate_common(api)
 
 
@@ -248,7 +250,7 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
         entry = self._get_reconfigure_entry()
         new_data = dict(entry.data)
         # Remove old connection-specific keys
-        for key in (CONF_USB_PATH, CONF_BAUDRATE, CONF_BLE_ADDRESS, CONF_TCP_HOST, CONF_TCP_PORT):
+        for key in (CONF_USB_PATH, CONF_BAUDRATE, CONF_BLE_ADDRESS, CONF_BLE_PIN, CONF_TCP_HOST, CONF_TCP_PORT):
             new_data.pop(key, None)
         new_data.update(connection_data)
         new_data[CONF_NAME] = info.get("name", new_data.get(CONF_NAME))
@@ -297,6 +299,7 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                 return await self._reconfigure_save({
                     CONF_CONNECTION_TYPE: CONNECTION_TYPE_BLE,
                     CONF_BLE_ADDRESS: user_input[CONF_BLE_ADDRESS],
+                    CONF_BLE_PIN: user_input.get(CONF_BLE_PIN, ""),
                 }, info)
             except CannotConnect:
                 errors["base"] = "cannot_connect"
@@ -305,6 +308,7 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                 errors["base"] = "unknown"
 
         current_addr = entry.data.get(CONF_BLE_ADDRESS, "")
+        current_pin = entry.data.get(CONF_BLE_PIN, "")
         devices = {}
         try:
             scanner = BleakScanner()
@@ -316,9 +320,15 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
             _LOGGER.warning("Failed to scan for BLE devices: %s", ex)
 
         if devices:
-            schema = vol.Schema({vol.Required(CONF_BLE_ADDRESS): vol.In(devices)})
+            schema = vol.Schema({
+                vol.Required(CONF_BLE_ADDRESS): vol.In(devices),
+                vol.Optional(CONF_BLE_PIN, default=current_pin): str,
+            })
         else:
-            schema = vol.Schema({vol.Required(CONF_BLE_ADDRESS, default=current_addr): str})
+            schema = vol.Schema({
+                vol.Required(CONF_BLE_ADDRESS, default=current_addr): str,
+                vol.Optional(CONF_BLE_PIN, default=current_pin): str,
+            })
 
         return self.async_show_form(
             step_id="reconfigure_ble", data_schema=schema, errors=errors,
@@ -426,6 +436,7 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                 return self.async_create_entry(title=info["title"], data={
                     CONF_CONNECTION_TYPE: CONNECTION_TYPE_BLE,
                     CONF_BLE_ADDRESS: user_input[CONF_BLE_ADDRESS],
+                    CONF_BLE_PIN: user_input.get(CONF_BLE_PIN, ""),
                     CONF_SELF_TELEMETRY_ENABLED: user_input.get(CONF_SELF_TELEMETRY_ENABLED, False),
                     CONF_SELF_TELEMETRY_INTERVAL: user_input.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL),
                     CONF_SELF_DIAGNOSTICS_ENABLED: user_input.get(CONF_SELF_DIAGNOSTICS_ENABLED, False),
@@ -459,6 +470,7 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
             schema = vol.Schema(
                 {
                     vol.Required(CONF_BLE_ADDRESS): vol.In(devices),
+                    vol.Optional(CONF_BLE_PIN, default=""): str,
                     vol.Optional(CONF_SELF_TELEMETRY_ENABLED, default=False): cv.boolean,
                     vol.Optional(CONF_SELF_TELEMETRY_INTERVAL, default=DEFAULT_SELF_TELEMETRY_INTERVAL): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
                     vol.Optional(CONF_SELF_DIAGNOSTICS_ENABLED, default=False): cv.boolean,
@@ -470,6 +482,7 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
             # Otherwise, allow manual entry, but with simplified schema
             schema = vol.Schema({
                 vol.Required(CONF_BLE_ADDRESS): str,
+                vol.Optional(CONF_BLE_PIN, default=""): str,
                 vol.Optional(CONF_SELF_TELEMETRY_ENABLED, default=False): cv.boolean,
                 vol.Optional(CONF_SELF_TELEMETRY_INTERVAL, default=DEFAULT_SELF_TELEMETRY_INTERVAL): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
                 vol.Optional(CONF_SELF_DIAGNOSTICS_ENABLED, default=False): cv.boolean,
