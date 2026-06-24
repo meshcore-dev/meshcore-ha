@@ -85,6 +85,20 @@ def _id(node_type, pubkey):
     return f"{ENTRY_ID}_{node_type}_{pubkey}"
 
 
+@pytest.fixture(autouse=True)
+def _default_device_has_entities():
+    """Default every test to the populated-device path.
+
+    Change A allows removing a device that has no entities, keyed off
+    er.async_entries_for_device. The existing refusal/orphan tests must run with
+    a device that still HAS entities so they exercise PR #247's populated-device
+    guards (the empty-device allowance is only reached when that list is empty).
+    Individual empty-device tests override the return value to [].
+    """
+    MOD.er.async_entries_for_device.return_value = [MagicMock()]
+    yield
+
+
 @pytest.mark.asyncio
 async def test_hub_device_refused():
     hass = _make_hass()
@@ -180,3 +194,36 @@ async def test_missing_coordinator_orphan_contact_allowed():
     entry = _make_config_entry()
     device = _make_device(_id("contact", CONTACT_PREFIX))
     assert await remove(hass, entry, device) is True
+
+
+@pytest.mark.asyncio
+async def test_empty_contact_device_allowed():
+    """An emptied discovered-contact device is removable even while the contact
+    is live in the mesh (the reported 'Node fe3af5' case): no entities -> allow."""
+    MOD.er.async_entries_for_device.return_value = []
+    hass = _make_hass(contacts=[{"pubkey_prefix": CONTACT_PREFIX}])
+    entry = _make_config_entry()
+    device = _make_device(_id("contact", CONTACT_PREFIX))
+    assert await remove(hass, entry, device) is True
+
+
+@pytest.mark.asyncio
+async def test_empty_device_hub_still_refused():
+    """The hub device is excluded from the empty-device allowance: it stays
+    non-removable even with no entities."""
+    MOD.er.async_entries_for_device.return_value = []
+    hass = _make_hass()
+    entry = _make_config_entry()
+    device = _make_device(ENTRY_ID)  # identifier == entry_id
+    assert await remove(hass, entry, device) is False
+
+
+@pytest.mark.asyncio
+async def test_populated_live_contact_refused():
+    """A live contact whose device still has entities stays refused -- awolden's
+    PR #247 guard is preserved for populated devices."""
+    MOD.er.async_entries_for_device.return_value = [MagicMock()]
+    hass = _make_hass(contacts=[{"pubkey_prefix": CONTACT_PREFIX}])
+    entry = _make_config_entry()
+    device = _make_device(_id("contact", CONTACT_PREFIX))
+    assert await remove(hass, entry, device) is False

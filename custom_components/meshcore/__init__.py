@@ -823,6 +823,20 @@ async def async_remove_config_entry_device(
     (devices whose pubkey_prefix is no longer in the configured lists).
     """
     entry_id = config_entry.entry_id
+
+    # Allow removing a device that has no entities left. An empty device
+    # shell is no longer being populated, so deletion is safe -- this covers
+    # a device whose entities the user has already removed (e.g. a discovered
+    # contact's telemetry sensor). The hub device (identifier == entry_id) is
+    # excluded: it is never user-removable even when empty.
+    meshcore_identifiers = {i for d, i in device_entry.identifiers if d == DOMAIN}
+    if entry_id not in meshcore_identifiers:
+        entity_registry = er.async_get(hass)
+        if not er.async_entries_for_device(
+            entity_registry, device_entry.id, include_disabled_entities=True
+        ):
+            return True
+
     repeater_prefixes = {
         r.get("pubkey_prefix")
         for r in config_entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, [])

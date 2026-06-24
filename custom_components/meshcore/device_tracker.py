@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime
+from functools import partial
 from typing import Any, Dict
 from meshcore import EventType
 from meshcore.events import Event
@@ -92,6 +93,9 @@ class DeviceTrackerManager:
                 self.coordinator, pubkey_prefix, node_info
             )
             self.discovered_trackers[tracker_key] = tracker
+            tracker.async_on_remove(
+                partial(self.discovered_trackers.pop, tracker_key, None)
+            )
             self.async_add_entities([tracker])
             _LOGGER.info(f"Discovered new GPS tracker: {tracker.name} ({tracker_key})")
         else:
