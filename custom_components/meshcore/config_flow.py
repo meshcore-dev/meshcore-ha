@@ -208,10 +208,8 @@ async def validate_tcp_input(hass: HomeAssistant, data: Dict[str, Any]) -> Dict[
     return await validate_common(api)
 
 
-async def _login_to_repeater(meshcore, contact, password, timeout: float = 20.0) -> str:
-    """Log in to a repeater and wait for an explicit outcome.
-
-    Returns "success", "rejected", or "timeout".
+async def _attempt_login(meshcore, contact, password, timeout: float) -> str:
+    """Single login attempt. Returns "success", "rejected", or "timeout".
 
     The SDK's send_login_sync only waits for LOGIN_SUCCESS within a tight
     window (suggested_timeout / 800 — a few seconds), so a multi-hop or slow
@@ -254,6 +252,31 @@ async def _login_to_repeater(meshcore, contact, password, timeout: float = 20.0)
     if failed in done and not failed.cancelled() and failed.result():
         return "rejected"
     return "timeout"
+
+
+async def _login_to_repeater(meshcore, contact, password) -> str:
+    """Log in to a repeater, recovering from a stale path on timeout.
+
+    A direct login over a stale stored path gets no reply and times out (the
+    repeater never receives it). Mirror the manual fix — reset the path so the
+    next attempt floods — and retry once. A password rejection (LOGIN_FAILED)
+    is returned immediately without resetting the path. Returns "success",
+    "rejected", or "timeout".
+    """
+    outcome = await _attempt_login(meshcore, contact, password, timeout=12.0)
+    if outcome != "timeout":
+        return outcome
+
+    # No reply — the stored path is likely stale. Reset it (forces flood) and
+    # retry once with more headroom for the multi-hop flood round trip.
+    _LOGGER.info("Login timed out; resetting repeater path to flood and retrying")
+    try:
+        await meshcore.commands.reset_path(contact)
+        await asyncio.sleep(0.5)
+    except Exception as ex:
+        _LOGGER.debug("Path reset before login retry failed: %s", ex)
+
+    return await _attempt_login(meshcore, contact, password, timeout=20.0)
 
 
 class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: ignore

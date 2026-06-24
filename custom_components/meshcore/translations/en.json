@@ -9,7 +9,7 @@
       "already_configured": "Repeater is already configured",
       "client_already_tracked": "Client is already being tracked",
       "login_failed": "The repeater rejected the password. Check it and try again.",
-      "login_timeout": "No response from the repeater (timed out). The password was not rejected — the repeater may be busy or temporarily unreachable. Try again.",
+      "login_timeout": "No response from the repeater, even after resetting the path to flood. The password was not rejected — the repeater may be offline or out of range. Try again.",
       "contact_not_found": "Contact not found",
       "no_repeaters_found": "No repeaters found. Refresh contacts first.",
       "no_clients_found": "No clients found. Refresh contacts first.",
