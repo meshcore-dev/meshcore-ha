@@ -248,7 +248,22 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                         # service call returns immediately after sending.
                         send_id = uuid.uuid4().hex[:8]
 
-                        async def _wait_for_ack_and_notify():
+                        # Bind every loop-scoped value this background task reads
+                        # by value at task-creation time. Without this, the deferred
+                        # task reads the loop variables when it *executes* (~0.5-1s
+                        # later, after the ACK), by which point the
+                        # ``for config_entry_id, ...`` loop may have advanced past
+                        # the sending coordinator to a trailing non-coordinator key,
+                        # corrupting ``device``.
+                        async def _wait_for_ack_and_notify(
+                            sender_entry_id=config_entry_id,
+                            api=api,
+                            result=result,
+                            contact=contact,
+                            pubkey=pubkey,
+                            display_name=display_name,
+                            send_id=send_id,
+                        ):
                             """Background: wait for ACK then fire delivery event."""
                             ack_received = False
                             try:
@@ -276,7 +291,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
                             outgoing_msg = {
                                 "message": message,
-                                "device": config_entry_id,
+                                "device": sender_entry_id,
                                 "message_type": "direct",
                                 "receiver": contact.get("adv_name") or contact.get("name"),
                                 "timestamp": int(time.time()),
@@ -286,7 +301,12 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                             }
                             hass.bus.async_fire(f"{DOMAIN}_message_sent", outgoing_msg)
 
-                        asyncio.create_task(_wait_for_ack_and_notify())
+                        # Retain the task reference (HA-native; ties it to the event
+                        # loop so it cannot be GC'd before the ACK resolves).
+                        hass.async_create_background_task(
+                            _wait_for_ack_and_notify(),
+                            name=f"{DOMAIN}_ack_{send_id}",
+                        )
                 except Exception as ex:
                     _LOGGER.error(
                         "Error sending message to %s: %s", target_identifier, ex

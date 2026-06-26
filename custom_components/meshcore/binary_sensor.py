@@ -347,6 +347,11 @@ async def async_setup_entry(
         so the filter has authoritative source data.
         """
         if event.data.get("device") != entry.entry_id:
+            _LOGGER.debug(
+                "Ignoring message_sent for device %s (not %s)",
+                event.data.get("device"),
+                entry.entry_id,
+            )
             return
         if event.data.get("message_type") == "direct":
             # Handle outgoing direct message
