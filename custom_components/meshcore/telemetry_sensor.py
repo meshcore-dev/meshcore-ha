@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime
+from functools import partial
 from typing import Any, Dict
 
 from custom_components.meshcore import MeshCoreDataUpdateCoordinator
@@ -248,6 +249,9 @@ class TelemetrySensorManager:
                 )
                 if sensor_key not in self.discovered_sensors:
                     self.discovered_sensors[sensor_key] = sensor
+                    sensor.async_on_remove(
+                        partial(self.discovered_sensors.pop, sensor_key, None)
+                    )
                     new_sensors.append(sensor)
                     _LOGGER.info(
                         f"Discovered new telemetry sensor: {sensor.name} ({sensor_key})"
