@@ -237,3 +237,28 @@ async def test_empty_event_payload_returns_none():
     result = await handler(_call("reboot"))
 
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_short_pubkey_prefix_returns_clear_error():
+    """A too-short contact prefix returns a structured error, not silent None."""
+    coord = _build_coordinator("req_status_sync", return_value=None, contact=None)
+    handler = await _get_execute_handler(coord)
+
+    result = await handler(_call("req_status_sync ae6d"))
+
+    assert result["error"] == "pubkey_prefix_too_short"
+    assert result["argument"] == "ae6d"
+    assert result["command"] == "req_status_sync"
+
+
+@pytest.mark.asyncio
+async def test_unknown_contact_returns_clear_error():
+    """An unresolvable contact returns contact_not_found, not silent None."""
+    coord = _build_coordinator("req_status_sync", return_value=None, contact=None)
+    handler = await _get_execute_handler(coord)
+
+    result = await handler(_call("req_status_sync deadbeefcafe"))
+
+    assert result["error"] == "contact_not_found"
+    assert result["argument"] == "deadbeefcafe"

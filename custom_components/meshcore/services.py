@@ -44,6 +44,10 @@ from .const import (
     SERVICE_SEND_CHANNEL_MESSAGE,
     SERVICE_EXECUTE_COMMAND,
     SERVICE_EXECUTE_COMMAND_UI,
+    SERVICE_CLI_COMMAND,
+    SERVICE_CLI_COMMAND_UI,
+    SERVICE_CLI_CLEAR,
+    EVENT_CLI_RESPONSE,
     SERVICE_MESSAGE_SCRIPT,
     SERVICE_ADD_SELECTED_CONTACT,
     SERVICE_REMOVE_SELECTED_CONTACT,
@@ -159,6 +163,33 @@ def _resolve_contact(arg: str, command_name: str, api: Any, coordinator: Any) ->
     if contact:
         return _ensure_contact_compat(contact)
     return contact
+
+
+def _contact_error(arg: str, command_name: str, api: Any) -> dict:
+    """Build a clear, structured error for a failed contact lookup.
+
+    Returned as the command response (instead of a silent None) so the CLI
+    Console / execute_command caller sees *why* a contact-typed argument
+    failed rather than a vague "(no response)".
+    """
+    if len(arg) < 6:
+        detail = (
+            f"'{arg}' is too short — use at least 6 hex characters of the "
+            "contact's public key, or its exact name"
+        )
+        reason = "pubkey_prefix_too_short"
+    elif not api or not api.mesh_core:
+        detail = "device not connected"
+        reason = "not_connected"
+    else:
+        detail = f"no contact matches '{arg}' by key prefix or name"
+        reason = "contact_not_found"
+    return {
+        "error": reason,
+        "command": command_name,
+        "argument": arg,
+        "detail": detail,
+    }
 
 
 def _node_has_tracked_subscription(coordinator, pubkey_prefix: str) -> bool:
@@ -648,7 +679,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                             if ptype == "contact":
                                 contact = _resolve_contact(str(val), command_name, api, coordinator)
                                 if contact is None:
-                                    return
+                                    return _contact_error(str(val), command_name, api)
                                 prepared_args.append(contact)
                             else:
                                 prepared_args.append(val)
@@ -657,13 +688,14 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                             for kw_name, kw_val in kw_literals.items():
                                 if kw_name not in sig_params:
                                     _LOGGER.error("Unknown keyword '%s' for command '%s'", kw_name, command_name)
-                                    return
+                                    return {"error": "unknown_keyword", "command": command_name, "argument": kw_name}
                                 idx = sig_params.index(kw_name)
                                 ptype = param_types[idx] if idx < len(param_types) else None
                                 if ptype == "contact":
-                                    kw_val = _resolve_contact(str(kw_val), command_name, api, coordinator)
+                                    original_kw = str(kw_val)
+                                    kw_val = _resolve_contact(original_kw, command_name, api, coordinator)
                                     if kw_val is None:
-                                        return
+                                        return _contact_error(original_kw, command_name, api)
                                 prepared_kwargs[kw_name] = kw_val
                     else:
                         # Space-separated format: convert string arguments by declared type
@@ -672,7 +704,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                             if param_type == "contact":
                                 contact = _resolve_contact(arg, command_name, api, coordinator)
                                 if contact is None:
-                                    return
+                                    return _contact_error(arg, command_name, api)
                                 prepared_args.append(contact)
                             elif param_type == "int":
                                 try:
@@ -941,13 +973,118 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         # Clear the command input after execution
         try:
             await hass.services.async_call(
-                "text", 
-                "set_value", 
+                "text",
+                "set_value",
                 {"entity_id": "text.meshcore_command", "value": ""},
                 blocking=False
             )
         except Exception as ex:
             _LOGGER.warning(f"Could not clear command input: {ex}")
+
+    def _resolve_console_coordinator(entry_id: "str | None") -> Any:
+        """Pick the coordinator a CLI console command should record against.
+
+        Mirrors execute_command's target selection: the entry_id coordinator
+        when specified, otherwise the first connected one. Returns None when no
+        suitable coordinator is found.
+        """
+        first_connected = None
+        for config_entry_id, coordinator in hass.data[DOMAIN].items():
+            if not hasattr(coordinator, "api"):
+                continue
+            if entry_id and entry_id != config_entry_id:
+                continue
+            if entry_id:
+                return coordinator
+            api = coordinator.api
+            if first_connected is None and api and api.connected:
+                first_connected = coordinator
+        return first_connected
+
+    async def async_cli_command_service(call: ServiceCall):
+        """Run a CLI command and record its output to the console transcript.
+
+        Thin wrapper over execute_command: it reuses the exact command parsing
+        and execution path, then records the command/response pair to the
+        console sensor (when CONF_CLI_CONSOLE_ENABLED) and fires the
+        EVENT_CLI_RESPONSE event so the result is visible in the UI and
+        available to automations. Returns the same response as execute_command.
+        """
+        command_str = call.data[ATTR_COMMAND]
+        entry_id = call.data.get(ATTR_ENTRY_ID)
+
+        response = await async_execute_command_service(call)
+
+        # execute_command returns None on total failure (no connected device /
+        # unknown command) and an {"error": ...} dict for explicit no-response.
+        is_error = response is None or (
+            isinstance(response, dict) and "error" in response
+        )
+
+        coordinator = _resolve_console_coordinator(entry_id)
+        if coordinator is not None:
+            coordinator.record_cli_console(command_str, response, is_error)
+
+        hass.bus.async_fire(EVENT_CLI_RESPONSE, {
+            "command": command_str,
+            "response": response,
+            "is_error": is_error,
+            "entry_id": entry_id,
+            "timestamp": int(time.time()),
+        })
+
+        return response
+
+    async def async_cli_command_ui_service(call: ServiceCall):
+        """Run the command from text.meshcore_command via the CLI console.
+
+        Like execute_command_ui, but routes through cli_command so the response
+        is captured in the console transcript instead of being discarded. The
+        command input is cleared after execution.
+        """
+        entry_id = call.data.get(ATTR_ENTRY_ID)
+
+        command_entity = hass.states.get("text.meshcore_command")
+        if not command_entity:
+            _LOGGER.error("Command input helper not found: text.meshcore_command")
+            return
+        command = command_entity.state
+        if not command:
+            _LOGGER.warning("No command to execute - command input is empty")
+            return
+
+        command_call = create_service_call(
+            DOMAIN,
+            SERVICE_CLI_COMMAND,
+            {"command": command, "entry_id": entry_id},
+        )
+        response = await async_cli_command_service(command_call)
+
+        try:
+            await hass.services.async_call(
+                "text",
+                "set_value",
+                {"entity_id": "text.meshcore_command", "value": ""},
+                blocking=False,
+            )
+        except Exception as ex:
+            _LOGGER.warning(f"Could not clear command input: {ex}")
+
+        return response
+
+    async def async_cli_clear_service(call: ServiceCall) -> None:
+        """Clear the CLI console transcript.
+
+        Clears the resolved coordinator when an entry_id is given, otherwise
+        clears every configured coordinator's console.
+        """
+        entry_id = call.data.get(ATTR_ENTRY_ID)
+        for config_entry_id, coordinator in hass.data[DOMAIN].items():
+            if not hasattr(coordinator, "clear_cli_console"):
+                continue
+            if entry_id and entry_id != config_entry_id:
+                continue
+            coordinator.clear_cli_console()
 
     # Register services
     hass.services.async_register(
@@ -980,13 +1117,33 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         schema=UI_MESSAGE_SCHEMA,
     )
     
-    # hass.services.async_register(
-    #     DOMAIN,
-    #     SERVICE_CLI_COMMAND,
-    #     async_cli_command_service,
-    #     schema=CLI_COMMAND_SCHEMA,
-    # )
-    
+    # Register the CLI console services. cli_command mirrors execute_command
+    # but records the command/response pair into the CLI console transcript
+    # sensor so the output is visible in the UI; cli_command_ui drives it from
+    # the text.meshcore_command input helper.
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CLI_COMMAND,
+        async_cli_command_service,
+        schema=EXECUTE_COMMAND_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CLI_COMMAND_UI,
+        async_cli_command_ui_service,
+        schema=UI_MESSAGE_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CLI_CLEAR,
+        async_cli_clear_service,
+        schema=UI_MESSAGE_SCHEMA,
+    )
+
     # Register the combined UI message service
     hass.services.async_register(
         DOMAIN,
@@ -1818,8 +1975,14 @@ async def async_unload_services(hass: HomeAssistant) -> None:
     if hass.services.has_service(DOMAIN, SERVICE_SEND_CHANNEL_MESSAGE):
         hass.services.async_remove(DOMAIN, SERVICE_SEND_CHANNEL_MESSAGE)
 
-    # if hass.services.has_service(DOMAIN, SERVICE_CLI_COMMAND):
-    #     hass.services.async_remove(DOMAIN, SERVICE_CLI_COMMAND)
+    if hass.services.has_service(DOMAIN, SERVICE_CLI_COMMAND):
+        hass.services.async_remove(DOMAIN, SERVICE_CLI_COMMAND)
+
+    if hass.services.has_service(DOMAIN, SERVICE_CLI_COMMAND_UI):
+        hass.services.async_remove(DOMAIN, SERVICE_CLI_COMMAND_UI)
+
+    if hass.services.has_service(DOMAIN, SERVICE_CLI_CLEAR):
+        hass.services.async_remove(DOMAIN, SERVICE_CLI_CLEAR)
 
     if hass.services.has_service(DOMAIN, SERVICE_MESSAGE_SCRIPT):
         hass.services.async_remove(DOMAIN, SERVICE_MESSAGE_SCRIPT)

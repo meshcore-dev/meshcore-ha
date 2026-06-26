@@ -31,6 +31,9 @@ SERVICE_SEND_MESSAGE: Final = "send_message"
 SERVICE_SEND_CHANNEL_MESSAGE: Final = "send_channel_message"
 SERVICE_EXECUTE_COMMAND: Final = "execute_command"
 SERVICE_EXECUTE_COMMAND_UI: Final = "execute_command_ui"
+SERVICE_CLI_COMMAND: Final = "cli_command"
+SERVICE_CLI_COMMAND_UI: Final = "cli_command_ui"
+SERVICE_CLI_CLEAR: Final = "cli_console_clear"
 SERVICE_MESSAGE_SCRIPT: Final = "send_ui_message"
 SERVICE_ADD_SELECTED_CONTACT: Final = "add_selected_contact"
 SERVICE_REMOVE_SELECTED_CONTACT: Final = "remove_selected_contact"
@@ -60,6 +63,7 @@ PLATFORM_MESSAGE: Final = "message"
 # Entity naming constants
 ENTITY_DOMAIN_BINARY_SENSOR: Final = "binary_sensor"
 ENTITY_DOMAIN_SENSOR: Final = "sensor"
+ENTITY_DOMAIN_BUTTON: Final = "button"
 DEFAULT_DEVICE_NAME: Final = "meshcore"
 MESSAGES_SUFFIX: Final = "messages"
 CONTACT_SUFFIX: Final = "contact"
@@ -126,6 +130,17 @@ DEFAULT_SELF_TELEMETRY_INTERVAL: Final = 300  # 5 minutes in seconds
 CONF_SELF_DIAGNOSTICS_ENABLED: Final = "self_diagnostics_enabled"
 CONF_SELF_DIAGNOSTICS_INTERVAL: Final = "self_diagnostics_interval"
 DEFAULT_SELF_DIAGNOSTICS_INTERVAL: Final = 300  # 5 minutes in seconds
+
+# CLI console settings. An interactive command surface for the local companion
+# radio: commands run through the same execute_command path, but the command
+# and its response are recorded into a sensor transcript so output is visible
+# in the UI (unlike execute_command_ui, which discards the response). It does
+# NOT stream LOG_DATA / RX_LOG packet noise — only command/response pairs.
+CONF_CLI_CONSOLE_ENABLED: Final = "cli_console_enabled"
+# Number of command/response pairs kept in the rolling console transcript.
+CLI_CONSOLE_MAX_LINES: Final = 50
+# Event fired after a CLI console command completes (for logbook/automations).
+EVENT_CLI_RESPONSE: Final = f"{DOMAIN}_cli_response"
 
 # STATS_CORE `errors` is a bitmask of radio dispatcher fault events, not a
 # count. Each bit latches on first occurrence and clears only on a radio

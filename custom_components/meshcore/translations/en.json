@@ -164,6 +164,7 @@
           "self_telemetry_interval": "Self Telemetry Interval (seconds)",
           "self_diagnostics_enabled": "Enable Self Diagnostics",
           "self_diagnostics_interval": "Self Diagnostics Interval (seconds)",
+          "cli_console_enabled": "Enable CLI Console",
           "map_upload_enabled": "Enable Map Auto Uploader (map.meshcore.io)",
           "auto_cleanup_stale_contacts": "Auto-Cleanup Stale Discovered Contacts (runs daily)",
           "stale_contact_days": "Stale Contact Threshold (days)",
@@ -175,6 +176,7 @@
         "data_description": {
           "self_diagnostics_enabled": "Creates roughly 15 local diagnostic sensors for the companion node (uptime, TX queue length, noise floor, last RSSI/SNR, TX/RX airtime, and packet counters). Off by default. Adds no mesh traffic — these are local queries to the attached radio, not mesh requests. The interval controls how often the sensors refresh (60–3600 seconds).",
           "contact_discovery_mode": "Entity per contact: every discovered contact gets its own entity (best for small meshes). Data only: discovered contacts are tracked as data only with no per-contact entity -- inspect them via the dropdown or the Get Discovered Contact service. Disabled: contact discovery is turned off entirely and any existing discovered contacts are cleared.",
+          "cli_console_enabled": "Adds a CLI Console sensor that records the commands you run via the meshcore.cli_command service and their responses, so the output is visible in the UI (the existing command card runs commands but discards the output). It shows only command/response pairs — it does not stream the device's continuous diagnostic/noise-floor log. Off by default. Pair it with the text.meshcore_command input helper and a markdown card; see the docs for an example dashboard.",
           "map_upload_enabled": "When enabled, adverts from repeaters and room servers you receive are uploaded to map.meshcore.io. Those nodes appear on the official MeshCore map for the community. Requires private key export enabled on the firmware (`ENABLE_PRIVATE_KEY_EXPORT=1`); without it, uploads cannot be signed.",
           "auto_cleanup_stale_contacts": "When enabled, discovered contacts whose last update is older than the configured threshold are automatically removed once per day. Contacts saved to the node are always preserved.",
           "auto_cleanup_stale_neighbors": "Automatically remove neighbor entries and their sensor entities when they haven't been heard from in the configured number of days.",
@@ -293,6 +295,7 @@
           "self_telemetry_interval": "Self Telemetry Interval (seconds)",
           "self_diagnostics_enabled": "Enable Self Diagnostics",
           "self_diagnostics_interval": "Self Diagnostics Interval (seconds)",
+          "cli_console_enabled": "Enable CLI Console",
           "map_upload_enabled": "Enable Map Auto Uploader (map.meshcore.io)",
           "auto_cleanup_stale_contacts": "Auto-Cleanup Stale Discovered Contacts (runs daily)",
           "stale_contact_days": "Stale Contact Threshold (days)",
@@ -304,6 +307,7 @@
         "data_description": {
           "self_diagnostics_enabled": "Creates roughly 15 local diagnostic sensors for the companion node (uptime, TX queue length, noise floor, last RSSI/SNR, TX/RX airtime, and packet counters). Off by default. Adds no mesh traffic — these are local queries to the attached radio, not mesh requests. The interval controls how often the sensors refresh (60–3600 seconds).",
           "contact_discovery_mode": "Entity per contact: every discovered contact gets its own entity (best for small meshes). Data only: discovered contacts are tracked as data only with no per-contact entity -- inspect them via the dropdown or the Get Discovered Contact service. Disabled: contact discovery is turned off entirely and any existing discovered contacts are cleared.",
+          "cli_console_enabled": "Adds a CLI Console sensor that records the commands you run via the meshcore.cli_command service and their responses, so the output is visible in the UI (the existing command card runs commands but discards the output). It shows only command/response pairs — it does not stream the device's continuous diagnostic/noise-floor log. Off by default. Pair it with the text.meshcore_command input helper and a markdown card; see the docs for an example dashboard.",
           "map_upload_enabled": "When enabled, adverts from repeaters and room servers you receive are uploaded to map.meshcore.io. Those nodes appear on the official MeshCore map for the community. Requires private key export enabled on the firmware (`ENABLE_PRIVATE_KEY_EXPORT=1`); without it, uploads cannot be signed.",
           "auto_cleanup_stale_contacts": "When enabled, discovered contacts whose last update is older than the configured threshold are automatically removed once per day. Contacts saved to the node are always preserved.",
           "auto_cleanup_stale_neighbors": "Automatically remove neighbor entries and their sensor entities when they haven't been heard from in the configured number of days.",
@@ -416,6 +420,40 @@
         "entry_id": {
           "name": "Config Entry ID",
           "description": "The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device."
+        }
+      }
+    },
+    "cli_command": {
+      "name": "CLI Command",
+      "description": "Run a CLI command against the local companion radio and record the command and its response to the CLI Console sensor so the output is visible in the UI. Same command syntax and capabilities as Execute MeshCore Command, plus a visible transcript. Enable the CLI Console in Global Settings to see the output entity. CAUTION: some commands make PERMANENT changes to your node's configuration.",
+      "fields": {
+        "command": {
+          "name": "Command",
+          "description": "The command with parameters to run. Format is \"[command_name] [param1] [param2] ...\" Examples: - get_bat - get_time - send_advert - set_tx_power 20 - get_stats_radio"
+        },
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device."
+        }
+      }
+    },
+    "cli_command_ui": {
+      "name": "CLI Command from UI",
+      "description": "Run the command in the text.meshcore_command helper entity through the CLI Console (so the response is recorded to the console transcript) and clear the input field afterwards.",
+      "fields": {
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device."
+        }
+      }
+    },
+    "cli_console_clear": {
+      "name": "Clear CLI Console",
+      "description": "Clear the CLI Console transcript. With no entry_id, clears every configured device's console.",
+      "fields": {
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "The config entry ID if you have multiple MeshCore devices. Leave empty to clear all."
         }
       }
     },

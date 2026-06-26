@@ -86,6 +86,73 @@ cards:
     icon_height: 24px
 ```
 
+### CLI Console
+
+The `execute_command` / `execute_command_ui` services run a command but the
+response is only visible in Developer Tools or the logs. The **CLI Console**
+gives you an interactive terminal-style surface that shows the output of each
+command directly on the dashboard. See the
+[CLI Command Reference](../cli-commands) for what you can type.
+
+Enable it first under **Settings → Devices & Services → MeshCore → Configure →
+Global Settings → Enable CLI Console**. That creates a `sensor.*_cli_console`
+entity whose `transcript` attribute holds a rolling log of the commands you run
+and their responses (it records only command/response pairs — it does **not**
+stream the radio's continuous diagnostic/noise-floor output), plus two compact
+button entities: **CLI Run Command** and **CLI Clear Console**.
+
+These entities are intentionally **hidden by default and not shown on the device
+page** — the console only works as a dashboard card (a device page can't render
+the transcript), so you reference them by entity_id in the card below. Find the
+exact ids in Developer Tools → States (filter `cli`).
+
+The recommended card puts the input and the **button entities** in a single
+`entities` card (compact rows) so you don't get the oversized `button` *card*,
+then renders the transcript with a markdown card:
+
+```yaml
+type: vertical-stack
+cards:
+  - type: entities
+    entities:
+      - entity: text.meshcore_command
+        name: Command
+      - entity: button.YOUR_NODE_cli_run
+        name: Run
+      - entity: button.YOUR_NODE_cli_clear
+        name: Clear
+  - type: markdown
+    content: |
+      ```
+      {{ state_attr('sensor.YOUR_NODE_cli_console', 'transcript') }}
+      ```
+```
+
+Notes:
+- Replace `YOUR_NODE` with your node's prefix (e.g. `meshcore_49d715_…`) — find
+  the exact ids in Developer Tools → States (filter `cli`).
+- The markdown `content` uses a literal block (`|`), not a folded one (`>-`); a
+  folded scalar collapses the newlines and renders the transcript on one line.
+- Prefer the **button entities** over a `type: button` card — the button card
+  renders as a large full-width tile, while the entity rows are compact.
+
+### Placing it on the right
+
+The console lives on a **dashboard**, not the auto-generated device page (a
+device page can't render the transcript card or control placement). For a
+console on the right, use a two-column
+[sections view](https://www.home-assistant.io/dashboards/sections/) or a
+`horizontal-stack`, and put the `vertical-stack` above in the right column.
+
+You can also call the services directly with a command, e.g. from an automation
+or script:
+
+```yaml
+action: meshcore.cli_command
+data:
+  command: get_stats_radio
+```
+
 ### Network Map
 
 Display all Meshcore contacts on a map using their location data.
