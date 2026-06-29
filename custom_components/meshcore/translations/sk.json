@@ -171,7 +171,7 @@
       "fields": {
         "command": {
           "name": "Príkaz",
-          "description": "Príkaz s parametrami, ktorý sa má vykonať. Formát je \"[názov príkazu\"] [param1] [param2] .. Príklady: - set_name \"MojeZariadenie\" - send_msg \"f293ac\" \"Pozdrav z Home Asistenta!\" - get_bat -set_tx_power 20 -set_coords 37.7749 -122.4194"
+          "description": "Príkaz s parametrami, ktorý sa má vykonať. Formát je \"[názov príkazu] [param1] [param2] ..\" Príklady: - set_name \"MojeZariadenie\" - send_msg \"f293ac\" \"Pozdrav z Home Asistenta!\" - get_bat -set_tx_power 20 -set_coords 37.7749 -122.4194"
         },
         "entry_id": {
           "name": "ID konfigurácie",
