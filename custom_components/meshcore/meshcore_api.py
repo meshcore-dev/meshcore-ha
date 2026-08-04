@@ -2,6 +2,7 @@
 import logging
 import asyncio
 import time
+from collections import OrderedDict
 from typing import Any, Optional
 from asyncio import Lock
 
@@ -20,6 +21,35 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# Duplicate-message suppression. Some firmware delivers the same frame more than
+# once when a second companion client is connected: once as a live push, and
+# again from the device's sync history because the per-client watermark was not
+# advanced. See https://github.com/meshcore-dev/meshcore-ha/issues/320
+DEDUP_MAX_ENTRIES = 256
+DEDUP_WINDOW_SECONDS = 30
+DEDUP_EVENT_TYPES = (EventType.CONTACT_MSG_RECV, EventType.CHANNEL_MSG_RECV)
+
+
+def _message_signature(event) -> Optional[tuple]:
+    """Return a stable identity for a received message, or None if not dedupable.
+
+    Only message-receive events are deduped. Everything else passes through
+    untouched so that adverts, telemetry and status frames are unaffected.
+    """
+    if event.type not in DEDUP_EVENT_TYPES:
+        return None
+    payload = event.payload or {}
+    if not isinstance(payload, dict):
+        return None
+    return (
+        event.type,
+        payload.get("pubkey_prefix"),
+        payload.get("channel_idx"),
+        payload.get("sender_timestamp") or payload.get("timestamp"),
+        payload.get("text"),
+    )
+
 
 class MeshCoreAPI:
     """API for interacting with MeshCore devices using the event-driven meshcore-py library."""
@@ -171,6 +201,9 @@ class MeshCoreAPI:
             # Set up disconnect event handler for backup reconnect
             self._setup_disconnect_handler()
 
+            # Suppress duplicate message frames (see issue #320)
+            self._install_message_dedup()
+
             # Sync time on connection
             try:
                 _LOGGER.info("Syncing time with MeshCore device...")
@@ -246,6 +279,46 @@ class MeshCoreAPI:
             _LOGGER.info("Disconnection complete")
         return
     
+    def _install_message_dedup(self) -> None:
+        """Suppress duplicate message frames before they reach subscribers.
+
+        Entities, the logbook and any automation listening for meshcore_message
+        each subscribe to the dispatcher independently, so a duplicate frame
+        would otherwise produce a duplicate of every downstream effect --
+        including automations that transmit, which costs shared airtime.
+        Filtering at dispatch is the single point that covers all subscribers.
+        """
+        if not self._mesh_core:
+            return
+
+        dispatcher = self._mesh_core.dispatcher
+        if getattr(dispatcher, "_ha_dedup_installed", False):
+            return
+
+        seen: "OrderedDict[tuple, float]" = OrderedDict()
+        original_dispatch = dispatcher.dispatch
+
+        async def dispatch_with_dedup(event):
+            signature = _message_signature(event)
+            if signature is not None:
+                now = time.monotonic()
+                previous = seen.get(signature)
+                if previous is not None and (now - previous) < DEDUP_WINDOW_SECONDS:
+                    _LOGGER.debug(
+                        "Suppressed duplicate %s frame within %ss window",
+                        event.type,
+                        DEDUP_WINDOW_SECONDS,
+                    )
+                    return
+                seen[signature] = now
+                while len(seen) > DEDUP_MAX_ENTRIES:
+                    seen.popitem(last=False)
+            await original_dispatch(event)
+
+        dispatcher.dispatch = dispatch_with_dedup
+        dispatcher._ha_dedup_installed = True
+        _LOGGER.debug("Message deduplication filter installed")
+
     def _setup_disconnect_handler(self) -> None:
         """Set up disconnect event handler."""
         if not self._mesh_core:
