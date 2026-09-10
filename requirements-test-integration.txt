@@ -8,6 +8,6 @@ pytest-homeassistant-custom-component==0.13.316
 home-assistant-frontend
 meshcore>=2.3.8
 pycryptodome>=3.23.0
-cachetools>=7.1.6
+cachetools>=7.1.8
 paho-mqtt>=2.1.0
 pynacl>=1.6.2
