@@ -7,6 +7,39 @@ title: Messaging
 
 The Meshcore Home Assistant integration provides comprehensive messaging capabilities for your mesh network, including sending, receiving, and logging messages.
 
+## Sharing a Companion with a phone
+
+Use **Configure → Global Settings → Retrieve queued incoming messages** to choose whether Home Assistant retrieves incoming chat messages from the connected Companion. It is **enabled by default**, including existing installations.
+
+Turn it **off** when Home Assistant stays connected over USB for repeater monitoring while another client, such as a phone over BLE, should retrieve channel/public and direct messages. Configure this separately for each Companion connection. This setting does not enable simultaneous USB/BLE support on firmware that lacks it.
+
+| Setting | Behavior |
+| --- | --- |
+| Enabled (default) | HA retrieves queued messages at startup, on message notifications, and during fallback polling. Use this when HA is your chat client or runs bots that need incoming messages. |
+| Disabled | HA does not request messages from the chat queue. Another client can retrieve them. Repeater status, telemetry, contacts, node information and sending commands remain enabled. |
+
+### Messages can still appear in Home Assistant
+
+This is a **queue retrieval setting, not a visibility filter**. Existing message event handlers remain active. If the device delivers a message event to HA, HA can still display and log it. Seeing a message in HA does not by itself mean HA removed it from the queue. Delivery to multiple connected clients depends on the device firmware; this option does not promise exclusive delivery to the phone.
+
+Raw radio logs and their channel-payload decoding also remain active. These do not themselves request a queued message. A raw radio log is distinct from a regular incoming chat event.
+
+### Commands and limitations
+
+- `meshcore.execute_command`, its UI wrapper, and `send_cmd` remain available. Requests for repeater status and telemetry continue independently of chat retrieval.
+- `get_msg` and raw `send` calls with the `SYNC_NEXT_MESSAGE` opcode are rejected while retrieval is disabled.
+- Text replies to commands can be queued chat messages too. They may remain for the phone instead of reaching an HA automation. Repeater version detection that waits for a text reply may time out.
+- Disabling retrieval does not restore messages already read, cancel an already-sent request, or prevent another client from reading the queue. The device queue has finite capacity.
+
+### Apply and verify
+
+1. After updating the integration files, restart Home Assistant. Reload the browser page; if the field shows `consume_incoming_messages`, clear the browser cache or test in a private window. This is the internal setting key, not the intended label.
+2. Open **Configure → Global Settings**, disable **Retrieve queued incoming messages**, and save. Reopen the form to verify it stayed disabled. The setting is read from the current configuration before each retrieval and persists across restarts.
+3. Disconnect the phone from BLE, leave HA connected, and send a new channel or direct message to the Companion.
+4. Wait more than 60 seconds, then reconnect the phone. Confirm it receives the message and that HA still updates repeater telemetry. Repeat after restarting HA.
+
+Before the first save, the default behavior still retrieves messages. Retrieve important queued messages with the phone before upgrading. Re-enable this option to resume HA chat retrieval.
+
 ## Message Flow
 
 ### Sending Messages

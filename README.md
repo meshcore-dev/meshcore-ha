@@ -60,6 +60,12 @@ A companion Lovelace card is available at [meshcore-card](https://github.com/jpe
 
 For detailed configuration instructions, see the [documentation](https://meshcore-dev.github.io/meshcore-ha/).
 
+## Sharing a Companion with a phone
+
+To keep Home Assistant connected for repeater monitoring while a phone retrieves chat messages over BLE, turn off **Configure → Global Settings → Retrieve queued incoming messages** (enabled by default). HA stops retrieving queued channel/public and direct messages, while status, telemetry, contacts and sending commands remain available.
+
+Messages delivered by the device may still appear in HA: this controls **queue retrieval, not message visibility**. Text replies to commands may remain queued for the phone too. See the [setup, limitations and verification guide](docs/docs/messaging.md#sharing-a-companion-with-a-phone).
+
 ## Contact Discovery Mode
 
 A single **Contact Discovery Mode** setting controls how much per-discovered-contact machinery the integration creates, with three choices:
