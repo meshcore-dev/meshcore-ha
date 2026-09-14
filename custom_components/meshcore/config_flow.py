@@ -19,6 +19,7 @@ from bleak import BleakScanner
 from meshcore.events import EventType
 
 from .const import (
+    CONF_CONSUME_INCOMING_MESSAGES,
     CONF_NAME,
     CONF_PUBKEY,
     DOMAIN,
@@ -935,6 +936,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             new_data[CONF_MAP_UPLOAD_ENABLED] = user_input[CONF_MAP_UPLOAD_ENABLED]
             new_data[CONF_AUTO_CLEANUP_STALE_CONTACTS] = user_input[CONF_AUTO_CLEANUP_STALE_CONTACTS]
             new_data[CONF_STALE_CONTACT_DAYS] = user_input[CONF_STALE_CONTACT_DAYS]
+            new_data[CONF_CONSUME_INCOMING_MESSAGES] = user_input.get(CONF_CONSUME_INCOMING_MESSAGES, True)
             new_data[CONF_ADAPTIVE_POLL_WAIT] = user_input[CONF_ADAPTIVE_POLL_WAIT]
             new_data[CONF_FLOOD_SCOPES] = user_input.get(CONF_FLOOD_SCOPES, "")
             new_data[CONF_AUTO_CLEANUP_STALE_NEIGHBORS] = user_input[CONF_AUTO_CLEANUP_STALE_NEIGHBORS]
@@ -980,6 +982,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_MAP_UPLOAD_ENABLED, default=current_map_upload_enabled): cv.boolean,
                 vol.Optional(CONF_AUTO_CLEANUP_STALE_CONTACTS, default=current_auto_cleanup): cv.boolean,
                 vol.Optional(CONF_STALE_CONTACT_DAYS, default=current_stale_days): vol.All(cv.positive_int, vol.Range(min=1, max=365)),
+                vol.Optional(CONF_CONSUME_INCOMING_MESSAGES, default=self.config_entry.data.get(CONF_CONSUME_INCOMING_MESSAGES, True)): cv.boolean,
                 vol.Optional(CONF_ADAPTIVE_POLL_WAIT, default=current_adaptive_poll_wait): cv.boolean,
                 vol.Optional(CONF_FLOOD_SCOPES, default=current_flood_scopes): str,
                 vol.Optional(CONF_AUTO_CLEANUP_STALE_NEIGHBORS, default=current_auto_cleanup_neighbors): cv.boolean,

@@ -7,6 +7,7 @@ Targets the three SDK return shapes the handler must normalize:
   * None                   (req_*_sync timeout / no response)
 """
 import importlib.util
+import inspect
 import os
 import sys
 from unittest.mock import AsyncMock, MagicMock
@@ -262,3 +263,38 @@ async def test_unknown_contact_returns_clear_error():
 
     assert result["error"] == "contact_not_found"
     assert result["argument"] == "deadbeefcafe"
+
+
+@pytest.mark.parametrize("command", ["get_msg", "get_msg()", "send(b'\\x0a')", "send(data=b'\\x0a')"])
+async def test_queue_commands_blocked_when_consumption_disabled(command):
+    command_name = "send" if command.startswith("send") else "get_msg"
+    coord = _build_coordinator(command_name, _Event("ok", {}))
+    if command_name == "send":
+        coord.api.mesh_core.commands.send.__signature__ = inspect.Signature([
+            inspect.Parameter("data", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        ])
+    coord.consume_incoming_messages = False
+    handler = await _get_execute_handler(coord)
+    assert await handler(_call(command)) == {"error": "Incoming message consumption is disabled"}
+    getattr(coord.api.mesh_core.commands, command_name).assert_not_awaited()
+
+
+@pytest.mark.parametrize("command_name,command", [
+    ("get_bat", "get_bat"),
+    ("send_cmd", "send_cmd('repeater', 'version')"),
+    ("send", "send(b'\\x14')"),
+])
+async def test_non_queue_commands_work_when_consumption_disabled(command_name, command):
+    coord = _build_coordinator(command_name, _Event("ok", {"sent": True}), contact={"public_key": "ab" * 32})
+    coord.consume_incoming_messages = False
+    handler = await _get_execute_handler(coord)
+    assert await handler(_call(command)) == {"sent": True}
+    getattr(coord.api.mesh_core.commands, command_name).assert_awaited_once()
+
+
+async def test_get_msg_still_available_when_enabled():
+    coord = _build_coordinator("get_msg", _Event("ok", {}))
+    coord.consume_incoming_messages = True
+    handler = await _get_execute_handler(coord)
+    await handler(_call("get_msg"))
+    coord.api.mesh_core.commands.get_msg.assert_awaited_once()

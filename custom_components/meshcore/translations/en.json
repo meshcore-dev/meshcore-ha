@@ -170,6 +170,7 @@
           "stale_contact_days": "Stale Contact Threshold (days)",
           "auto_cleanup_stale_neighbors": "Auto-Remove Stale Neighbors",
           "stale_neighbor_days": "Stale Neighbor Threshold (days)",
+          "consume_incoming_messages": "Consume incoming messages",
           "adaptive_poll_wait": "Adaptive Channel Message Delivery",
           "flood_scopes": "Flood Scope Allowlist"
         },
@@ -181,6 +182,7 @@
           "auto_cleanup_stale_contacts": "When enabled, discovered contacts whose last update is older than the configured threshold are automatically removed once per day. Contacts saved to the node are always preserved.",
           "auto_cleanup_stale_neighbors": "Automatically remove neighbor entries and their sensor entities when they haven't been heard from in the configured number of days.",
           "stale_neighbor_days": "Number of days without hearing a neighbor before it is automatically removed (1–365).",
+          "consume_incoming_messages": "Enabled by default. Disable to leave public/channel and direct messages queued for another client, such as a phone over BLE. HA stops startup, notification and safety polling of chat messages and blocks get_msg. Repeater status, telemetry, contacts and sending commands remain enabled. Chat-based replies will remain in the queue too.",
           "adaptive_poll_wait": "When enabled, incoming channel messages fire as soon as RX_LOG data arrives (typically ~50ms) instead of always waiting the full 500ms. Late-arriving repeater data is delivered progressively. Disable if bots or automations depend on having all paths in the initial event.",
           "flood_scopes": "Comma-separated list of region scope names to match against incoming TC_FLOOD messages (e.g. pl-mz, pl-waw). When a match is found, rx_log_data will include a flood_scope field with the matched name. Leave empty to disable scope matching."
         },
@@ -301,6 +303,7 @@
           "stale_contact_days": "Stale Contact Threshold (days)",
           "auto_cleanup_stale_neighbors": "Auto-Remove Stale Neighbors",
           "stale_neighbor_days": "Stale Neighbor Threshold (days)",
+          "consume_incoming_messages": "Consume incoming messages",
           "adaptive_poll_wait": "Adaptive Channel Message Delivery",
           "flood_scopes": "Flood Scope Allowlist"
         },
@@ -312,6 +315,7 @@
           "auto_cleanup_stale_contacts": "When enabled, discovered contacts whose last update is older than the configured threshold are automatically removed once per day. Contacts saved to the node are always preserved.",
           "auto_cleanup_stale_neighbors": "Automatically remove neighbor entries and their sensor entities when they haven't been heard from in the configured number of days.",
           "stale_neighbor_days": "Number of days without hearing a neighbor before it is automatically removed (1–365).",
+          "consume_incoming_messages": "Enabled by default. Disable to leave public/channel and direct messages queued for another client, such as a phone over BLE. HA stops startup, notification and safety polling of chat messages and blocks get_msg. Repeater status, telemetry, contacts and sending commands remain enabled. Chat-based replies will remain in the queue too.",
           "adaptive_poll_wait": "When enabled, incoming channel messages fire as soon as RX_LOG data arrives (typically ~50ms) instead of always waiting the full 500ms. Late-arriving repeater data is delivered progressively. Disable if bots or automations depend on having all paths in the initial event.",
           "flood_scopes": "Comma-separated list of region scope names to match against incoming TC_FLOOD messages (e.g. pl-mz, pl-waw). When a match is found, rx_log_data will include a flood_scope field with the matched name. Leave empty to disable scope matching."
         },
