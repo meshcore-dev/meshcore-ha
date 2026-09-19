@@ -237,7 +237,8 @@ async def test_command_ui_noop_on_empty_input():
         MagicMock(data={ATTR_ENTRY_ID: None, ATTR_RECORD_TO_CONSOLE: True})
     )
 
-    assert result is None
+    assert result["error"] == "command_empty"
+    assert result["entry_id"] == "entry1"
     coord.record_cli_console.assert_not_called()
 
 

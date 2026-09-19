@@ -6,6 +6,7 @@ import pytest
 from homeassistant.auth.const import GROUP_ID_ADMIN, GROUP_ID_USER
 from homeassistant.core import Context
 from homeassistant.exceptions import Unauthorized, UnknownUser
+from homeassistant.helpers import entity_registry as er
 
 from custom_components.meshcore.button import MeshCoreCLIRunButton
 from custom_components.meshcore.const import DOMAIN
@@ -29,6 +30,14 @@ async def command_services(hass):
     coordinator.pubkey = "abcdef123456"
     coordinator.config_entry.entry_id = "entry1"
     hass.data[DOMAIN] = {"entry1": coordinator}
+
+    # execute_command_ui resolves its per-entry helper by registry identity.
+    er.async_get(hass).async_get_or_create(
+        "text",
+        DOMAIN,
+        "entry1_command_input",
+        suggested_object_id="meshcore_command",
+    )
 
     await async_setup_services(hass)
     return coordinator
