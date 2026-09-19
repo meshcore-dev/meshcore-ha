@@ -92,6 +92,44 @@ def _log_get_msg_error(action: str, payload: Any) -> None:
         _LOGGER.error("Error %s messages: %s", action, payload)
 
 
+# Companion-protocol error codes that mean the node can never satisfy the
+# request, however many times it is repeated -- as opposed to a transient
+# fault that a later attempt may clear.
+_TELEMETRY_UNSUPPORTED_CODES = frozenset(
+    {"ERR_CODE_ILLEGAL_ARG", "ERR_CODE_UNSUPPORTED_CMD"}
+)
+
+
+def _log_self_telemetry_error(payload: Any, already_reported: bool) -> None:
+    """Log a failed self-telemetry result at the appropriate level.
+
+    ``get_self_telemetry()`` sends the four-byte "self" form of
+    ``CMD_SEND_TELEMETRY_REQ`` (opcode plus three reserved bytes, no pub key).
+    Firmware answers it, but a non-firmware companion need not: an openHop
+    virtual companion up to and including 1.1.1 requires the 36-byte contact
+    form and rejects the short frame with ``ERR_CODE_ILLEGAL_ARG``.
+
+    That is a fixed property of the peer, not a fault, so it is reported once
+    at WARNING naming the cause and the remedy, then demoted to DEBUG. Every
+    other failure keeps ERROR on every occurrence. The caller clears its flag
+    on success, so a genuine later regression is reported afresh.
+    """
+    code = payload.get("code_string") if isinstance(payload, dict) else None
+    if code in _TELEMETRY_UNSUPPORTED_CODES:
+        if already_reported:
+            _LOGGER.debug("Self telemetry still unsupported by this node: %s", payload)
+        else:
+            _LOGGER.warning(
+                "This node rejected the self-telemetry request (%s): it does not "
+                "implement the 'self' form of CMD_SEND_TELEMETRY_REQ. Turn off "
+                "self telemetry for this entry, or update the node's firmware or "
+                "companion software. Further occurrences are logged at DEBUG.",
+                code,
+            )
+    else:
+        _LOGGER.error("Failed to get self telemetry: %s", payload)
+
+
 class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
     """Class to manage fetching data from the MeshCore node and trigger event-generating commands."""
 
@@ -190,6 +228,10 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         
         # Self telemetry tracking
         self._last_self_telemetry_update = 0
+        # Set once a self-telemetry failure has been reported, so a node that
+        # cannot answer the request is named once rather than on every cycle.
+        # Cleared on the next success.
+        self._self_telemetry_error_reported = False
         self._self_telemetry_enabled = config_entry.data.get(CONF_SELF_TELEMETRY_ENABLED, False)
         self._self_telemetry_interval = config_entry.data.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL)
 
@@ -1619,13 +1661,24 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         if self._self_telemetry_enabled:
             if current_time - self._last_self_telemetry_update >= self._self_telemetry_interval:
                 self.logger.debug(f"Getting self telemetry (interval: {self._self_telemetry_interval}s)")
+                # The interval gates *attempts*, not successes. Recording the
+                # attempt before it runs keeps a failing node on the configured
+                # cadence; advancing this only in the success branch left the
+                # gate permanently open against a node that cannot answer, so a
+                # 300 s setting collapsed to the coordinator tick and re-sent a
+                # request that could never succeed (~17k ERROR lines a day at a
+                # 5 s tick).
+                self._last_self_telemetry_update = current_time
                 try:
                     telemetry_result = await self.api.mesh_core.commands.get_self_telemetry()
                     if telemetry_result.type == EventType.TELEMETRY_RESPONSE:
                         self.logger.debug(f"Self telemetry received: {telemetry_result.payload}")
-                        self._last_self_telemetry_update = current_time
+                        self._self_telemetry_error_reported = False
                     else:
-                        self.logger.error(f"Failed to get self telemetry: {telemetry_result.payload}")
+                        _log_self_telemetry_error(
+                            telemetry_result.payload, self._self_telemetry_error_reported
+                        )
+                        self._self_telemetry_error_reported = True
                 except Exception as ex:
                     self.logger.error(f"Exception getting self telemetry: {ex}")
             else:
