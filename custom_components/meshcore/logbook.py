@@ -204,10 +204,13 @@ async def handle_channel_message(event, coordinator) -> None:
         # In adaptive mode, start background collection for late-arriving
         # repeater RX_LOGs (progressive delivery updates).
         if adaptive and hash_key is not None:
-            hass.async_create_task(
+            # Background task so late RX_LOG collection is not tracked by
+            # hass.async_block_till_done() and cannot delay HA startup wrap-up.
+            hass.async_create_background_task(
                 _collect_incoming_rx_logs(
                     hass, coordinator, hash_key, event_data
-                )
+                ),
+                name="meshcore_rx_logs",
             )
 
         _LOGGER.debug(
