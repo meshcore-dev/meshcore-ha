@@ -117,7 +117,7 @@ Fired progressively as RX_LOG radio reception data arrives for a message. This e
 
 This event fires in two scenarios:
 
-1. **Outgoing channel messages** — After sending a channel message, the integration collects repeater reception data over 4 passes (1 second apart). A `meshcore_delivery_update` fires after each pass that finds new data.
+1. **Outgoing channel messages** — After sending a channel message, the integration collects repeater reception data over 4 passes (1 second apart). A `meshcore_delivery_update` fires after each intermediate pass. The final result fires as `meshcore_message` instead.
 
 2. **Incoming channel messages (adaptive mode only)** — When [Adaptive Channel Message Delivery](./messaging#rx_log-correlation) is enabled, the initial `meshcore_message` event fires as soon as the first RX_LOG data arrives. Background collection passes then deliver late-arriving repeater data via this event.
 
@@ -134,7 +134,7 @@ This event fires in two scenarios:
 - `send_id` - (Optional) Send identifier from the service call
 - `rx_log_data` - Cumulative array of all RX_LOG entries collected so far (same structure as `rx_log_data` on `meshcore_message`)
 - `repeater_count` - Number of repeaters that received the message
-- `progressive` - `true` for intermediate updates, `false` on the final collection pass
+- `progressive` - `true` (always). The terminal `progressive: false` result arrives on `meshcore_message`.
 
 **Incoming Message Fields (Adaptive Mode):**
 - `entity_id` - Source entity
@@ -150,21 +150,22 @@ This event fires in two scenarios:
 **Example — Tracking Outgoing Delivery:**
 ```yaml
 alias: Track Message Delivery
-trigger:
-  - platform: event
-    event_type: meshcore_delivery_update
+triggers:
+  - trigger: event
+    event_type: meshcore_message
     event_data:
       outgoing: true
-condition:
-  - condition: template
-    value_template: "{{ not trigger.event.data.progressive }}"
-action:
-  - service: notify.notify
+      message_type: channel
+      progressive: false
+actions:
+  - action: notify.notify
     data:
       message: >
-        Message "{{ trigger.event.data.message }}" delivered via
+        Message "{{ trigger.event.data.message }}" received via
         {{ trigger.event.data.repeater_count }} repeater(s)
 ```
+
+This reports the final reception-data collection result. It does not confirm that every recipient received the message.
 
 **Example — Monitoring Incoming Paths (Adaptive Mode):**
 ```yaml
@@ -186,9 +187,9 @@ action:
         {{ trigger.event.data.repeater_count }} path(s)
 ```
 
-**Example Event Data — Outgoing (Final Pass):**
+**Example Terminal Event Data — Outgoing (Final Pass):**
 ```yaml
-event_type: meshcore_delivery_update
+event_type: meshcore_message
 data:
   message: "Good morning mesh!"
   sender_name: "PonyBot"
