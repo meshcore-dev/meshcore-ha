@@ -74,6 +74,7 @@ class BrokerConfig:
     client_id_prefix: str
     topic_status: str
     topic_packets: str
+    ws_path: str = "/"
 
     @property
     def name(self) -> str:
@@ -304,6 +305,9 @@ class MeshCoreMqttUploader:
                     ),
                     iata,
                 ),
+                ws_path=str(
+                    broker_settings.get("ws_path", "/") or "/"
+                  ).strip(),
             )
 
             if broker.is_letsmesh and iata in placeholder_iata_values:
@@ -426,7 +430,7 @@ class MeshCoreMqttUploader:
         )
 
         if broker.transport == "websockets":
-            client.ws_set_options(path="/", headers=None)
+            client.ws_set_options(path=broker.ws_path, headers=None)
 
         self.logger.info(
             "[%s] Ready (status_topic=%s packets_topic=%s auth_token=%s)",

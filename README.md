@@ -91,6 +91,10 @@ Auth-token mode is easy install by default:
 - Signing key is pulled from the connected node via `export_private_key()`.
 - If private key export is disabled/blocked on firmware, auth-token upload cannot start.
 
+Support for MQTT brokers that serve MQTT over a different path than / 
+
+- Example: EMQX requires the path to be /mqtt
+
 ## Map Auto Uploader (map.meshcore.io)
 
 When enabled (off by default), the integration automatically uploads repeater and room server adverts to [map.meshcore.io](https://map.meshcore.io) when your Companion hears them. A standalone alternative is [map.meshcore.io-uploader](https://github.com/recrof/map.meshcore.io-uploader). Enable in Global Settings if you want Map Auto Uploader.

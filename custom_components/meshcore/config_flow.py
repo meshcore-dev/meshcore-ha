@@ -1092,6 +1092,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 "owner_email": user_input.get("owner_email", ""),
                 "topic_status": user_input.get("topic_status", DEFAULT_MQTT_TOPIC_STATUS),
                 "topic_events": user_input.get("topic_events", DEFAULT_MQTT_TOPIC_EVENTS),
+                "ws_path": user_input.get("ws_path", "/"),
                 "iata": user_input.get("iata", legacy_global_iata),
                 "token_ttl_seconds": user_input.get("token_ttl_seconds", legacy_global_ttl),
                 "payload_mode": user_input.get("payload_mode", "packet"),
@@ -1127,6 +1128,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             ): vol.All(cv.positive_int, vol.Range(min=60, max=86400)),
             vol.Optional("topic_status", default=broker.get("topic_status", DEFAULT_MQTT_TOPIC_STATUS)): str,
             vol.Optional("topic_events", default=broker.get("topic_events", DEFAULT_MQTT_TOPIC_EVENTS)): str,
+            vol.Optional("ws_path", default=broker.get("ws_path", "/")): str,
             vol.Optional("iata", default=broker.get("iata", legacy_global_iata)): str,
         })
 
