@@ -3,7 +3,7 @@
     "abort": {
       "already_configured": "Zariadenie už je nakonfigurované"
     },
-   "error": {
+    "error": {
       "cannot_connect": "Nepodarilo sa spojiť",
       "unknown": "Neočakávaná chyba",
       "already_configured": "Opakovač je už nakonfigurovaný",
@@ -103,10 +103,12 @@
           "max_discovered_contacts": "Maximálny počet objavených kontaktov",
           "self_telemetry_enabled": "Povoliť vlastnú telemetriu",
           "self_telemetry_interval": "Interval vlastnej telemetrie (v sekundách)",
-          "map_upload_enabled": "Povoliť Map Auto Uploader (map.meshcore.io)"
+          "map_upload_enabled": "Povoliť Map Auto Uploader (map.meshcore.io)",
+          "consume_incoming_messages": "Preberať prichádzajúce správy z frontu"
         },
         "data_description": {
-          "map_upload_enabled": "Ak je zapnuté, reklamy od repeaterov a room serverov, ktoré prijmete, sa nahrávajú na map.meshcore.io. Tieto uzly sa zobrazia na oficiálnej mape MeshCore pre komunitu. Vyžaduje povolený export súkromného kľúča vo firmware (`ENABLE_PRIVATE_KEY_EXPORT=1`); bez toho nie je možné nahrávky podpísať."
+          "map_upload_enabled": "Ak je zapnuté, reklamy od repeaterov a room serverov, ktoré prijmete, sa nahrávajú na map.meshcore.io. Tieto uzly sa zobrazia na oficiálnej mape MeshCore pre komunitu. Vyžaduje povolený export súkromného kľúča vo firmware (`ENABLE_PRIVATE_KEY_EXPORT=1`); bez toho nie je možné nahrávky podpísať.",
+          "consume_incoming_messages": "Predvolene zapnuté. Vypnite, ak má správy kanálov a súkromné správy z frontu preberať iný klient, napríklad telefón cez BLE. Home Assistant bude naďalej zisťovať stav a telemetriu opakovačov a odosielať príkazy. Správy doručené zariadením sa môžu naďalej zobrazovať v Home Assistant. Nastavenie riadi čítanie frontu, nie zobrazovanie správ. Vo fronte môžu pre druhého klienta zostať aj textové odpovede na príkazy."
         },
         "description": "Konfigurácia globálnych nastavení integrácie",
         "title": "Globálne nastavenia"
@@ -147,7 +149,7 @@
         "message": {
           "name": "Správa",
           "description": "Text správy, ktorý sa má odoslať",
-	  "example": "Pozdrav z Home Asistenta!"
+          "example": "Pozdrav z Home Asistenta!"
         },
         "entry_id": {
           "name": "ID konfigurácie",
@@ -381,6 +383,18 @@
       },
       "sent_flood_rate": {
         "name": "Rýchlosť odoslaných flood správ"
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "global_settings": {
+        "data": {
+          "consume_incoming_messages": "Preberať prichádzajúce správy z frontu"
+        },
+        "data_description": {
+          "consume_incoming_messages": "Predvolene zapnuté. Vypnite, ak má správy kanálov a súkromné správy z frontu preberať iný klient, napríklad telefón cez BLE. Home Assistant bude naďalej zisťovať stav a telemetriu opakovačov a odosielať príkazy. Správy doručené zariadením sa môžu naďalej zobrazovať v Home Assistant. Nastavenie riadi čítanie frontu, nie zobrazovanie správ. Vo fronte môžu pre druhého klienta zostať aj textové odpovede na príkazy."
+        }
       }
     }
   }

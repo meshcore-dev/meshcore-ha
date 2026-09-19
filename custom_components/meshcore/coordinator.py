@@ -21,6 +21,7 @@ from meshcore.events import Event, EventType
 
 from .rate_limiter import TokenBucket
 from .const import (
+    CONF_CONSUME_INCOMING_MESSAGES,
     CONF_NAME,
     CONF_PUBKEY,
     DOMAIN,
@@ -1513,6 +1514,11 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 self._active_telemetry_tasks.pop(pubkey_prefix)
             await asyncio.sleep(1)  # Small delay to avoid tight loops
 
+    @property
+    def consume_incoming_messages(self) -> bool:
+        """Whether HA may drain the Companion chat queue."""
+        return self.config_entry.data.get(CONF_CONSUME_INCOMING_MESSAGES, True)
+
     async def async_flush_messages(self) -> Dict[str, Any]:
         """Immediately flush pending messages from the device queue.
 
@@ -1522,7 +1528,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         """
         async with self._message_lock:
             try:
-                while True:
+                while self.consume_incoming_messages:
                     result = await self.api.mesh_core.commands.get_msg()
                     if result.type == EventType.NO_MORE_MSGS:
                         break
@@ -1713,10 +1719,10 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             or (current_time_mono - self._last_msg_activity) >= MSG_SAFETY_NET_INTERVAL
         )
 
-        if should_poll:
+        if self.consume_incoming_messages and should_poll:
             async with self._message_lock:
                 try:
-                    while True:
+                    while self.consume_incoming_messages:
                         result = await self.api.mesh_core.commands.get_msg()
                         if result.type == EventType.NO_MORE_MSGS:
                             _LOGGER.debug("No messages in device queue")

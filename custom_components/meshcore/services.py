@@ -748,6 +748,16 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                             else:
                                 prepared_args.append(arg)
 
+                    # get_msg and raw SYNC_NEXT_MESSAGE consume the shared chat queue.
+                    raw_data = prepared_args[0] if prepared_args else prepared_kwargs.get("data")
+                    drains_messages = command_name == "get_msg" or (
+                        command_name == "send"
+                        and isinstance(raw_data, (bytes, bytearray))
+                        and raw_data[:1] == b"\x0a"
+                    )
+                    if drains_messages and not coordinator.consume_incoming_messages:
+                        return {"error": "Incoming message consumption is disabled"}
+
                     _LOGGER.debug("Executing %s args=%s kwargs=%s", command_name, prepared_args, prepared_kwargs)
                     result = await command_method(*prepared_args, **prepared_kwargs)
 

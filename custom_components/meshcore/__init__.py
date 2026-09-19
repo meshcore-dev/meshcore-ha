@@ -755,6 +755,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # queue until the coordinator's periodic poll calls get_msg().
         async def handle_messages_waiting(event):
             """Immediately fetch messages when device signals they are available."""
+            if not coordinator.consume_incoming_messages:
+                return
             _LOGGER.debug("MESSAGES_WAITING received, triggering immediate message fetch")
             asyncio.create_task(coordinator.async_flush_messages())
 

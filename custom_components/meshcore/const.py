@@ -22,6 +22,9 @@ CONNECTION_TYPE_USB: Final = "usb"
 CONNECTION_TYPE_BLE: Final = "ble"
 CONNECTION_TYPE_TCP: Final = "tcp"
 
+# Incoming Companion queue ownership (preserve existing behavior by default).
+CONF_CONSUME_INCOMING_MESSAGES: Final = "consume_incoming_messages"
+
 # Polling settings
 CONF_SCAN_INTERVAL: Final = "scan_interval"
 DEFAULT_SCAN_INTERVAL: Final = 30  # seconds
