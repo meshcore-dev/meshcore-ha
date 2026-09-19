@@ -13,9 +13,9 @@ from typing import Any, Dict, Optional, cast
 
 from homeassistant.core import Context, HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.helpers import config_validation as cv
+from homeassistant.const import MAJOR_VERSION, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.service import async_register_admin_service
-from homeassistant.const import MAJOR_VERSION
 from meshcore.events import EventType
 
 # Commands that modify values reported in SELF_INFO.
@@ -117,6 +117,87 @@ UI_MESSAGE_SCHEMA = vol.Schema(
         vol.Optional(ATTR_ENTRY_ID): cv.string,
     }
 )
+
+_UI_HELPER_UNIQUE_ID_SUFFIXES = {
+    "recipient_type": ("select", "recipient_type"),
+    "channel": ("select", "channel_select"),
+    "contact": ("select", "contact_select"),
+    "message": ("text", "message_input"),
+    "command": ("text", "command_input"),
+}
+
+
+def _ui_service_error(code: str, message: str, **details: Any) -> dict[str, Any]:
+    """Build and log a structured UI-helper service error."""
+    _LOGGER.error(message)
+    return {"error": code, "message": message, **details}
+
+
+def _resolve_ui_entry_id(hass: HomeAssistant, entry_id: str | None) -> tuple[str | None, dict | None]:
+    """Resolve one config entry for a UI-helper service call."""
+    coordinators = {
+        candidate_id: coordinator
+        for candidate_id, coordinator in hass.data.get(DOMAIN, {}).items()
+        if hasattr(coordinator, "api")
+    }
+    if entry_id:
+        if entry_id not in coordinators:
+            return None, _ui_service_error(
+                "config_entry_not_found",
+                f"MeshCore config entry not found: {entry_id}",
+                entry_id=entry_id,
+            )
+        return entry_id, None
+    if not coordinators:
+        return None, _ui_service_error(
+            "config_entry_not_found",
+            "No MeshCore config entry is available",
+        )
+    if len(coordinators) > 1:
+        return None, _ui_service_error(
+            "ambiguous_config_entry",
+            "Multiple MeshCore config entries are available; entry_id is required",
+            entry_ids=sorted(coordinators),
+        )
+    return next(iter(coordinators)), None
+
+
+def _resolve_ui_helper_state(
+    hass: HomeAssistant,
+    entry_id: str,
+    helper: str,
+) -> tuple[Any | None, str | None, dict | None]:
+    """Resolve a UI helper through its registry identity for one config entry."""
+    entity_domain, unique_id_suffix = _UI_HELPER_UNIQUE_ID_SUFFIXES[helper]
+    unique_id = f"{entry_id}_{unique_id_suffix}"
+    entity_id = er.async_get(hass).async_get_entity_id(entity_domain, DOMAIN, unique_id)
+    if entity_id is None:
+        return None, None, _ui_service_error(
+            "helper_not_found",
+            f"MeshCore {helper} helper is not registered for config entry {entry_id}",
+            entry_id=entry_id,
+            helper=helper,
+            unique_id=unique_id,
+        )
+    state = hass.states.get(entity_id)
+    if state is None:
+        return None, entity_id, _ui_service_error(
+            "helper_state_not_found",
+            f"MeshCore {helper} helper has no state: {entity_id}",
+            entry_id=entry_id,
+            helper=helper,
+            entity_id=entity_id,
+        )
+    if state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+        return None, entity_id, _ui_service_error(
+            "helper_state_unavailable",
+            f"MeshCore {helper} helper is unavailable: {entity_id}",
+            entry_id=entry_id,
+            helper=helper,
+            entity_id=entity_id,
+            state=state.state,
+        )
+    return state, entity_id, None
 
 def _parse_functional_command(command_str: str) -> tuple | None:
     """Parse 'cmd(arg1, kw=val)' format using ast. Returns (name, pos_args, kwargs) or None."""
@@ -447,51 +528,63 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     return
 
     # Create combined message script service
-    async def async_message_script_service(call: ServiceCall) -> None:
+    async def async_message_script_service(call: ServiceCall) -> dict[str, Any] | None:
         """Handle the combined messaging script service that works with UI helpers."""
-        entry_id = call.data.get(ATTR_ENTRY_ID)
-        
-        # Get state from helper entities
-        recipient_type = hass.states.get("select.meshcore_recipient_type")
-        
-        if not recipient_type:
-            _LOGGER.error("Recipient type helper not found: select.meshcore_recipient_type")
-            return
+        entry_id, error = _resolve_ui_entry_id(hass, call.data.get(ATTR_ENTRY_ID))
+        if error:
+            return error
+
+        recipient_type, _, error = _resolve_ui_helper_state(
+            hass, entry_id, "recipient_type"
+        )
+        if error:
+            return error
             
         # Get recipient type value
         recipient_type_value = recipient_type.state
         
         # Get message from text entity
-        message_entity = hass.states.get("text.meshcore_message")
-        if not message_entity:
-            _LOGGER.error("Message input helper not found: text.meshcore_message")
-            return
+        message_entity, message_entity_id, error = _resolve_ui_helper_state(
+            hass, entry_id, "message"
+        )
+        if error:
+            return error
             
         message = message_entity.state
         
         if not message:
-            _LOGGER.warning("No message to send - message input is empty")
-            return
+            return _ui_service_error(
+                "message_empty",
+                f"MeshCore message helper is empty for config entry {entry_id}",
+                entry_id=entry_id,
+                entity_id=message_entity_id,
+            )
             
         # Handle based on recipient type
         if recipient_type_value == "Channel":
             # Get channel selection
-            channel_entity = hass.states.get("select.meshcore_channel")
-            if not channel_entity:
-                _LOGGER.error("Channel helper not found: select.meshcore_channel")
-                return
+            channel_entity, _, error = _resolve_ui_helper_state(
+                hass, entry_id, "channel"
+            )
+            if error:
+                return error
 
             # Get the channel_idx from attributes
             channel_idx = channel_entity.attributes.get("channel_idx")
             if channel_idx is None:
-                _LOGGER.error("Channel index not found in channel attributes")
-                return
+                return _ui_service_error(
+                    "helper_value_missing",
+                    f"MeshCore channel helper has no channel index for config entry {entry_id}",
+                    entry_id=entry_id,
+                    helper="channel",
+                )
 
             # Create channel message service call
             channel_call = create_service_call(
                 DOMAIN, 
                 SERVICE_SEND_CHANNEL_MESSAGE, 
-                {"channel_idx": channel_idx, "message": message, "entry_id": entry_id}
+                {"channel_idx": channel_idx, "message": message, "entry_id": entry_id},
+                hass=hass,
             )
             
             # Send the channel message
@@ -499,35 +592,46 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             
         elif recipient_type_value == "Contact":
             # Get contact selection
-            contact_entity = hass.states.get("select.meshcore_contact")
-            if not contact_entity:
-                _LOGGER.error("Contact helper not found: select.meshcore_contact")
-                return
+            contact_entity, _, error = _resolve_ui_helper_state(
+                hass, entry_id, "contact"
+            )
+            if error:
+                return error
                 
             # Get the public key from attributes
             pubkey_prefix = contact_entity.attributes.get("public_key_prefix")
             if not pubkey_prefix:
-                _LOGGER.error("Public key not found in contact attributes")
-                return
+                return _ui_service_error(
+                    "helper_value_missing",
+                    f"MeshCore contact helper has no public key for config entry {entry_id}",
+                    entry_id=entry_id,
+                    helper="contact",
+                )
                 
             # Create contact message service call
             contact_call = create_service_call(
                 DOMAIN, 
                 SERVICE_SEND_MESSAGE, 
-                {"pubkey_prefix": pubkey_prefix, "message": message, "entry_id": entry_id}
+                {"pubkey_prefix": pubkey_prefix, "message": message, "entry_id": entry_id},
+                hass=hass,
             )
             
             # Send the direct message
             await async_send_message_service(contact_call)
         else:
-            _LOGGER.error(f"Unknown recipient type: {recipient_type_value}")
+            return _ui_service_error(
+                "invalid_recipient_type",
+                f"Unknown recipient type for config entry {entry_id}: {recipient_type_value}",
+                entry_id=entry_id,
+                recipient_type=recipient_type_value,
+            )
             
         # Clear the message input after sending
         try:
             await hass.services.async_call(
                 "text", 
                 "set_value", 
-                {"entity_id": "text.meshcore_message", "value": ""},
+                {"entity_id": message_entity_id, "value": ""},
                 blocking=False
             )
         except Exception as ex:
@@ -1012,20 +1116,26 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         record_to_console through so the CLI Console Run button (which sets the
         flag) captures the response in the transcript.
         """
-        entry_id = call.data.get(ATTR_ENTRY_ID)
+        entry_id, error = _resolve_ui_entry_id(hass, call.data.get(ATTR_ENTRY_ID))
+        if error:
+            return error
         record_to_console = call.data.get(ATTR_RECORD_TO_CONSOLE, False)
 
-        # Get command from command text entity
-        command_entity = hass.states.get("text.meshcore_command")
-        if not command_entity:
-            _LOGGER.error("Command input helper not found: text.meshcore_command")
-            return
+        command_entity, command_entity_id, error = _resolve_ui_helper_state(
+            hass, entry_id, "command"
+        )
+        if error:
+            return error
 
         command = command_entity.state
 
         if not command:
-            _LOGGER.warning("No command to execute - command input is empty")
-            return
+            return _ui_service_error(
+                "command_empty",
+                f"MeshCore command helper is empty for config entry {entry_id}",
+                entry_id=entry_id,
+                entity_id=command_entity_id,
+            )
 
         # Create command service call
         command_call = create_service_call(
@@ -1048,7 +1158,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             await hass.services.async_call(
                 "text",
                 "set_value",
-                {"entity_id": "text.meshcore_command", "value": ""},
+                {"entity_id": command_entity_id, "value": ""},
                 blocking=False
             )
         except Exception as ex:
@@ -1139,6 +1249,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         SERVICE_MESSAGE_SCRIPT,
         async_message_script_service,
         schema=UI_MESSAGE_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
     )
 
     async def async_add_selected_contact_service(call: ServiceCall) -> None:

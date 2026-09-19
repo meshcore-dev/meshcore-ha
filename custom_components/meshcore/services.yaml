@@ -73,14 +73,13 @@ send_channel_message:
 send_ui_message:
   name: Send UI Message
   description: >-
-    Send a message using the MeshCore UI helpers. This service reads values from
-    'select.meshcore_recipient_type', 'select.meshcore_channel', 'select.meshcore_contact',
-    and 'text.meshcore_message' to determine the recipient and message content.
+    Send a message using the UI helpers belonging to one MeshCore config entry.
+    Helper entities are resolved by registry identity, so renamed entity IDs are supported.
     Call this service directly from a button card for a seamless messaging interface.
   fields:
     entry_id:
       name: Config Entry ID
-      description: The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device.
+      description: The config entry ID. Required when multiple MeshCore devices are configured.
       required: false
       example: "abc123def456"
       selector:
@@ -129,13 +128,13 @@ execute_command:
 execute_command_ui:
   name: Execute Command from UI
   description: >-
-    Execute a command using the text.meshcore_command helper entity.
-    This service reads the command from the text helper and executes it.
+    Execute a command using the command helper belonging to one MeshCore config entry.
+    The helper is resolved by registry identity, so renamed entity IDs are supported.
     It will automatically clear the input field after execution.
   fields:
     entry_id:
       name: Config Entry ID
-      description: The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device.
+      description: The config entry ID. Required when multiple MeshCore devices are configured.
       required: false
       example: "abc123def456"
       selector:
