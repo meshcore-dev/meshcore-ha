@@ -1186,7 +1186,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             DOMAIN,
             SERVICE_EXECUTE_COMMAND,
             {"command": f"add_contact {pubkey_prefix}", "entry_id": entry_id},
-            hass
+            hass=hass,
+            context=call.context,
         )
         await async_execute_command_service(command_call)
 
@@ -1235,7 +1236,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             DOMAIN,
             SERVICE_EXECUTE_COMMAND,
             {"command": f"remove_contact {pubkey_prefix}", "entry_id": entry_id},
-            hass
+            hass=hass,
+            context=call.context,
         )
         await async_execute_command_service(command_call)
 

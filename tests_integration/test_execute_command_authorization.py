@@ -7,6 +7,7 @@ from homeassistant.auth.const import GROUP_ID_ADMIN, GROUP_ID_USER
 from homeassistant.core import Context
 from homeassistant.exceptions import Unauthorized, UnknownUser
 
+from custom_components.meshcore.button import MeshCoreCLIRunButton
 from custom_components.meshcore.const import DOMAIN
 from custom_components.meshcore.services import async_setup_services
 
@@ -25,6 +26,8 @@ async def command_services(hass):
     coordinator.api.mesh_core.commands = commands
     coordinator.api.self_info = {"suggested_timeout": 1000}
     coordinator._discovered_contacts = {}
+    coordinator.pubkey = "abcdef123456"
+    coordinator.config_entry.entry_id = "entry1"
     hass.data[DOMAIN] = {"entry1": coordinator}
 
     await async_setup_services(hass)
@@ -125,6 +128,35 @@ async def test_execute_command_ui_dispatches_with_admin_context(hass, command_se
     )
 
     assert response == {"private_key": "secret"}
+    command_services.api.mesh_core.commands.export_private_key.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_cli_run_button_rejects_non_admin(hass, command_services):
+    """Forward button caller context so a non-admin cannot bypass the service."""
+    hass.states.async_set("text.meshcore_command", "export_private_key")
+    context = await _user_context(hass, "button user", GROUP_ID_USER)
+    button = MeshCoreCLIRunButton(command_services)
+    button.hass = hass
+    button._context = context
+
+    with pytest.raises(Unauthorized):
+        await button.async_press()
+
+    command_services.api.mesh_core.commands.export_private_key.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cli_run_button_allows_admin(hass, command_services):
+    """Forward button caller context and dispatch for an admin."""
+    hass.states.async_set("text.meshcore_command", "export_private_key")
+    context = await _user_context(hass, "button admin", GROUP_ID_ADMIN)
+    button = MeshCoreCLIRunButton(command_services)
+    button.hass = hass
+    button._context = context
+
+    await button.async_press()
+
     command_services.api.mesh_core.commands.export_private_key.assert_awaited_once()
 
 
