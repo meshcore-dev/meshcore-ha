@@ -1,9 +1,4 @@
-"""Button platform for MeshCore integration.
-
-Provides the CLI Console controls as button entities so they appear on the
-device page automatically and render compactly (unlike a full button *card*).
-Created only when CONF_CLI_CONSOLE_ENABLED is set.
-"""
+"""Button platform for MeshCore integration."""
 from __future__ import annotations
 
 import logging
@@ -11,14 +6,21 @@ import logging
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     CONF_CLI_CONSOLE_ENABLED,
+    CONF_REPEATER_SUBSCRIPTIONS,
     DOMAIN,
     ENTITY_DOMAIN_BUTTON,
     SERVICE_EXECUTE_COMMAND_UI,
+)
+from .repeater_firmware import (
+    RepeaterFirmwareRefreshError,
+    async_refresh_repeater_firmware,
 )
 from .utils import format_entity_id
 
@@ -35,6 +37,11 @@ async def async_setup_entry(
     if entry.data.get(CONF_CLI_CONSOLE_ENABLED, False):
         entities.append(MeshCoreCLIRunButton(coordinator))
         entities.append(MeshCoreCLIClearButton(coordinator))
+
+    entities.extend(
+        MeshCoreRepeaterFirmwareRefreshButton(coordinator, repeater)
+        for repeater in entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, [])
+    )
 
     if entities:
         async_add_entities(entities)
@@ -103,3 +110,47 @@ class MeshCoreCLIClearButton(_MeshCoreCLIButton):
     async def async_press(self) -> None:
         """Empty the console transcript."""
         self.coordinator.clear_cli_console()
+
+
+class MeshCoreRepeaterFirmwareRefreshButton(CoordinatorEntity, ButtonEntity):
+    """Refresh a configured repeater's firmware version on demand."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_name = "Refresh firmware version"
+    _attr_icon = "mdi:refresh"
+
+    def __init__(self, coordinator, repeater: dict) -> None:
+        super().__init__(coordinator)
+        self.coordinator = coordinator
+        self.pubkey_prefix = repeater.get("pubkey_prefix", "")
+        self._attr_unique_id = (
+            f"{coordinator.config_entry.entry_id}_repeater_{self.pubkey_prefix}_refresh_firmware"
+        )
+        self.entity_id = format_entity_id(
+            ENTITY_DOMAIN_BUTTON, self.pubkey_prefix[:10], "refresh_firmware"
+        )
+        self._attr_device_info = DeviceInfo(
+            identifiers={
+                (
+                    DOMAIN,
+                    f"{coordinator.config_entry.entry_id}_repeater_{self.pubkey_prefix}",
+                )
+            }
+        )
+
+    async def async_press(self) -> None:
+        """Query the repeater and persist its reported firmware version."""
+        meshcore = self.coordinator.api.mesh_core
+        if not meshcore:
+            raise HomeAssistantError("MeshCore device is not connected")
+
+        try:
+            await async_refresh_repeater_firmware(
+                self.hass,
+                self.coordinator.config_entry,
+                meshcore,
+                self.pubkey_prefix,
+            )
+        except RepeaterFirmwareRefreshError as ex:
+            raise HomeAssistantError(f"Failed to refresh repeater firmware version: {ex}") from ex

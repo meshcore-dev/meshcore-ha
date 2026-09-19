@@ -725,22 +725,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             return self._show_add_repeater_form(repeater_dict, errors, user_input)
             
             
-        # Login successful, now optionally check for version
-        send_result = await meshcore.commands.send_cmd(contact, "ver")
-        
-        if send_result.type == EventType.ERROR:
-            _LOGGER.error("Failed to get repeater version - received error: %s", send_result.payload)
-            
-        filter = { "pubkey_prefix": contact.get("public_key")[:12] }
-
-        msg = await meshcore.wait_for_event(EventType.CONTACT_MSG_RECV, filter, timeout=15)
-        _LOGGER.debug("Received ver message: %s", msg)
-        ver = "Unknown"
-        if not msg or msg.type == EventType.ERROR:
-            _LOGGER.error("Failed to get repeater version")
-        elif msg.type == EventType.CONTACT_MSG_RECV:
-            ver = msg.payload.get("text")
-            _LOGGER.info("Repeater version: %s", ver)
+        # Login successful, now optionally check for version.
+        ver = await self._query_repeater_firmware(pubkey_prefix, authenticate=False)
         
         # Add the new repeater subscription with pubkey_prefix
         self.repeater_subscriptions.append({
@@ -1217,34 +1203,38 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             return mapping.get(value, raw)
         return raw
         
-    async def _query_repeater_firmware(self, pubkey_prefix: str) -> str:
+    async def _query_repeater_firmware(
+        self, pubkey_prefix: str, *, authenticate: bool = True
+    ) -> str:
         """Query a repeater's firmware version via the 'ver' command."""
+        from .repeater_firmware import (
+            RepeaterFirmwareRefreshError,
+            async_query_repeater_firmware,
+        )
+
         coordinator = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id)
         if not coordinator or not coordinator.api.mesh_core:
             return "Unknown"
 
-        meshcore = coordinator.api.mesh_core
-        contact = meshcore.get_contact_by_key_prefix(pubkey_prefix)
-        if not contact:
-            _LOGGER.debug("Contact not found for firmware query: %s", pubkey_prefix)
-            return "Unknown"
-
         try:
-            send_result = await meshcore.commands.send_cmd(contact, "ver")
-            if send_result.type == EventType.ERROR:
-                _LOGGER.debug("Failed to send ver command: %s", send_result.payload)
-                return "Unknown"
-
-            pubkey_filter = {"pubkey_prefix": contact.get("public_key")[:12]}
-            msg = await meshcore.wait_for_event(
-                EventType.CONTACT_MSG_RECV, pubkey_filter, timeout=15
+            repeater = next(
+                (
+                    item
+                    for item in self.repeater_subscriptions
+                    if item.get("pubkey_prefix") == pubkey_prefix
+                ),
+                {},
             )
-            if msg and msg.type == EventType.CONTACT_MSG_RECV:
-                ver = (msg.payload.get("text") or "").strip()
-                if ver:
-                    _LOGGER.info("Repeater firmware version: %s", ver)
-                    return ver
-        except Exception as ex:
+            return await async_query_repeater_firmware(
+                coordinator.api.mesh_core,
+                pubkey_prefix,
+                password=(
+                    repeater.get(CONF_REPEATER_PASSWORD, "")
+                    if authenticate
+                    else None
+                ),
+            )
+        except RepeaterFirmwareRefreshError as ex:
             _LOGGER.debug("Error querying repeater firmware: %s", ex)
 
         return "Unknown"
