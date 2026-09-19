@@ -193,8 +193,11 @@ async def test_command_ui_records_when_flag_set():
     # create_service_call wraps homeassistant.core.ServiceCall, which conftest
     # mocks (its .data is not the dict we pass). Stub it to a plain call object
     # so the delegated execute_command sees the real command string and flag.
-    def _fake_call(domain, service, data=None, hass=None):
+    delegated_context = object()
+
+    def _fake_call(domain, service, data=None, hass=None, context=None):
         data = data or {}
+        assert context is delegated_context
         c = MagicMock()
         c.data = {
             ATTR_COMMAND: data.get("command"),
@@ -208,6 +211,7 @@ async def test_command_ui_records_when_flag_set():
     try:
         ui_call = MagicMock()
         ui_call.data = {ATTR_ENTRY_ID: None, ATTR_RECORD_TO_CONSOLE: True}
+        ui_call.context = delegated_context
         result = await handler(ui_call)
     finally:
         _module.create_service_call = monkeypatched

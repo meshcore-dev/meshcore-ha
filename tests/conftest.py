@@ -13,6 +13,7 @@ _MOCKS = [
     "homeassistant.helpers",
     "homeassistant.helpers.config_validation",
     "homeassistant.helpers.entity_registry",
+    "homeassistant.helpers.service",
     "homeassistant.helpers.storage",
     "homeassistant.helpers.device_registry",
     "homeassistant.helpers.entity",
@@ -35,3 +36,22 @@ _MOCKS = [
 for _mod in _MOCKS:
     if _mod not in sys.modules:
         sys.modules[_mod] = MagicMock()
+
+
+def _async_register_admin_service(
+    hass, domain, service, handler, schema=None, supports_response=None, **kwargs
+):
+    """Register admin services in unit tests without requiring Home Assistant."""
+    hass.services.async_register(
+        domain,
+        service,
+        handler,
+        schema=schema,
+        supports_response=supports_response,
+        **kwargs,
+    )
+
+
+sys.modules[
+    "homeassistant.helpers.service"
+].async_register_admin_service = _async_register_admin_service
