@@ -11,9 +11,10 @@ import uuid
 import voluptuous as vol
 from typing import Any, Dict, Optional, cast
 
-from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
+from homeassistant.core import Context, HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.const import MAJOR_VERSION
 from meshcore.events import EventType
 
@@ -1034,7 +1035,9 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                 "command": command,
                 "entry_id": entry_id,
                 "record_to_console": record_to_console,
-            }
+            },
+            hass=hass,
+            context=call.context,
         )
 
         # Execute the command (records to the console when the flag is set)
@@ -1103,7 +1106,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     )
     
     # Register the execute command services
-    hass.services.async_register(
+    async_register_admin_service(
+        hass,
         DOMAIN,
         SERVICE_EXECUTE_COMMAND,
         async_execute_command_service,
@@ -1111,7 +1115,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         supports_response=SupportsResponse.OPTIONAL,
     )
     
-    hass.services.async_register(
+    async_register_admin_service(
+        hass,
         DOMAIN,
         SERVICE_EXECUTE_COMMAND_UI,
         async_execute_command_ui_service,
@@ -1181,7 +1186,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             DOMAIN,
             SERVICE_EXECUTE_COMMAND,
             {"command": f"add_contact {pubkey_prefix}", "entry_id": entry_id},
-            hass
+            hass=hass,
+            context=call.context,
         )
         await async_execute_command_service(command_call)
 
@@ -1230,7 +1236,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             DOMAIN,
             SERVICE_EXECUTE_COMMAND,
             {"command": f"remove_contact {pubkey_prefix}", "entry_id": entry_id},
-            hass
+            hass=hass,
+            context=call.context,
         )
         await async_execute_command_service(command_call)
 
@@ -1958,7 +1965,8 @@ def create_service_call(
     domain: str,
     service: str,
     data: Optional[Dict[str, Any]] = None,
-    hass: Optional[HomeAssistant] = None
+    hass: Optional[HomeAssistant] = None,
+    context: Optional[Context] = None,
 ) -> ServiceCall:
     """Returns a ServiceCall instance compatible with the current Home Assistant version.
     
@@ -1971,6 +1979,7 @@ def create_service_call(
         service: Service name to call
         data: Dictionary containing service call parameters
         hass: HomeAssistant instance, required for 2025.x.x+ but ignored in 2024.x.x
+        context: Context from the calling service, when creating a delegated call
         
     Returns:
         ServiceCall: Properly configured service call instance for the current HA version
@@ -1991,12 +2000,14 @@ def create_service_call(
             hass=hass,
             domain=domain,
             service=service,
-            data=data or {}
+            data=data or {},
+            context=context,
         )
     else:
         _LOGGER.debug("Creating ServiceCall without hass parameter (2024.x.x format)")
         return ServiceCall(
             domain=domain,
             service=service,
-            data=data or {}
+            data=data or {},
+            context=context,
         )

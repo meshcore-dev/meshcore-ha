@@ -82,6 +82,7 @@ class MeshCoreCLIRunButton(_MeshCoreCLIButton):
                 "record_to_console": True,
             },
             blocking=True,
+            context=self._context,
         )
 
 
