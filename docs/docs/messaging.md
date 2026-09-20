@@ -117,7 +117,7 @@ No restart required. The change takes effect on the next received channel messag
 
 #### Outgoing Message Delivery Tracking
 
-Outgoing channel messages also use progressive RX_LOG collection, regardless of the adaptive mode setting. When you send a channel message, the integration makes 4 collection passes over 4 seconds. Intermediate results fire as `meshcore_delivery_update` events with `"progressive": true`. The final pass fires as `meshcore_message` with `"outgoing": true`, `"message_type": "channel"`, and `"progressive": false`.
+Outgoing channel messages also use progressive RX_LOG collection, regardless of the adaptive mode setting. The message is logged as `meshcore_message` the moment the radio accepts it, carrying `"outgoing": true`, `"repeater_count": 0` and `"collecting": true`. The integration then makes 4 collection passes over 4 seconds, each firing a `meshcore_delivery_update`; the last carries `"progressive": false` and the final count. A restart mid-collection publishes the count reached so far instead of losing it.
 
 This allows dashboards and bots to show delivery status updates in real time — for example, displaying how many repeaters relayed your message and which paths it took.
 

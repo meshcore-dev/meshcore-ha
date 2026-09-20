@@ -976,7 +976,7 @@ class LastMessageDeliverySensor(CoordinatorEntity, SensorEntity):
             self._ack_received = None
             self._receiver = None
             count = self._repeater_count or 0
-            if count == 0 and is_progressive:
+            if count == 0 and (is_progressive or event_data.get("collecting")):
                 self._state = "Waiting"
             else:
                 self._state = f"{count} Repeater{'s' if count != 1 else ''}"

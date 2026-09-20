@@ -18,6 +18,8 @@ import importlib.util
 import os
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from tests.support.session import StubSession
 
 # Load services.py directly (same pattern as test_services_parsing.py) so the
@@ -32,6 +34,12 @@ _spec = importlib.util.spec_from_file_location(
 _module = importlib.util.module_from_spec(_spec)
 _module.__package__ = "custom_components.meshcore"
 _spec.loader.exec_module(_module)
+
+# Another unit-tier module re-stubs homeassistant.exceptions at import time, so
+# depending on collection order this module can be loaded with a MagicMock in
+# place of the exception class its error paths catch. Pin a real one.
+if not isinstance(_module.HomeAssistantError, type):
+    _module.HomeAssistantError = type("HomeAssistantError", (Exception,), {})
 
 
 async def _extract_send_message_handler(hass):
@@ -115,11 +123,85 @@ async def test_outgoing_dm_fires_event_with_sending_entry_id():
     coro = bg_call.args[0]
     await coro
 
-    hass.bus.async_fire.assert_called_once()
-    event_payload = hass.bus.async_fire.call_args.args[1]
-    assert event_payload["device"] == sender_entry_id, (
-        f"device should be the sending entry id {sender_entry_id!r}, "
-        f"got {event_payload['device']!r}"
+    # Two sent events per DM: one as soon as the radio takes the message, one
+    # when the ACK wait ends. Both must name the sending entry.
+    payloads = [call.args[1] for call in hass.bus.async_fire.call_args_list]
+    assert len(payloads) == 2
+    for event_payload in payloads:
+        assert event_payload["device"] == sender_entry_id, (
+            f"device should be the sending entry id {sender_entry_id!r}, "
+            f"got {event_payload['device']!r}"
+        )
+        assert event_payload["device"] != trailing_key
+        assert event_payload["message_type"] == "direct"
+    assert payloads[0]["progressive"] is True
+    assert payloads[0]["ack_received"] is False
+    assert "progressive" not in payloads[1]
+
+
+async def _send(hass, coordinator, entry_id="entry_a"):
+    """Run the service against one coordinator and return the fired events."""
+    handler = await _extract_send_message_handler(hass)
+    hass.data = {_module.DOMAIN: {entry_id: coordinator}}
+    hass.async_create_background_task = MagicMock()
+    hass.bus.async_fire = MagicMock()
+    call = MagicMock()
+    call.data = {
+        _module.ATTR_MESSAGE: "hello there",
+        _module.ATTR_PUBKEY_PREFIX: "abcdef123456",
+        _module.ATTR_ENTRY_ID: entry_id,
+    }
+    await handler(call)
+    return [
+        (fired.args[0], fired.args[1]) for fired in hass.bus.async_fire.call_args_list
+    ]
+
+
+async def test_unknown_contact_reports_the_failure():
+    """A send with no contact to send to says so instead of going quiet."""
+    coordinator = _make_coordinator(None)
+    coordinator.api.contact_by_name = MagicMock(return_value=None)
+
+    fired = await _send(MagicMock(), coordinator)
+
+    assert len(fired) == 1
+    name, payload = fired[0]
+    assert name.endswith("_message_send_failed")
+    assert payload["reason"] == "contact_not_found"
+    assert payload["message_type"] == "direct"
+
+
+async def test_a_refused_send_reports_the_failure():
+    """A firmware rejection fires send_failed and no sent event."""
+    contact = {"public_key": "abcdef1234567890", "adv_name": "PeerNode"}
+    coordinator = _make_coordinator(contact)
+    error = MagicMock()
+    error.type = _module.EventType.ERROR
+    error.payload = {"reason": "queue full"}
+    coordinator.api.commands.send_msg = AsyncMock(return_value=error)
+
+    fired = await _send(MagicMock(), coordinator)
+
+    assert [name.rsplit("_", 3)[-3:] for name, _ in fired] == [
+        ["message", "send", "failed"]
+    ]
+    assert fired[0][1]["reason"] == "rejected"
+    assert fired[0][1]["detail"] == "queue full"
+
+
+async def test_a_budget_refusal_reports_the_failure_and_still_raises():
+    """The traffic policy's refusal reaches automations as well as the caller."""
+    contact = {"public_key": "abcdef1234567890", "adv_name": "PeerNode"}
+    coordinator = _make_coordinator(contact)
+    coordinator.require_mesh_budget = MagicMock(
+        side_effect=_module.HomeAssistantError("out of budget")
     )
-    assert event_payload["device"] != trailing_key
-    assert event_payload["message_type"] == "direct"
+    hass = MagicMock()
+
+    with pytest.raises(_module.HomeAssistantError):
+        await _send(hass, coordinator)
+
+    name, payload = hass.bus.async_fire.call_args.args
+    assert name.endswith("_message_send_failed")
+    assert payload["reason"] == "traffic_policy"
+    assert payload["detail"] == "out of budget"

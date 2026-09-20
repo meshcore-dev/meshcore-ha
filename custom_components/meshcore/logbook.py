@@ -50,6 +50,44 @@ def async_describe_events(
 
     async_describe_event(DOMAIN, EVENT_MESSAGE, process_message_event)
 
+
+def channel_label(channel_info: dict | None, channel_idx: int) -> str:
+    """Name a channel for display, never returning an empty label.
+
+    The logbook renders a message with no channel as a direct message, so an
+    unnamed channel is shown by its index; channel 0 keeps the name it has
+    always been given.
+    """
+    name = (channel_info or {}).get("channel_name") or ""
+    if name.strip():
+        return name
+    return "public" if channel_idx == 0 else str(channel_idx)
+
+
+def _split_sender(message_text: str, coordinator) -> tuple[str, str, str]:
+    """Split "Name: text" into its sender, its text and the sender's key.
+
+    Channel packets carry the sender's advertised name, but message bodies
+    contain colons too, so the prefix is only read as a sender when it names a
+    contact this node knows. With no contact table to ask (link down) the
+    prefix is trusted, as it always was.
+    """
+    if not message_text or ":" not in message_text:
+        return "Unknown", message_text, ""
+    name, _, text = message_text.partition(":")
+    name, text = name.strip(), text.strip()
+    if not name:
+        return "Unknown", message_text, ""
+
+    api = getattr(coordinator, "api", None)
+    if api is None or not api.connected:
+        return name, text, ""
+    contact = api.contact_by_name(name)
+    if not isinstance(contact, dict):
+        return "Unknown", message_text, ""
+    return name, text, contact.get("public_key", "")[:12]
+
+
 async def handle_channel_message(event, coordinator) -> None:
     """Handle channel message event."""
     if not event or not event.payload:
@@ -64,23 +102,8 @@ async def handle_channel_message(event, coordinator) -> None:
         
         # Get channel name from stored channel info
         channel_info = await coordinator.get_channel_info(channel_idx)
-        channel_name = channel_info.get("channel_name", "public" if channel_idx == 0 else f"{channel_idx}")
-
-        # Try to extract sender name from message format "Name: Message"
-        sender_name = "Unknown"
-        sender_pubkey = ""
-        if message_text and ":" in message_text:
-            parts = message_text.split(":", 1)
-            if len(parts) == 2 and parts[0].strip():
-                sender_name = parts[0].strip()
-                message_text = parts[1].strip()
-
-                # Use the provided coordinator for contact lookup
-                if coordinator and hasattr(coordinator, "api") and coordinator.api.connected:
-                    # Try to find contact by name to get public key
-                    contact = coordinator.api.contact_by_name(sender_name)
-                    if contact and isinstance(contact, dict):
-                        sender_pubkey = contact.get("public_key", "")[:12]
+        channel_name = channel_label(channel_info, channel_idx)
+        sender_name, message_text, sender_pubkey = _split_sender(message_text, coordinator)
 
         # Check for Home Assistant instance
         if not hasattr(coordinator, "hass"):
@@ -294,16 +317,15 @@ def handle_contact_message(event, coordinator) -> None:
         hass = coordinator.hass
         device_key = coordinator.pubkey if hasattr(coordinator, "pubkey") else "unknown"
 
-        # Look up contact name from pubkey_prefix using MeshCore API
-        contact_name = "Unknown"
+        # Look up contact name from pubkey_prefix using MeshCore API.
+        # A sender this node has no contact for is reported as such: the key
+        # prefix below identifies them, so there is no name to invent.
+        contact_name = None
         if hasattr(coordinator, "api") and coordinator.api.connected:
             # Try to find contact by public key prefix
             contact = coordinator.api.contact_by_prefix(pubkey_prefix)
             if contact and isinstance(contact, dict):
-                contact_name = contact.get("adv_name", "Unknown")
-
-        if contact_name == "Unknown" and pubkey_prefix:
-            contact_name = f"Unknown ({pubkey_prefix[:6]})"
+                contact_name = contact.get("adv_name") or None
 
         # Generate entity ID matching MeshCoreMessageEntity
         entity_id = get_contact_entity_id(
@@ -353,6 +375,25 @@ def handle_contact_message(event, coordinator) -> None:
         )
     except Exception as ex:
         _LOGGER.error("Error handling contact message: %s", ex, exc_info=True)
+
+def _collected(
+    base: dict, rx_logs: list, *, progressive: bool = False, collecting: bool | None = None
+) -> dict:
+    """Return an outgoing channel event carrying the receptions heard so far.
+
+    ``collecting`` says whether more receptions may still arrive, which is what
+    tells a listener that an empty count is "nothing yet" rather than "nobody".
+    """
+    event = {
+        **base,
+        "rx_log_data": list(rx_logs),
+        "repeater_count": len(rx_logs),
+        "progressive": progressive,
+    }
+    if collecting is not None:
+        event["collecting"] = collecting
+    return event
+
 
 async def handle_outgoing_message(event_data, coordinator) -> None:
     """Handle outgoing message events from the new message_sent event."""
@@ -407,6 +448,9 @@ async def handle_outgoing_message(event_data, coordinator) -> None:
 
         # Fire event
         fire_message(hass, entry, logbook_event)
+        # The ACK wait is over either way, so this is the message's last word:
+        # delivery listeners get the outcome without re-reading the logbook.
+        fire_delivery_update(hass, entry, {**logbook_event, "progressive": False})
 
         _LOGGER.debug(
             "Logged outgoing direct message to %s (%s): %s (ack: %s)",
@@ -449,90 +493,91 @@ async def handle_outgoing_message(event_data, coordinator) -> None:
         # radio picks up those re-broadcasts as RX_LOG events. This lets us
         # count how many repeaters relayed our message.
         #
-        # We use rolling 1-second collection passes, firing a progressive
-        # event after each pass so the sensor updates in near-real-time.
-        # Using pop() on a match forces late arrivals into a new cache entry
-        # under the same key, which subsequent passes pick up.
+        # The message itself is logged now, not four seconds from now: a send
+        # is a fact as soon as the radio takes it, and a shutdown in between
+        # used to lose the entry entirely. What the repeaters heard follows as
+        # delivery updates, in rolling 1-second passes. Using pop() on a match
+        # forces late arrivals into a new cache entry under the same key,
+        # which subsequent passes pick up.
         NUM_COLLECTION_PASSES = 4
         PASS_INTERVAL_SECONDS = 1.0
 
-        try:
-            send_timestamp = event_data.get("send_timestamp")
-
-            if channel_idx is not None and send_timestamp:
+        hash_key = None
+        send_timestamp = event_data.get("send_timestamp")
+        if channel_idx is not None and send_timestamp:
+            try:
                 # Single correlation key using channel + timestamp only.
                 # Text is excluded because the HA config name may differ from
                 # the on-device advertised name prepended to broadcasts.
                 hash_key = create_message_correlation_key(channel_idx, send_timestamp)
+            except Exception as ex:
+                _LOGGER.debug("Could not build the RX_LOG correlation key: %s", ex)
 
-                # Reserve this key so the incoming handler doesn't pop() it.
-                # The incoming handler fires 500ms faster and would steal entries
-                # before our first collection pass at 1000ms.
-                coordinator._outgoing_correlation_keys[hash_key] = True
-
-                all_rx_logs = []
-
-                try:
-                    for pass_num in range(NUM_COLLECTION_PASSES):
-                        await asyncio.sleep(PASS_INTERVAL_SECONDS)
-
-                        batch = coordinator._pending_rx_logs.pop(hash_key, None)
-                        if batch:
-                            all_rx_logs.extend(batch)
-                            _LOGGER.debug(
-                                "Pass %d: collected %d new RX_LOG(s), total %d",
-                                pass_num + 1, len(batch), len(all_rx_logs)
-                            )
-
-                        is_final = (pass_num == NUM_COLLECTION_PASSES - 1)
-                        update_event = dict(logbook_event)
-                        update_event["rx_log_data"] = list(all_rx_logs)
-                        update_event["repeater_count"] = len(all_rx_logs)
-                        update_event["progressive"] = not is_final
-
-                        if is_final:
-                            # Final pass: fire the real logbook event (single entry)
-                            fire_message(hass, entry, update_event)
-                        else:
-                            # Intermediate: lightweight event only the sensor listens to.
-                            # Correlation fields: every meshcore_delivery_update carries
-                            # entity_id, sender_name, message, and timestamp — enough
-                            # for downstream listeners to correlate back to a
-                            # previously-received meshcore_message event without
-                            # re-hashing the message text.
-                            fire_delivery_update(hass, entry, update_event)
-                finally:
-                    # Always release the reservation so the cache key can be
-                    # reused by future messages on the same channel+timestamp.
-                    coordinator._outgoing_correlation_keys.pop(hash_key, None)
-
-                if not all_rx_logs:
-                    # Log diagnostic info to help debug correlation mismatches
-                    cache_keys = list(coordinator._pending_rx_logs.keys())
-                    _LOGGER.debug(
-                        "No RX_LOG correlated with outgoing channel message. "
-                        "ch=%s, ts=%s, hash=%s, pending_cache_keys=%s",
-                        channel_idx, send_timestamp,
-                        hash_key[:8], cache_keys[:5]
-                    )
-                else:
-                    _LOGGER.debug(
-                        "Correlated outgoing channel message with "
-                        "%d RX_LOG reception(s) total",
-                        len(all_rx_logs)
-                    )
-            else:
-                # No timestamp available for correlation, fire single event
-                logbook_event["repeater_count"] = 0
-                fire_message(hass, entry, logbook_event)
-        except Exception as ex:
-            _LOGGER.debug(f"Error correlating outgoing channel message with RX_LOG: {ex}")
-            # Fire event even on error so logbook still gets the entry
-            fire_message(hass, entry, logbook_event)
-
+        fire_message(
+            hass, entry, _collected(logbook_event, [], collecting=hash_key is not None)
+        )
         _LOGGER.debug(
-            "Logged outgoing channel message to %s: %s (repeaters: %s)",
+            "Logged outgoing channel message to %s: %s",
             channel_name,
             message_text[:50] + ("..." if len(message_text) > 50 else ""),
-            logbook_event.get("repeater_count", "unknown")
         )
+        if hash_key is None:
+            return
+
+        # Reserve this key so the incoming handler doesn't pop() it.
+        # The incoming handler fires 500ms faster and would steal entries
+        # before our first collection pass at 1000ms.
+        coordinator._outgoing_correlation_keys[hash_key] = True
+        all_rx_logs: list = []
+
+        try:
+            for pass_num in range(NUM_COLLECTION_PASSES):
+                await asyncio.sleep(PASS_INTERVAL_SECONDS)
+
+                batch = coordinator._pending_rx_logs.pop(hash_key, None)
+                if batch:
+                    all_rx_logs.extend(batch)
+                    _LOGGER.debug(
+                        "Pass %d: collected %d new RX_LOG(s), total %d",
+                        pass_num + 1, len(batch), len(all_rx_logs)
+                    )
+
+                # Correlation fields: every meshcore_delivery_update carries
+                # entity_id, sender_name, message, send_id and timestamp —
+                # enough to correlate back to the meshcore_message that
+                # announced this send.
+                fire_delivery_update(
+                    hass,
+                    entry,
+                    _collected(
+                        logbook_event,
+                        all_rx_logs,
+                        progressive=pass_num < NUM_COLLECTION_PASSES - 1,
+                    ),
+                )
+        except asyncio.CancelledError:
+            # Unload or shutdown mid-collection: publish the count reached so
+            # far rather than leaving listeners on a progressive update forever.
+            fire_delivery_update(hass, entry, _collected(logbook_event, all_rx_logs))
+            raise
+        except Exception as ex:
+            _LOGGER.debug("Error correlating outgoing channel message with RX_LOG: %s", ex)
+            fire_delivery_update(hass, entry, _collected(logbook_event, all_rx_logs))
+        finally:
+            # Always release the reservation so the cache key can be
+            # reused by future messages on the same channel+timestamp.
+            coordinator._outgoing_correlation_keys.pop(hash_key, None)
+
+        if not all_rx_logs:
+            # Log diagnostic info to help debug correlation mismatches
+            cache_keys = list(coordinator._pending_rx_logs.keys())
+            _LOGGER.debug(
+                "No RX_LOG correlated with outgoing channel message. "
+                "ch=%s, ts=%s, hash=%s, pending_cache_keys=%s",
+                channel_idx, send_timestamp, hash_key[:8], cache_keys[:5]
+            )
+        else:
+            _LOGGER.debug(
+                "Correlated outgoing channel message with %d RX_LOG reception(s) total",
+                len(all_rx_logs)
+            )

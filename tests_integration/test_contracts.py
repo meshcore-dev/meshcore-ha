@@ -272,10 +272,44 @@ async def test_message_and_delivery_contracts(
     await hass.async_block_till_done()
     expected = _fixture("events")
     device_id = runtime.device_id
-    _assert_contract(events["meshcore_message"], _legacy(expected["meshcore_message"], device_id))
+    incoming_dm, incoming_channel, outgoing_dm, outgoing_channel = expected[
+        "meshcore_message"
+    ]
+    progressive, *_, incoming_update = expected["meshcore_delivery_update"]
+    _assert_contract(
+        events["meshcore_message"],
+        _legacy(
+            [
+                incoming_dm,
+                incoming_channel,
+                outgoing_dm,
+                # The send is logged the moment the radio takes it, so its
+                # reception fields start empty and arrive as delivery updates.
+                {
+                    **outgoing_channel,
+                    "rx_log_data": [],
+                    "repeater_count": 0,
+                    "collecting": True,
+                },
+            ],
+            device_id,
+        ),
+    )
     _assert_contract(
         events["meshcore_delivery_update"],
-        _legacy(expected["meshcore_delivery_update"], device_id),
+        _legacy(
+            [
+                # The DM's ACK wait ended.
+                {**outgoing_dm, "progressive": False},
+                # Three collection passes, then the terminal count.
+                progressive,
+                progressive,
+                progressive,
+                {**progressive, "progressive": False},
+                incoming_update,
+            ],
+            device_id,
+        ),
     )
     _assert_additive(events["meshcore_message"], "meshcore_message", device_id)
     _assert_additive(
@@ -339,8 +373,15 @@ async def test_service_event_contracts(
         await hass.async_block_till_done()
     expected = _fixture("events")
     device_id = runtime.device_id
+    sent_dm, sent_channel = expected["meshcore_message_sent"]
     _assert_contract(
-        events["meshcore_message_sent"], _legacy(expected["meshcore_message_sent"], device_id)
+        events["meshcore_message_sent"],
+        _legacy(
+            # The DM is announced when the radio takes it and again when the
+            # ACK wait ends; the channel send is announced once.
+            [{**sent_dm, "progressive": True}, sent_dm, sent_channel],
+            device_id,
+        ),
     )
     _assert_contract(
         events["meshcore_cli_response"],

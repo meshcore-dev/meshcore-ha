@@ -50,7 +50,7 @@ from .const import (
     SERVICE_TRACE,
     get_contact_discovery_mode,
 )
-from .events import fire_cli_response, fire_message_sent
+from .events import fire_cli_response, fire_message_sent, fire_send_failed
 from .traffic import (
     OP_ADVERT,
     OP_CHANNEL_MESSAGE,
@@ -330,6 +330,36 @@ def _contact_error(arg: str, command_name: str, api: Any) -> dict:
     }
 
 
+def _error_detail(result: Any) -> str:
+    """Describe a refused send the way the firmware reported it."""
+    payload = getattr(result, "payload", None)
+    if isinstance(payload, dict):
+        return str(
+            payload.get("code_string")
+            or payload.get("reason")
+            or payload.get("error_code")
+            or payload
+        )
+    return "unknown"
+
+
+def _fire_send_failed(
+    hass: HomeAssistant, coordinator: Any, *, reason: str, message_type: str, **details: Any
+) -> None:
+    """Announce a message that never left this radio.
+
+    A failed send used to be a log line and nothing else, so an automation
+    could not tell a delivered message from one that was never transmitted.
+    """
+    fire_send_failed(
+        hass,
+        getattr(coordinator, "config_entry", None),
+        reason=reason,
+        message_type=message_type,
+        **details,
+    )
+
+
 def _node_has_tracked_subscription(coordinator, pubkey_prefix: str) -> bool:
     """True when the node has a repeater/client tracking subscription.
 
@@ -390,23 +420,46 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     if node_id is not None:
                         # Find contact by name
                         contact = api.contact_by_name(node_id)
-                        if not contact:
-                            _LOGGER.error(f"Contact with name '{node_id}' not found")
-                            continue
                     else:
                         # Find contact by pubkey prefix
                         contact = api.contact_by_prefix(pubkey_prefix)
-                        if not contact:
-                            _LOGGER.error(f"Contact with pubkey prefix '{pubkey_prefix}' not found")
-                            continue
+                    if not contact:
+                        _LOGGER.error("Contact not found: %s", target_identifier)
+                        _fire_send_failed(
+                            hass,
+                            coordinator,
+                            reason="contact_not_found",
+                            message_type="direct",
+                            target=target_identifier,
+                        )
+                        continue
 
-                    coordinator.require_mesh_budget(classify_lane(OP_MESSAGE, contact))
-                    
+                    try:
+                        coordinator.require_mesh_budget(classify_lane(OP_MESSAGE, contact))
+                    except HomeAssistantError as ex:
+                        _fire_send_failed(
+                            hass,
+                            coordinator,
+                            reason="traffic_policy",
+                            message_type="direct",
+                            target=target_identifier,
+                            detail=str(ex),
+                        )
+                        raise
+
                     result = await api.exchange("send_msg", contact, message)
 
                     if result.type == EventType.ERROR:
                         _LOGGER.warning(
                             "Failed to send message to %s: %s", target_identifier, result.payload
+                        )
+                        _fire_send_failed(
+                            hass,
+                            coordinator,
+                            reason="rejected",
+                            message_type="direct",
+                            target=target_identifier,
+                            detail=_error_detail(result),
                         )
                     else:
                         # Use the actual contact name for logging when available
@@ -417,6 +470,29 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                         # Fire-and-forget: wait for ACK in background so the
                         # service call returns immediately after sending.
                         send_id = uuid.uuid4().hex[:8]
+                        sent = {
+                            "message": message,
+                            "device": config_entry_id,
+                            "message_type": "direct",
+                            "receiver": contact.get("adv_name") or contact.get("name"),
+                            "contact_public_key": pubkey,
+                            "send_id": send_id,
+                        }
+
+                        # The radio has taken the message: say so now rather
+                        # than after the ACK wait, which may last ten seconds
+                        # and may end in nothing. ``progressive`` marks this as
+                        # the interim word; the post-ACK event below is final.
+                        fire_message_sent(
+                            hass,
+                            coordinator.config_entry,
+                            {
+                                **sent,
+                                "timestamp": int(time.time()),
+                                "ack_received": False,
+                                "progressive": True,
+                            },
+                        )
 
                         # Bind every loop-scoped value this background task reads
                         # by value at task-creation time. Without this, the deferred
@@ -426,14 +502,11 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                         # the sending coordinator to a trailing non-coordinator key,
                         # corrupting ``device``.
                         async def _wait_for_ack_and_notify(
-                            sender_entry_id=config_entry_id,
                             entry=coordinator.config_entry,
                             api=api,
                             result=result,
-                            contact=contact,
-                            pubkey=pubkey,
                             display_name=display_name,
-                            send_id=send_id,
+                            sent=sent,
                         ):
                             """Background: wait for ACK then fire delivery event."""
                             ack_received = False
@@ -460,17 +533,15 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                             except Exception as ack_ex:
                                 _LOGGER.debug("Error waiting for ACK: %s", ack_ex)
 
-                            outgoing_msg = {
-                                "message": message,
-                                "device": sender_entry_id,
-                                "message_type": "direct",
-                                "receiver": contact.get("adv_name") or contact.get("name"),
-                                "timestamp": int(time.time()),
-                                "contact_public_key": pubkey,
-                                "ack_received": ack_received,
-                                "send_id": send_id,
-                            }
-                            fire_message_sent(hass, entry, outgoing_msg)
+                            fire_message_sent(
+                                hass,
+                                entry,
+                                {
+                                    **sent,
+                                    "timestamp": int(time.time()),
+                                    "ack_received": ack_received,
+                                },
+                            )
 
                         # Retain the task reference (HA-native; ties it to the event
                         # loop so it cannot be GC'd before the ACK resolves).
@@ -484,10 +555,18 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     _LOGGER.error(
                         "Error sending message to %s: %s", target_identifier, ex
                     )
+                    _fire_send_failed(
+                        hass,
+                        coordinator,
+                        reason="send_failed",
+                        message_type="direct",
+                        target=target_identifier,
+                        detail=str(ex),
+                    )
                 # Only attempt with the first available API if no entry_id specified
                 if not entry_id:
                     return
-    
+
     async def async_send_channel_message_service(call: ServiceCall) -> None:
         """Handle sending a channel message service call."""
         channel_idx = call.data[ATTR_CHANNEL_IDX]
@@ -514,7 +593,18 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                         "Sending message to channel %s: %s", channel_idx, message
                     )
 
-                    coordinator.require_mesh_budget(classify_lane(OP_CHANNEL_MESSAGE))
+                    try:
+                        coordinator.require_mesh_budget(classify_lane(OP_CHANNEL_MESSAGE))
+                    except HomeAssistantError as ex:
+                        _fire_send_failed(
+                            hass,
+                            coordinator,
+                            reason="traffic_policy",
+                            message_type="channel",
+                            channel_idx=channel_idx,
+                            detail=str(ex),
+                        )
+                        raise
 
                     # Set flood scope before sending if requested, then always reset.
                     async with api.transaction():
@@ -545,6 +635,14 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     if result.type == EventType.ERROR:
                         _LOGGER.warning(
                             "Failed to send message to channel %s: %s", channel_idx, result.payload
+                        )
+                        _fire_send_failed(
+                            hass,
+                            coordinator,
+                            reason="rejected",
+                            message_type="channel",
+                            channel_idx=channel_idx,
+                            detail=_error_detail(result),
                         )
                     else:
                         _LOGGER.info(
@@ -584,6 +682,14 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                 except Exception as ex:
                     _LOGGER.error(
                         "Error sending message to channel %s: %s", channel_idx, ex
+                    )
+                    _fire_send_failed(
+                        hass,
+                        coordinator,
+                        reason="send_failed",
+                        message_type="channel",
+                        channel_idx=channel_idx,
+                        detail=str(ex),
                     )
                 # Only attempt with the first available API if no entry_id specified
                 if not entry_id:
