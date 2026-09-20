@@ -1,5 +1,9 @@
 {
   "config": {
+    "abort": {
+      "already_configured": "Device is already configured",
+      "reconfigure_successful": "Re-configuration was successful"
+    },
     "step": {
       "global_settings": {
         "data": {

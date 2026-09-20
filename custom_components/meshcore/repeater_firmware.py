@@ -104,8 +104,9 @@ def async_save_repeater_firmware_version(
     version: str,
 ) -> bool:
     """Save a repeater version in config and its device-registry entry."""
-    new_data = copy.deepcopy(dict(config_entry.data))
-    repeaters = new_data.get(CONF_REPEATER_SUBSCRIPTIONS, [])
+    in_options = CONF_REPEATER_SUBSCRIPTIONS in config_entry.options
+    source = config_entry.options if in_options else config_entry.data
+    repeaters = copy.deepcopy(list(source.get(CONF_REPEATER_SUBSCRIPTIONS, [])))
     repeater = next(
         (item for item in repeaters if item.get("pubkey_prefix") == pubkey_prefix),
         None,
@@ -123,7 +124,14 @@ def async_save_repeater_firmware_version(
 
     repeater["firmware_version"] = version
     device_registry.async_update_device(device.id, sw_version=version)
-    hass.config_entries.async_update_entry(config_entry, data=new_data)
+    if in_options:
+        new_options = dict(config_entry.options)
+        new_options[CONF_REPEATER_SUBSCRIPTIONS] = repeaters
+        hass.config_entries.async_update_entry(config_entry, options=new_options)
+    else:
+        new_data = dict(config_entry.data)
+        new_data[CONF_REPEATER_SUBSCRIPTIONS] = repeaters
+        hass.config_entries.async_update_entry(config_entry, data=new_data)
 
     return True
 

@@ -9,7 +9,7 @@ import voluptuous as vol
 from bleak import BleakScanner
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.data_entry_flow import FlowResult
+from homeassistant.data_entry_flow import AbortFlow, FlowResult
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.selector import (
     SelectSelector,
@@ -228,7 +228,7 @@ async def validate_tcp_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[
 class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: ignore
     """Handle a config flow for MeshCore."""
 
-    VERSION = 3
+    VERSION = 4
 
     def __init__(self) -> None:
         """Initialize flow."""
@@ -271,7 +271,17 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
         new_data[CONF_NAME] = info.get("name", new_data.get(CONF_NAME))
         # Don't update CONF_PUBKEY here — if the device changed, __init__.py
         # will detect the mismatch on reload and run entity migration.
-        return self.async_update_reload_and_abort(entry, data=new_data, title=info["title"])
+        #
+        # The entry update listener reloads a changed connection, so this
+        # commits and aborts rather than asking for a second reload of its
+        # own; an unchanged reconfigure still gets the one reload it always
+        # did.
+        changed = self.hass.config_entries.async_update_entry(
+            entry, data=new_data, title=info["title"]
+        )
+        if not changed:
+            self.hass.config_entries.async_schedule_reload(entry.entry_id)
+        return self.async_abort(reason="reconfigure_successful")
 
     async def async_step_reconfigure_usb(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Handle USB reconfiguration."""
@@ -371,6 +381,46 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
             errors=errors,
         )
 
+    async def _async_create_node_entry(
+        self, connection: dict[str, Any], user_input: dict[str, Any], info: dict[str, Any]
+    ) -> FlowResult:
+        """Create the entry: identity in data, user settings in options.
+
+        The radio's public key is the entry's unique_id, so the same node
+        cannot be configured twice.
+        """
+        pubkey = str(info.get("pubkey") or "")
+        if pubkey:
+            await self.async_set_unique_id(pubkey.lower())
+            self._abort_if_unique_id_configured()
+
+        return self.async_create_entry(
+            title=info["title"],
+            data={
+                **connection,
+                CONF_NAME: info.get("name"),
+                CONF_PUBKEY: pubkey,
+            },
+            options={
+                CONF_SELF_TELEMETRY_ENABLED: user_input.get(CONF_SELF_TELEMETRY_ENABLED, False),
+                CONF_SELF_TELEMETRY_INTERVAL: user_input.get(
+                    CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL
+                ),
+                CONF_SELF_DIAGNOSTICS_ENABLED: user_input.get(
+                    CONF_SELF_DIAGNOSTICS_ENABLED, False
+                ),
+                CONF_SELF_DIAGNOSTICS_INTERVAL: user_input.get(
+                    CONF_SELF_DIAGNOSTICS_INTERVAL, DEFAULT_SELF_DIAGNOSTICS_INTERVAL
+                ),
+                CONF_CONTACT_DISCOVERY_MODE: user_input.get(
+                    CONF_CONTACT_DISCOVERY_MODE, DEFAULT_CONTACT_DISCOVERY_MODE
+                ),
+                CONF_REPEATER_SUBSCRIPTIONS: [],
+                CONF_TRACKED_CLIENTS: [],
+                CONF_MAP_UPLOAD_ENABLED: False,
+            },
+        )
+
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Handle the initial step."""
         errors: dict[str, str] = {}
@@ -396,21 +446,18 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
         if user_input is not None:
             try:
                 info = await validate_usb_input(self.hass, user_input)
-                return self.async_create_entry(title=info["title"], data={
-                    CONF_CONNECTION_TYPE: CONNECTION_TYPE_USB,
-                    CONF_USB_PATH: user_input[CONF_USB_PATH],
-                    CONF_BAUDRATE: user_input[CONF_BAUDRATE],
-                    CONF_SELF_TELEMETRY_ENABLED: user_input.get(CONF_SELF_TELEMETRY_ENABLED, False),
-                    CONF_SELF_TELEMETRY_INTERVAL: user_input.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL),
-                    CONF_SELF_DIAGNOSTICS_ENABLED: user_input.get(CONF_SELF_DIAGNOSTICS_ENABLED, False),
-                    CONF_SELF_DIAGNOSTICS_INTERVAL: user_input.get(CONF_SELF_DIAGNOSTICS_INTERVAL, DEFAULT_SELF_DIAGNOSTICS_INTERVAL),
-                    CONF_CONTACT_DISCOVERY_MODE: user_input.get(CONF_CONTACT_DISCOVERY_MODE, DEFAULT_CONTACT_DISCOVERY_MODE),
-                    CONF_NAME: info.get("name"),
-                    CONF_PUBKEY: info.get("pubkey"),
-                    CONF_REPEATER_SUBSCRIPTIONS: [],
-                    CONF_TRACKED_CLIENTS: [],
-                    CONF_MAP_UPLOAD_ENABLED: False,
-                })
+                return await self._async_create_node_entry(
+                    {
+                        CONF_CONNECTION_TYPE: CONNECTION_TYPE_USB,
+                        CONF_USB_PATH: user_input[CONF_USB_PATH],
+                        CONF_BAUDRATE: user_input[CONF_BAUDRATE],
+                    },
+                    user_input,
+                    info,
+                )
+            except AbortFlow:
+                # The radio is already configured; let the abort reach the user.
+                raise
             except CannotConnect:
                 errors["base"] = "cannot_connect"
             except Exception:  # pylint: disable=broad-except
@@ -440,20 +487,17 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
         if user_input is not None:
             try:
                 info = await validate_ble_input(self.hass, user_input)
-                return self.async_create_entry(title=info["title"], data={
-                    CONF_CONNECTION_TYPE: CONNECTION_TYPE_BLE,
-                    CONF_BLE_ADDRESS: user_input[CONF_BLE_ADDRESS],
-                    CONF_SELF_TELEMETRY_ENABLED: user_input.get(CONF_SELF_TELEMETRY_ENABLED, False),
-                    CONF_SELF_TELEMETRY_INTERVAL: user_input.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL),
-                    CONF_SELF_DIAGNOSTICS_ENABLED: user_input.get(CONF_SELF_DIAGNOSTICS_ENABLED, False),
-                    CONF_SELF_DIAGNOSTICS_INTERVAL: user_input.get(CONF_SELF_DIAGNOSTICS_INTERVAL, DEFAULT_SELF_DIAGNOSTICS_INTERVAL),
-                    CONF_CONTACT_DISCOVERY_MODE: user_input.get(CONF_CONTACT_DISCOVERY_MODE, DEFAULT_CONTACT_DISCOVERY_MODE),
-                    CONF_NAME: info.get("name"),
-                    CONF_PUBKEY: info.get("pubkey"),
-                    CONF_REPEATER_SUBSCRIPTIONS: [],
-                    CONF_TRACKED_CLIENTS: [],
-                    CONF_MAP_UPLOAD_ENABLED: False,
-                })
+                return await self._async_create_node_entry(
+                    {
+                        CONF_CONNECTION_TYPE: CONNECTION_TYPE_BLE,
+                        CONF_BLE_ADDRESS: user_input[CONF_BLE_ADDRESS],
+                    },
+                    user_input,
+                    info,
+                )
+            except AbortFlow:
+                # The radio is already configured; let the abort reach the user.
+                raise
             except CannotConnect:
                 errors["base"] = "cannot_connect"
             except Exception:  # pylint: disable=broad-except
@@ -505,21 +549,18 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
         if user_input is not None:
             try:
                 info = await validate_tcp_input(self.hass, user_input)
-                return self.async_create_entry(title=info["title"], data={
-                    CONF_CONNECTION_TYPE: CONNECTION_TYPE_TCP,
-                    CONF_TCP_HOST: user_input[CONF_TCP_HOST],
-                    CONF_TCP_PORT: user_input[CONF_TCP_PORT],
-                    CONF_SELF_TELEMETRY_ENABLED: user_input.get(CONF_SELF_TELEMETRY_ENABLED, False),
-                    CONF_SELF_TELEMETRY_INTERVAL: user_input.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL),
-                    CONF_SELF_DIAGNOSTICS_ENABLED: user_input.get(CONF_SELF_DIAGNOSTICS_ENABLED, False),
-                    CONF_SELF_DIAGNOSTICS_INTERVAL: user_input.get(CONF_SELF_DIAGNOSTICS_INTERVAL, DEFAULT_SELF_DIAGNOSTICS_INTERVAL),
-                    CONF_CONTACT_DISCOVERY_MODE: user_input.get(CONF_CONTACT_DISCOVERY_MODE, DEFAULT_CONTACT_DISCOVERY_MODE),
-                    CONF_NAME: info.get("name"),
-                    CONF_PUBKEY: info.get("pubkey"),
-                    CONF_REPEATER_SUBSCRIPTIONS: [],
-                    CONF_TRACKED_CLIENTS: [],
-                    CONF_MAP_UPLOAD_ENABLED: False,
-                })
+                return await self._async_create_node_entry(
+                    {
+                        CONF_CONNECTION_TYPE: CONNECTION_TYPE_TCP,
+                        CONF_TCP_HOST: user_input[CONF_TCP_HOST],
+                        CONF_TCP_PORT: user_input[CONF_TCP_PORT],
+                    },
+                    user_input,
+                    info,
+                )
+            except AbortFlow:
+                # The radio is already configured; let the abort reach the user.
+                raise
             except CannotConnect:
                 errors["base"] = "cannot_connect"
             except Exception:

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import time
@@ -17,10 +18,11 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.device_registry import DeviceEntry
+from homeassistant.helpers.storage import Store
 
 from meshcore.events import EventType
 
-from .config import Settings
+from .config import SETTINGS_KEYS, Settings, normalise_prefix
 from .const import (
     CONF_BAUDRATE,
     CONF_BLE_ADDRESS,
@@ -77,7 +79,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     _LOGGER.debug("Migrating configuration from version %s", config_entry.version)
     
     # Don't allow downgrading from future versions
-    if config_entry.version > 3:
+    if config_entry.version > 4:
         _LOGGER.error("Cannot downgrade from version %s", config_entry.version)
         return False
     
@@ -126,8 +128,70 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         hass.config_entries.async_update_entry(config_entry, data=new_data, version=3)
         _LOGGER.info("Migrated contact-discovery settings to %s (version 3)", mode)
 
+    # Migrate from version 3 to version 4: user settings move to entry
+    # options, which the readers already prefer, while connection identity
+    # stays in entry data. The data copies are left in place so a downgrade
+    # still finds them. Stored pubkey prefixes are lower-cased so a record and
+    # the mesh identity it names compare equal.
+    if config_entry.version == 3:
+        new_data = copy.deepcopy(dict(config_entry.data))
+        new_options = copy.deepcopy(dict(config_entry.options))
+        for key in SETTINGS_KEYS:
+            if key not in new_options and key in new_data:
+                new_options[key] = copy.deepcopy(new_data[key])
+        for mapping in (new_data, new_options):
+            for key in (CONF_REPEATER_SUBSCRIPTIONS, CONF_TRACKED_CLIENTS):
+                for record in mapping.get(key) or []:
+                    if isinstance(record, dict) and record.get("pubkey_prefix"):
+                        record["pubkey_prefix"] = normalise_prefix(record["pubkey_prefix"])
+
+        hass.config_entries.async_update_entry(
+            config_entry,
+            data=new_data,
+            options=new_options,
+            version=4,
+            unique_id=_entry_unique_id(hass, config_entry),
+        )
+        _LOGGER.info("Migrated user settings to entry options (version 4)")
+
     _LOGGER.debug("Migration to configuration version %s successful", config_entry.version)
     return True
+
+
+def _entry_unique_id(hass: HomeAssistant, entry: ConfigEntry) -> str | None:
+    """Return the pubkey to own as unique_id, or None when it is taken.
+
+    A radio identifies an entry, so the same node cannot be added twice. An
+    existing duplicate keeps its unique_id: the loser stays unclaimed rather
+    than silently adopting another entry's identity.
+    """
+    pubkey = str(entry.data.get(CONF_PUBKEY) or "").strip().lower()
+    if not pubkey:
+        return entry.unique_id
+    for other in hass.config_entries.async_entries(DOMAIN):
+        if other.entry_id != entry.entry_id and other.unique_id == pubkey:
+            _LOGGER.warning(
+                "Public key %s... already identifies entry %s; leaving %s unclaimed",
+                pubkey[:12], other.entry_id, entry.entry_id,
+            )
+            return entry.unique_id
+    return pubkey
+
+
+def _adopted_unique_id(hass: HomeAssistant, entry: ConfigEntry, pubkey: str) -> str | None:
+    """Return the unique_id for a radio whose public key just changed."""
+    candidate = str(pubkey or "").strip().lower()
+    if not candidate:
+        return entry.unique_id
+    for other in hass.config_entries.async_entries(DOMAIN):
+        if other.entry_id != entry.entry_id and other.unique_id == candidate:
+            _LOGGER.warning(
+                "Public key %s... already identifies entry %s; keeping %s unchanged",
+                candidate[:12], other.entry_id, entry.entry_id,
+            )
+            return entry.unique_id
+    return candidate
+
 
 def _migrate_entity_ids(
     hass: HomeAssistant,
@@ -412,7 +476,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Update config entry with new pubkey so coordinator picks it up
             new_data = dict(entry.data)
             new_data[CONF_PUBKEY] = live_pubkey
-            hass.config_entries.async_update_entry(entry, data=new_data)
+            hass.config_entries.async_update_entry(
+                entry, data=new_data, unique_id=_adopted_unique_id(hass, entry, live_pubkey)
+            )
 
             # Create persistent repair issue to warn about automation/dashboard references
             ir.async_create_issue(
@@ -432,7 +498,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # First time getting pubkey (shouldn't normally happen, but handle gracefully)
             new_data = dict(entry.data)
             new_data[CONF_PUBKEY] = live_pubkey
-            hass.config_entries.async_update_entry(entry, data=new_data)
+            hass.config_entries.async_update_entry(
+                entry, data=new_data, unique_id=_adopted_unique_id(hass, entry, live_pubkey)
+            )
             _LOGGER.info("Stored initial public key: %s...", live_pubkey[:12])
 
         # One-time migration: remove device name from unique_ids
@@ -824,6 +892,21 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await async_unload_services(hass)
 
     return unload_ok
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Delete what only this entry owns: its stores and its repair issues."""
+    for key in (
+        f"{DOMAIN}.{entry.entry_id}.discovered_contacts",
+        f"{DOMAIN}.{entry.entry_id}.neighbor_data",
+        f"{DOMAIN}.traffic_{entry.entry_id}",
+    ):
+        try:
+            await Store(hass, 1, key).async_remove()
+        except Exception as ex:
+            _LOGGER.warning("Could not remove stored data %s: %s", key, ex)
+
+    ir.async_delete_issue(hass, DOMAIN, f"{REPAIR_PUBKEY_CHANGED}_{entry.entry_id}")
 
 
 async def async_remove_config_entry_device(

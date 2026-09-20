@@ -1,7 +1,8 @@
 {
   "config": {
     "abort": {
-      "already_configured": "Zariadenie už je nakonfigurované"
+      "already_configured": "Zariadenie už je nakonfigurované",
+      "reconfigure_successful": "Re-configuration was successful"
     },
     "error": {
       "cannot_connect": "Nepodarilo sa spojiť",

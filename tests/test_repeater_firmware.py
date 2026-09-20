@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.support.modules import load_module
 from tests.support.session import StubSession
 
 
@@ -18,10 +19,9 @@ class _EventType:
 
 
 sys.modules["meshcore.events"].EventType = _EventType
-sys.modules[
-    "custom_components.meshcore.const"
-].CONF_REPEATER_SUBSCRIPTIONS = "repeater_subscriptions"
-sys.modules["custom_components.meshcore.const"].DOMAIN = "meshcore"
+# The helper reads records through the real settings codec, so load both for real.
+load_module("const")
+load_module("config")
 
 _SPEC = importlib.util.spec_from_file_location(
     "custom_components.meshcore.repeater_firmware",
@@ -105,6 +105,7 @@ def _session(events, *, send_type=_EventType.MSG_SENT):
 def _entry(entry_id, prefix="aabbccddeeff", version="1.0.0"):
     return SimpleNamespace(
         entry_id=entry_id,
+        options={},
         data={
             "repeater_subscriptions": [
                 {
