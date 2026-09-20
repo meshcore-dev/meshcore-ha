@@ -5,9 +5,7 @@ import logging
 import time
 from datetime import datetime
 from functools import partial
-from typing import Any, Dict
-from meshcore import EventType
-from meshcore.events import Event
+from typing import Any
 
 from homeassistant.components.device_tracker import TrackerEntity
 from homeassistant.components.device_tracker.const import SourceType
@@ -15,16 +13,19 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, CONF_REPEATER_SUBSCRIPTIONS, CONF_TRACKED_CLIENTS
-from .utils import (
-    sanitize_name, 
-    format_entity_id, 
-    build_device_name, 
-    get_device_model, 
-    build_device_id,
-    extract_pubkey_hex,
-)
+from meshcore import EventType
+from meshcore.events import Event
+
 from . import MeshCoreDataUpdateCoordinator
+from .const import CONF_REPEATER_SUBSCRIPTIONS, CONF_TRACKED_CLIENTS, DOMAIN
+from .utils import (
+    build_device_id,
+    build_device_name,
+    extract_pubkey_hex,
+    format_entity_id,
+    get_device_model,
+    sanitize_name,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -103,7 +104,7 @@ class DeviceTrackerManager:
             
         tracker.update_gps_location(gps_value)
                 
-    def _get_node_info(self, pubkey_prefix: str) -> Dict[str, Any]:
+    def _get_node_info(self, pubkey_prefix: str) -> dict[str, Any]:
         """Get node information for smart naming."""
         # Check if this is a tracked repeater
         repeater_subscriptions = self.coordinator.config_entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, [])
@@ -159,7 +160,7 @@ class MeshCoreGPSTracker(CoordinatorEntity, TrackerEntity):
         self,
         coordinator: MeshCoreDataUpdateCoordinator,
         pubkey_prefix: str,
-        node_info: Dict[str, Any],
+        node_info: dict[str, Any],
     ) -> None:
         """Initialize the GPS tracker."""
         super().__init__(coordinator)
@@ -203,7 +204,7 @@ class MeshCoreGPSTracker(CoordinatorEntity, TrackerEntity):
         self._last_updated = None
         self._gps_accuracy = None
         
-    def update_gps_location(self, gps_data: Dict[str, Any]):
+    def update_gps_location(self, gps_data: dict[str, Any]):
         """Update GPS location from telemetry data."""
         self._latitude = gps_data.get("latitude")
         self._longitude = gps_data.get("longitude")
@@ -246,7 +247,7 @@ class MeshCoreGPSTracker(CoordinatorEntity, TrackerEntity):
         return time.time() - self._last_updated < timeout
         
     @property
-    def extra_state_attributes(self) -> Dict[str, Any]:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional state attributes."""
         attributes = {
             "pubkey_prefix": self.pubkey_prefix,

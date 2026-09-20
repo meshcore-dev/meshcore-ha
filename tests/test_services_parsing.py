@@ -1,7 +1,6 @@
 """Tests for execute_command parsing helpers in services.py."""
 import importlib.util
 import os
-import pytest
 from unittest.mock import MagicMock
 
 # Load services.py directly to avoid triggering the package __init__ chain

@@ -4,10 +4,8 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime
-from typing import Any, Dict
-from meshcore import EventType
-from meshcore.events import Event
-from custom_components.meshcore import MeshCoreDataUpdateCoordinator
+from typing import Any
+
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -16,37 +14,41 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.device_registry import async_get as async_get_device_registry
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.device_registry import async_get as async_get_device_registry
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
 )
 
+from custom_components.meshcore import MeshCoreDataUpdateCoordinator
+from meshcore import EventType
+from meshcore.events import Event
+
 from .const import (
-    DOMAIN,
-    ENTITY_DOMAIN_SENSOR,
-    CONF_REPEATER_SUBSCRIPTIONS,
-    CONF_REPEATER_NEIGHBORS_ENABLED,
-    CONF_TRACKED_CLIENTS,
-    CONF_SELF_DIAGNOSTICS_ENABLED,
-    CONF_CLI_CONSOLE_ENABLED,
     CLI_CONSOLE_MAX_LINES,
+    CONF_CLI_CONSOLE_ENABLED,
     CONF_LIMIT_DISCOVERED_CONTACTS,
     CONF_MAX_DISCOVERED_CONTACTS,
+    CONF_REPEATER_NEIGHBORS_ENABLED,
+    CONF_REPEATER_SUBSCRIPTIONS,
+    CONF_SELF_DIAGNOSTICS_ENABLED,
+    CONF_TRACKED_CLIENTS,
     DEFAULT_MAX_DISCOVERED_CONTACTS,
-    SENSOR_AVAILABILITY_TIMEOUT_MULTIPLIER,
+    DOMAIN,
+    ENTITY_DOMAIN_SENSOR,
     NEIGHBOR_STALE_THRESHOLD,
     SEEN_WINDOW_SECS,
+    SENSOR_AVAILABILITY_TIMEOUT_MULTIPLIER,
     NodeType,
 )
+from .telemetry_sensor import TelemetrySensorManager
 from .utils import (
-    format_entity_id,
     calculate_battery_percentage,
+    format_entity_id,
     sanitize_name,
 )
-from .telemetry_sensor import TelemetrySensorManager
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -664,7 +666,7 @@ async def async_setup_entry(
     # - meshcore_message_sent: fires immediately when a message is sent (from services.py)
     # - meshcore_delivery_update: fires on each intermediate collection pass (sensor only)
     # - meshcore_message: fires once on the final pass (logbook + sensor)
-    from .logbook import EVENT_MESHCORE_MESSAGE, EVENT_MESHCORE_DELIVERY_UPDATE
+    from .logbook import EVENT_MESHCORE_DELIVERY_UPDATE, EVENT_MESHCORE_MESSAGE
 
     @callback
     def _handle_message_sent(event):
@@ -867,9 +869,9 @@ class LastMessageDeliverySensor(CoordinatorEntity, SensorEntity):
         return True
 
     @property
-    def extra_state_attributes(self) -> Dict[str, Any]:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return detailed delivery data as attributes."""
-        attrs: Dict[str, Any] = {}
+        attrs: dict[str, Any] = {}
         if self._message_type is not None:
             attrs["message_type"] = self._message_type
         if self._last_message is not None:
@@ -1819,7 +1821,7 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
         return self.repeater_name in repeater_stats
 
     @property
-    def extra_state_attributes(self) -> Dict[str, Any]:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional state attributes."""
         # First try to use cached stats from events
         if self._cached_stats:
@@ -2301,7 +2303,7 @@ class MeshCoreDiscoveredSummarySensor(CoordinatorEntity, SensorEntity):
         now = time.time()
 
         # Fixed-key per-type breakdown so the attribute shape never changes.
-        by_type: Dict[str, int] = {
+        by_type: dict[str, int] = {
             "chat": 0,           # NodeType.CLIENT
             "repeater": 0,       # NodeType.REPEATER
             "room_server": 0,    # NodeType.ROOM_SERVER

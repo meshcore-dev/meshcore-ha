@@ -35,7 +35,6 @@ from types import SimpleNamespace
 
 import pytest
 
-
 # --- Load the real const.py (bypass the conftest MagicMock stub) -------------
 _PKG = "custom_components.meshcore"
 _BASE = os.path.join(

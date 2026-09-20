@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List
+from typing import Any
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
@@ -15,10 +15,10 @@ from homeassistant.helpers.update_coordinator import (
 
 from .const import (
     DOMAIN,
-    NodeType,
+    SELECT_NO_ADDED,
     SELECT_NO_CONTACTS,
     SELECT_NO_DISCOVERED,
-    SELECT_NO_ADDED,
+    NodeType,
 )
 from .utils import extract_pubkey_from_selection
 
@@ -66,7 +66,7 @@ class MeshCoreChannelSelect(CoordinatorEntity, SelectEntity):
         # Hide from device page
         self._attr_entity_registry_visible_default = False
 
-    def _get_channel_options(self) -> List[str]:
+    def _get_channel_options(self) -> list[str]:
         """Get list of channels with their names."""
         options = []
 
@@ -102,7 +102,7 @@ class MeshCoreChannelSelect(CoordinatorEntity, SelectEntity):
         self.async_write_ha_state()
 
     @property
-    def extra_state_attributes(self) -> Dict[str, Any]:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional state attributes."""
         attributes = {}
 
@@ -142,7 +142,7 @@ class MeshCoreContactSelect(CoordinatorEntity, SelectEntity):
         # Hide from device page
         self._attr_entity_registry_visible_default = False
     
-    def _get_contact_options(self) -> List[str]:
+    def _get_contact_options(self) -> list[str]:
         """Get the list of contact options from the coordinator."""
         try:
             # Use coordinator's cached and managed contacts for consistency
@@ -206,7 +206,7 @@ class MeshCoreContactSelect(CoordinatorEntity, SelectEntity):
         self.async_write_ha_state()
         
     @property
-    def extra_state_attributes(self) -> Dict[str, Any]:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional state attributes."""
         attributes = {}
 
@@ -279,7 +279,7 @@ class MeshCoreDiscoveredContactSelect(CoordinatorEntity, SelectEntity):
         self._attr_options = self._get_discovered_contact_options()
         self._attr_current_option = SELECT_NO_CONTACTS
 
-    def _get_discovered_contact_options(self) -> List[str]:
+    def _get_discovered_contact_options(self) -> list[str]:
         """Get list of discovered contacts not yet added."""
         all_contacts = self.coordinator.get_all_contacts()
 
@@ -318,7 +318,7 @@ class MeshCoreDiscoveredContactSelect(CoordinatorEntity, SelectEntity):
         self.async_write_ha_state()
 
     @property
-    def extra_state_attributes(self) -> Dict[str, Any]:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional state attributes."""
         attributes = {}
 
@@ -350,7 +350,7 @@ class MeshCoreAddedContactSelect(CoordinatorEntity, SelectEntity):
         self._attr_options = self._get_added_contact_options()
         self._attr_current_option = SELECT_NO_CONTACTS
 
-    def _get_added_contact_options(self) -> List[str]:
+    def _get_added_contact_options(self) -> list[str]:
         """Get list of contacts already added to node."""
         all_contacts = self.coordinator.get_all_contacts()
 
@@ -388,7 +388,7 @@ class MeshCoreAddedContactSelect(CoordinatorEntity, SelectEntity):
         self.async_write_ha_state()
 
     @property
-    def extra_state_attributes(self) -> Dict[str, Any]:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional state attributes."""
         attributes = {}
 

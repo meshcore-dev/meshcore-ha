@@ -5,11 +5,9 @@ import logging
 import time
 from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any
 
-from meshcore.events import EventType
-
-from homeassistant.components.binary_sensor import BinarySensorEntity, BinarySensorDeviceClass
+from homeassistant.components.binary_sensor import BinarySensorDeviceClass, BinarySensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
@@ -19,31 +17,31 @@ from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
 )
 
+from meshcore.events import EventType
+
 from .const import (
+    CHANNEL_PREFIX,
     CONF_SELF_DIAGNOSTICS_ENABLED,
+    CONTACT_SUFFIX,
     DOMAIN,
     ENTITY_DOMAIN_BINARY_SENSOR,
     MESSAGES_SUFFIX,
-    CHANNEL_PREFIX,
-    CONTACT_SUFFIX,
+    MODE_DATA_ONLY,
+    MODE_OFF,
     ONLINE_SUFFIX,
     SELF_DIAG_ERR_CAD_TIMEOUT,
     SELF_DIAG_ERR_POOL_FULL,
     SELF_DIAG_ERR_RX_TIMEOUT,
-    MODE_DATA_ONLY,
-    MODE_OFF,
-    get_contact_discovery_mode,
     NodeType,
+    get_contact_discovery_mode,
 )
+from .logbook import handle_channel_message as log_channel_message
+from .logbook import handle_contact_message as log_contact_message
+from .logbook import handle_outgoing_message
 from .utils import (
-    format_entity_id,
     extract_channel_idx,
+    format_entity_id,
     sanitize_name,
-)
-from .logbook import (
-    handle_channel_message as log_channel_message, 
-    handle_contact_message as log_contact_message,
-    handle_outgoing_message
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -466,7 +464,7 @@ class MeshCoreMessageEntity(CoordinatorEntity, BinarySensorEntity):
         return True
     
     @property
-    def extra_state_attributes(self) -> Dict[str, Any]:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return message details as attributes."""
         attributes = {}
         
@@ -555,7 +553,7 @@ class MeshCoreMqttBrokerConnectionBinarySensor(CoordinatorEntity, BinarySensorEn
         return self._connected
 
     @property
-    def extra_state_attributes(self) -> Dict[str, Any]:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return broker context attributes."""
         return {
             "broker_number": self._broker_num,
@@ -641,7 +639,7 @@ class MeshCoreContactDiagnosticBinarySensor(CoordinatorEntity, BinarySensorEntit
     def device_info(self):
         return DeviceInfo(**self.coordinator.device_info)
         
-    def _get_contact_data(self) -> Dict[str, Any]:
+    def _get_contact_data(self) -> dict[str, Any]:
         """Get the data for this contact from the coordinator."""
         # Use O(1) lookup by prefix if we have it
         if self.pubkey_prefix:
@@ -658,7 +656,7 @@ class MeshCoreContactDiagnosticBinarySensor(CoordinatorEntity, BinarySensorEntit
 
         return {}
     
-    def _update_from_contact_data(self, contact: Dict[str, Any]):
+    def _update_from_contact_data(self, contact: dict[str, Any]):
         """Update entity state based on contact data."""
         if not contact:
             return
@@ -713,7 +711,7 @@ class MeshCoreContactDiagnosticBinarySensor(CoordinatorEntity, BinarySensorEntit
         return "fresh" if self.is_on else "stale"
         
     @property
-    def extra_state_attributes(self) -> Dict[str, Any]:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return the contact data as attributes."""
         if not self._contact_data:
             return {"status": "unknown"}
@@ -821,9 +819,9 @@ class MeshCoreDeviceOnlineBinarySensor(CoordinatorEntity, BinarySensorEntity):
         return (time.time() - last_success) < staleness_window
 
     @property
-    def extra_state_attributes(self) -> Dict[str, Any]:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return timing context for the online status."""
-        attrs: Dict[str, Any] = {}
+        attrs: dict[str, Any] = {}
         last_success = self.coordinator._last_successful_request.get(self.pubkey_prefix)
         if last_success is not None:
             attrs["last_successful_request"] = datetime.fromtimestamp(last_success).isoformat()

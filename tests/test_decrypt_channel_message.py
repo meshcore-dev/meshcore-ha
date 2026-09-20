@@ -23,7 +23,6 @@ import struct
 import sys
 from unittest.mock import MagicMock
 
-import pytest
 from Crypto.Cipher import AES
 
 # Stub HA and integration modules that utils.py imports but aren't installed
@@ -68,7 +67,8 @@ def _encrypt(timestamp: int, flags: int, text: str) -> tuple[bytes, bytes]:
     cipher = AES.new(_KEY, AES.MODE_ECB)
     ciphertext = cipher.encrypt(plaintext)
     # MAC is first 2 bytes of HMAC-SHA256 — omit verification path here
-    import hmac as _hmac, hashlib
+    import hashlib
+    import hmac as _hmac
     mac = _hmac.new(_KEY, ciphertext, hashlib.sha256).digest()[:2]
     return ciphertext, mac
 

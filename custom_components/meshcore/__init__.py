@@ -5,52 +5,49 @@ import asyncio
 import json
 import logging
 import time
-from pathlib import Path
 from datetime import timedelta
-from meshcore.events import EventType
+from pathlib import Path
 
-from .const import (
-    CONF_REPEATER_TELEMETRY_ENABLED,
-    CONF_TRACKED_CLIENTS,
-)
-
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
-from homeassistant.components.http import StaticPathConfig
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.device_registry import DeviceEntry
 
+from meshcore.events import EventType
 
 from .const import (
-    DOMAIN,
-    CONF_CONNECTION_TYPE,
-    CONF_NAME,
-    CONF_USB_PATH,
-    CONF_BLE_ADDRESS,
-    CONF_TCP_HOST,
-    CONF_TCP_PORT,
     CONF_BAUDRATE,
-    CONF_PUBKEY,
-    CONF_REPEATER_SUBSCRIPTIONS,
+    CONF_BLE_ADDRESS,
+    CONF_CONNECTION_TYPE,
+    CONF_CONTACT_DISCOVERY_MODE,
+    CONF_FLOOD_SCOPES,
     CONF_LIMIT_DISCOVERED_CONTACTS,
     CONF_MAX_DISCOVERED_CONTACTS,
-    DEFAULT_MAX_DISCOVERED_CONTACTS,
-    CONF_FLOOD_SCOPES,
     CONF_MESSAGES_INTERVAL,
+    CONF_NAME,
+    CONF_PUBKEY,
+    CONF_REPEATER_SUBSCRIPTIONS,
+    CONF_REPEATER_TELEMETRY_ENABLED,
+    CONF_TCP_HOST,
+    CONF_TCP_PORT,
+    CONF_TRACKED_CLIENTS,
+    CONF_USB_PATH,
+    DEFAULT_MAX_DISCOVERED_CONTACTS,
     DEFAULT_UPDATE_TICK,
-    REPAIR_PUBKEY_CHANGED,
-    CONF_CONTACT_DISCOVERY_MODE,
-    MODE_FULL,
+    DOMAIN,
     MODE_DATA_ONLY,
+    MODE_FULL,
     MODE_OFF,
+    REPAIR_PUBKEY_CHANGED,
     get_contact_discovery_mode,
 )
 from .coordinator import MeshCoreDataUpdateCoordinator
-from .meshcore_api import MeshCoreAPI
 from .map_uploader import MeshCoreMapUploader
+from .meshcore_api import MeshCoreAPI
 from .mqtt_uploader import MeshCoreMqttUploader
 from .services import async_setup_services, async_unload_services
 from .utils import (

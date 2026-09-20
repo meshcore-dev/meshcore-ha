@@ -7,67 +7,64 @@ import random
 import time
 from collections import deque
 from datetime import timedelta
-from typing import Any, Dict
+from typing import Any
 
 from cachetools import TTLCache
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
-from homeassistant.helpers.storage import Store
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.storage import Store
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from meshcore.events import Event, EventType
 
-from .rate_limiter import TokenBucket
 from .const import (
+    AUTO_DISABLE_HOURS,
+    CLI_CONSOLE_MAX_LINES,
+    CONF_AUTO_CLEANUP_STALE_CONTACTS,
+    CONF_AUTO_CLEANUP_STALE_NEIGHBORS,
+    CONF_CLIENT_DISABLE_PATH_RESET,
+    CONF_CLIENT_UPDATE_INTERVAL,
     CONF_CONSUME_INCOMING_MESSAGES,
+    CONF_DEVICE_DISABLED,
     CONF_NAME,
     CONF_PUBKEY,
-    DOMAIN,
-    CONF_REPEATER_SUBSCRIPTIONS,
-    CONF_REPEATER_PASSWORD,
-    CONF_REPEATER_UPDATE_INTERVAL,
     CONF_REPEATER_DISABLE_PATH_RESET,
-    DEFAULT_REPEATER_UPDATE_INTERVAL,
-    CONF_TRACKED_CLIENTS,
-    CONF_CLIENT_UPDATE_INTERVAL,
-    CONF_CLIENT_DISABLE_PATH_RESET,
-    DEFAULT_CLIENT_UPDATE_INTERVAL,
-    MAX_REPEATER_FAILURES_BEFORE_LOGIN,
-    REPEATER_BACKOFF_BASE,
-    MAX_FAILURES_BEFORE_PATH_RESET,
-    MAX_RANDOM_DELAY,
+    CONF_REPEATER_NEIGHBORS_ENABLED,
+    CONF_REPEATER_PASSWORD,
+    CONF_REPEATER_SUBSCRIPTIONS,
     CONF_REPEATER_TELEMETRY_ENABLED,
-    CONF_SELF_TELEMETRY_ENABLED,
-    CONF_SELF_TELEMETRY_INTERVAL,
-    DEFAULT_SELF_TELEMETRY_INTERVAL,
-    CLI_CONSOLE_MAX_LINES,
+    CONF_REPEATER_UPDATE_INTERVAL,
     CONF_SELF_DIAGNOSTICS_ENABLED,
     CONF_SELF_DIAGNOSTICS_INTERVAL,
-    DEFAULT_SELF_DIAGNOSTICS_INTERVAL,
-    CONF_AUTO_CLEANUP_STALE_CONTACTS,
+    CONF_SELF_TELEMETRY_ENABLED,
+    CONF_SELF_TELEMETRY_INTERVAL,
     CONF_STALE_CONTACT_DAYS,
+    CONF_STALE_NEIGHBOR_DAYS,
+    CONF_TRACKED_CLIENTS,
+    DEFAULT_CLIENT_UPDATE_INTERVAL,
+    DEFAULT_REPEATER_UPDATE_INTERVAL,
+    DEFAULT_SELF_DIAGNOSTICS_INTERVAL,
+    DEFAULT_SELF_TELEMETRY_INTERVAL,
     DEFAULT_STALE_CONTACT_DAYS,
-    CONF_DEVICE_DISABLED,
-    AUTO_DISABLE_HOURS,
+    DEFAULT_STALE_NEIGHBOR_DAYS,
+    DOMAIN,
+    MAX_FAILURES_BEFORE_PATH_RESET,
+    MAX_RANDOM_DELAY,
+    MAX_REPEATER_FAILURES_BEFORE_LOGIN,
+    MODE_FULL,
+    MODE_OFF,
+    NEIGHBOR_PUBKEY_PREFIX_LENGTH,
     RATE_LIMITER_CAPACITY,
     RATE_LIMITER_REFILL_RATE_SECONDS,
+    REPEATER_BACKOFF_BASE,
     RX_LOG_CACHE_MAX_SIZE,
     RX_LOG_CACHE_TTL_SECONDS,
-    NEIGHBOR_PUBKEY_PREFIX_LENGTH,
-    NEIGHBOR_STALE_THRESHOLD,
     SEEN_WINDOW_SECS,
-    CONF_REPEATER_NEIGHBORS_ENABLED,
-    CONF_AUTO_CLEANUP_STALE_NEIGHBORS,
-    CONF_STALE_NEIGHBOR_DAYS,
-    DEFAULT_STALE_NEIGHBOR_DAYS,
-    MODE_FULL,
-    MODE_DATA_ONLY,
-    MODE_OFF,
     get_contact_discovery_mode,
 )
 from .meshcore_api import MeshCoreAPI
+from .rate_limiter import TokenBucket
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -152,7 +149,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         )     
         self.api = api
         self.config_entry = config_entry
-        self.data: Dict[str, Any] = {}
+        self.data: dict[str, Any] = {}
         self._current_node_info = {}
         self._contacts = {}  # Dict keyed by 12-char public_key prefix
         self._discovered_contacts = {}  # Dict keyed by public_key
@@ -276,7 +273,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         # Repeater neighbor tracking
         # Key: repeater pubkey_prefix, Value: dict of neighbor data keyed by neighbor pubkey
         # Each neighbor entry: {pubkey, snr, secs_ago, last_updated, resolved_name}
-        self._repeater_neighbors: Dict[str, Dict[str, dict]] = {}
+        self._repeater_neighbors: dict[str, dict[str, dict]] = {}
         # Track which neighbor sensor entities have been created: set of "repeater_pubkey:neighbor_pubkey"
         self._created_neighbor_sensors: set = set()
 
@@ -774,7 +771,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         )
         return removed_count
 
-    def get_contact_by_prefix(self, prefix: str) -> Dict[str, Any]:
+    def get_contact_by_prefix(self, prefix: str) -> dict[str, Any]:
         """Get a contact by its public key prefix.
 
         Searches all contacts (both added and discovered).
@@ -1043,7 +1040,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     self._created_neighbor_sensors.add(sensor_key)
 
             if new_neighbors and hasattr(self, "sensor_add_entities") and self.sensor_add_entities:
-                from .sensor import MeshCoreNeighborSensor, MeshCoreNeighborSeenSensor
+                from .sensor import MeshCoreNeighborSeenSensor, MeshCoreNeighborSensor
                 new_entities = []
                 for n_pubkey in new_neighbors:
                     try:
@@ -1519,7 +1516,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         """Whether HA may drain the Companion chat queue."""
         return self.config_entry.data.get(CONF_CONSUME_INCOMING_MESSAGES, True)
 
-    async def async_flush_messages(self) -> Dict[str, Any]:
+    async def async_flush_messages(self) -> dict[str, Any]:
         """Immediately flush pending messages from the device queue.
 
         Called by the MESSAGES_WAITING event handler for instant message
@@ -1543,7 +1540,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             except Exception as ex:
                 _LOGGER.error("Error in async_flush_messages: %s", ex)
 
-    async def _async_update_data(self) -> Dict[str, Any]:
+    async def _async_update_data(self) -> dict[str, Any]:
         """Trigger commands that will generate events on schedule.
         
         In the event-driven architecture, this method:

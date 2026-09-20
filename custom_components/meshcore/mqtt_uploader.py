@@ -12,12 +12,16 @@ import ssl
 import subprocess
 import time
 from collections.abc import Callable
-from datetime import datetime, timezone
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
+import nacl.bindings
+import paho.mqtt.client as mqtt
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+
+from meshcore.events import EventType
 
 from .const import (
     CONF_MQTT_BROKERS,
@@ -27,10 +31,6 @@ from .const import (
     CONF_NAME,
     CONF_PUBKEY,
 )
-
-import paho.mqtt.client as mqtt
-import nacl.bindings
-from meshcore.events import EventType
 
 
 def _as_bool(value: str | bool | None, default: bool = False) -> bool:
@@ -785,7 +785,7 @@ class MeshCoreMqttUploader:
             payload_json = json.dumps(payload, separators=(",", ":")).encode("utf-8")
             header_encoded = self._base64url_encode(header_json)
             payload_encoded = self._base64url_encode(payload_json)
-            signing_input = f"{header_encoded}.{payload_encoded}".encode("utf-8")
+            signing_input = f"{header_encoded}.{payload_encoded}".encode()
 
             private_bytes = bytes.fromhex(private_key_hex)
             scalar = private_bytes[:32]
@@ -819,7 +819,7 @@ class MeshCoreMqttUploader:
         """Build status payload compatible with other uploaders."""
         payload: dict[str, Any] = {
             "status": state,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "origin": self.node_name,
             "origin_id": self.public_key or "DEVICE",
             "source": "meshcore-ha",
@@ -1016,7 +1016,7 @@ class MeshCoreMqttUploader:
     def _build_raw_event_payload(self, event_type: str, payload: Any) -> dict[str, Any]:
         """Build raw event payload for non-normalized broker mode."""
         return {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "origin": self.node_name,
             "origin_id": self.public_key or "DEVICE",
             "source": "meshcore-ha",
@@ -1145,7 +1145,7 @@ class MeshCoreMqttUploader:
         if "RX_LOG" not in et and "RF_LOG" not in et and "PACKET" not in et:
             return None
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         payload_hex = str(payload.get("payload") or "").strip()
         raw_hex_fallback = str(payload.get("raw_hex") or "").strip()
         # Match packet-capture behavior: prefer payload, fallback to raw_hex without first 2 bytes.

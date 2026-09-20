@@ -8,14 +8,15 @@ import re
 import shlex
 import time
 import uuid
-import voluptuous as vol
-from typing import Any, Dict, Optional, cast
+from typing import Any, cast
 
+import voluptuous as vol
+from homeassistant.const import MAJOR_VERSION, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import Context, HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.helpers import config_validation as cv
-from homeassistant.const import MAJOR_VERSION, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.service import async_register_admin_service
+
 from meshcore.events import EventType
 
 # Commands that modify values reported in SELF_INFO.
@@ -36,40 +37,40 @@ _SELF_INFO_COMMANDS = frozenset({
     "import_private_key",
 })
 
+from .binary_sensor import create_contact_sensor
 from .const import (
-    ATTR_PUBKEY_PREFIX,
-    MODE_DATA_ONLY,
-    get_contact_discovery_mode,
-    DOMAIN,
-    SERVICE_SEND_MESSAGE,
-    SERVICE_SEND_CHANNEL_MESSAGE,
-    SERVICE_EXECUTE_COMMAND,
-    SERVICE_EXECUTE_COMMAND_UI,
-    SERVICE_CLI_CLEAR,
-    EVENT_CLI_RESPONSE,
-    SERVICE_MESSAGE_SCRIPT,
-    SERVICE_ADD_SELECTED_CONTACT,
-    SERVICE_REMOVE_SELECTED_CONTACT,
-    SERVICE_REMOVE_DISCOVERED_CONTACT,
-    SERVICE_CLEANUP_UNAVAILABLE_CONTACTS,
-    SERVICE_CLEAR_DISCOVERED_CONTACTS,
-    SERVICE_GET_CONTACTS,
-    SERVICE_GET_DISCOVERED_CONTACT,
-    SERVICE_GET_CHANNELS,
-    SERVICE_TRACE,
-    SELECT_NO_CONTACTS,
-    SELECT_NO_DISCOVERED,
-    SELECT_NO_ADDED,
-    ATTR_NODE_ID,
     ATTR_CHANNEL_IDX,
-    ATTR_MESSAGE,
     ATTR_COMMAND,
     ATTR_ENTRY_ID,
-    ATTR_SCOPE,
+    ATTR_MESSAGE,
+    ATTR_NODE_ID,
+    ATTR_PUBKEY_PREFIX,
     ATTR_RECORD_TO_CONSOLE,
+    ATTR_SCOPE,
+    DOMAIN,
+    EVENT_CLI_RESPONSE,
+    MODE_DATA_ONLY,
+    SELECT_NO_ADDED,
+    SELECT_NO_CONTACTS,
+    SELECT_NO_DISCOVERED,
+    SERVICE_ADD_SELECTED_CONTACT,
+    SERVICE_CLEANUP_UNAVAILABLE_CONTACTS,
+    SERVICE_CLEAR_DISCOVERED_CONTACTS,
+    SERVICE_CLI_CLEAR,
+    SERVICE_EXECUTE_COMMAND,
+    SERVICE_EXECUTE_COMMAND_UI,
+    SERVICE_GET_CHANNELS,
+    SERVICE_GET_CONTACTS,
+    SERVICE_GET_DISCOVERED_CONTACT,
+    SERVICE_MESSAGE_SCRIPT,
+    SERVICE_REMOVE_DISCOVERED_CONTACT,
+    SERVICE_REMOVE_SELECTED_CONTACT,
+    SERVICE_SEND_CHANNEL_MESSAGE,
+    SERVICE_SEND_MESSAGE,
+    SERVICE_TRACE,
+    get_contact_discovery_mode,
 )
 from .utils import extract_pubkey_from_selection
-from .binary_sensor import create_contact_sensor
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -1590,7 +1591,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     # companion integrations don't have to string-scrape execute_command output.
     # See docs/docs/companion-integration-api.md for the published surface.
 
-    def _resolve_coordinator(entry_id: Optional[str]) -> Any:
+    def _resolve_coordinator(entry_id: str | None) -> Any:
         """Locate a MeshCore coordinator by entry_id, or the first available one."""
         if entry_id:
             coord = hass.data[DOMAIN].get(entry_id)
@@ -1892,7 +1893,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                 path_event = await asyncio.wait_for(
                     path_response_task, timeout=pd_timeout,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 path_response_task.cancel()
                 path_event = None
             except Exception as ex:
@@ -2075,9 +2076,9 @@ async def async_unload_services(hass: HomeAssistant) -> None:
 def create_service_call(
     domain: str,
     service: str,
-    data: Optional[Dict[str, Any]] = None,
-    hass: Optional[HomeAssistant] = None,
-    context: Optional[Context] = None,
+    data: dict[str, Any] | None = None,
+    hass: HomeAssistant | None = None,
+    context: Context | None = None,
 ) -> ServiceCall:
     """Returns a ServiceCall instance compatible with the current Home Assistant version.
     

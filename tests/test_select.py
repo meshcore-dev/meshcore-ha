@@ -15,7 +15,7 @@ def _load_select_ast() -> ast.Module:
         os.path.dirname(os.path.dirname(__file__)),
         "custom_components", "meshcore", "select.py",
     )
-    with open(path, "r", encoding="utf-8") as fh:
+    with open(path, encoding="utf-8") as fh:
         return ast.parse(fh.read())
 
 

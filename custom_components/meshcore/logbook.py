@@ -1,22 +1,18 @@
 """Logbook integration for MeshCore."""
 import asyncio
 import logging
-from typing import  Callable
+from collections.abc import Callable
 
-from homeassistant.core import HomeAssistant, callback, Event
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CONF_ADAPTIVE_POLL_WAIT,
+    DEFAULT_DEVICE_NAME,
     DOMAIN,
     ENTITY_DOMAIN_BINARY_SENSOR,
-    DEFAULT_DEVICE_NAME,
-    CONF_ADAPTIVE_POLL_WAIT,
 )
-from .utils import (
-    create_message_correlation_key,
-    get_channel_entity_id,
-    get_contact_entity_id
-)
+from .utils import create_message_correlation_key, get_channel_entity_id, get_contact_entity_id
 
 _LOGGER = logging.getLogger(__name__)
 

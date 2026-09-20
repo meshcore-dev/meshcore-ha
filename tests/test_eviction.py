@@ -1,8 +1,7 @@
 """Tests for discovered contacts FIFO eviction logic."""
-import asyncio
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 
 DOMAIN = "meshcore"
 

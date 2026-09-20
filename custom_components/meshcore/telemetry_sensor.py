@@ -6,9 +6,8 @@ import logging
 import time
 from datetime import datetime
 from functools import partial
-from typing import Any, Dict
+from typing import Any
 
-from custom_components.meshcore import MeshCoreDataUpdateCoordinator
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -18,12 +17,12 @@ from homeassistant.components.sensor import (
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+
+from custom_components.meshcore import MeshCoreDataUpdateCoordinator
 from meshcore import EventType
 from meshcore.events import Event
 
 from .const import (
-    BAT_VMAX,
-    BAT_VMIN,
     CONF_REPEATER_SUBSCRIPTIONS,
     CONF_TRACKED_CLIENTS,
     DOMAIN,
@@ -268,7 +267,7 @@ class TelemetrySensorManager:
             if sensor_key.startswith(pubkey_prefix) and sensor not in new_sensors:
                 sensor.update_from_telemetry(lpp_data)
 
-    def _get_node_info(self, pubkey_prefix: str) -> Dict[str, Any]:
+    def _get_node_info(self, pubkey_prefix: str) -> dict[str, Any]:
         """Get node information for smart naming."""
         # Check if this is a tracked repeater
         repeater_subscriptions = self.coordinator.config_entry.data.get(
@@ -326,7 +325,7 @@ class TelemetrySensorManager:
         channel: int,
         lpp_type: int | str,
         value: Any,
-        node_info: Dict[str, Any],
+        node_info: dict[str, Any],
     ) -> list[MeshCoreTelemetrySensor]:
         """Create sensors for a channel, handling multi-value sensors."""
         # Special handling for client battery on channel 1
@@ -479,7 +478,7 @@ class MeshCoreTelemetrySensor(CoordinatorEntity, SensorEntity):
         pubkey_prefix: str,
         channel: int,
         lpp_type: int | str,
-        node_info: Dict[str, Any],
+        node_info: dict[str, Any],
         field: str = None,  # type: ignore
     ) -> None:
         """Initialize the telemetry sensor."""
@@ -592,7 +591,7 @@ class MeshCoreTelemetrySensor(CoordinatorEntity, SensorEntity):
         return time.time() - self._last_updated < timeout
 
     @property
-    def extra_state_attributes(self) -> Dict[str, Any]:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional state attributes."""
         attributes = {
             "channel": self.channel,
@@ -653,7 +652,7 @@ class MeshCoreBatteryPercentageSensor(MeshCoreTelemetrySensor):
                 break
 
     @property
-    def extra_state_attributes(self) -> Dict[str, Any]:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional state attributes including the raw voltage."""
         attributes = super().extra_state_attributes
         if self._raw_value is not None:

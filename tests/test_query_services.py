@@ -16,7 +16,6 @@ tests match that validated behavior:
     flood contacts, and issues ``send_trace(0, tag, 0, bytes)`` with a
     round-trip 1-byte-hash path.
 """
-import asyncio
 import importlib.util
 import os
 import sys

@@ -1,19 +1,19 @@
 """API for communicating with MeshCore devices using the meshcore-py library."""
-import logging
 import asyncio
+import logging
 import time
-from typing import Any, Optional
 from asyncio import Lock
+from typing import Any
+
+from homeassistant.core import HomeAssistant
 
 from meshcore import MeshCore
 from meshcore.events import EventType
 
-from homeassistant.core import HomeAssistant
-
 from .const import (
-    CONNECTION_TYPE_USB,
     CONNECTION_TYPE_BLE,
     CONNECTION_TYPE_TCP,
+    CONNECTION_TYPE_USB,
     DEFAULT_BAUDRATE,
     DEFAULT_TCP_PORT,
     DOMAIN,
@@ -28,10 +28,10 @@ class MeshCoreAPI:
         self,
         hass: HomeAssistant,
         connection_type: str,
-        usb_path: Optional[str] = None,
+        usb_path: str | None = None,
         baudrate: int = DEFAULT_BAUDRATE,
-        ble_address: Optional[str] = None,
-        tcp_host: Optional[str] = None,
+        ble_address: str | None = None,
+        tcp_host: str | None = None,
         tcp_port: int = DEFAULT_TCP_PORT,
     ) -> None:
         """Initialize the API."""
@@ -58,7 +58,7 @@ class MeshCoreAPI:
         self._reconnect_task = None
         
     @property
-    def mesh_core(self) -> Optional[MeshCore]:
+    def mesh_core(self) -> MeshCore | None:
         """Get the underlying MeshCore instance, or None if not connected.
 
         Returns None when disconnected so callers can safely check

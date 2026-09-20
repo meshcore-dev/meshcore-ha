@@ -2,81 +2,82 @@
 import asyncio
 import copy
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
+import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
+from bleak import BleakScanner
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
-import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.selector import (
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
 )
-from bleak import BleakScanner
+
 from meshcore.events import EventType
 
 from .const import (
-    CONF_CONSUME_INCOMING_MESSAGES,
-    CONF_NAME,
-    CONF_PUBKEY,
-    DOMAIN,
-    CONF_CONNECTION_TYPE,
-    CONF_USB_PATH,
-    CONF_BLE_ADDRESS,
-    CONF_TCP_HOST,
-    CONF_TCP_PORT,
+    CONF_ADAPTIVE_POLL_WAIT,
+    CONF_AUTO_CLEANUP_STALE_CONTACTS,
+    CONF_AUTO_CLEANUP_STALE_NEIGHBORS,
     CONF_BAUDRATE,
-    CONNECTION_TYPE_USB,
-    CONNECTION_TYPE_BLE,
-    CONNECTION_TYPE_TCP,
-    DEFAULT_BAUDRATE,
-    DEFAULT_TCP_PORT,
-    CONNECTION_TIMEOUT,
-    CONF_REPEATER_SUBSCRIPTIONS,
-    CONF_REPEATER_NAME,
-    CONF_REPEATER_PASSWORD,
-    CONF_REPEATER_UPDATE_INTERVAL,
-    CONF_REPEATER_TELEMETRY_ENABLED,
-    CONF_REPEATER_DISABLE_PATH_RESET,
-    CONF_REPEATER_NEIGHBORS_ENABLED,
-    DEFAULT_REPEATER_UPDATE_INTERVAL,
-    MIN_UPDATE_INTERVAL,
-    CONF_TRACKED_CLIENTS,
+    CONF_BLE_ADDRESS,
+    CONF_CLI_CONSOLE_ENABLED,
+    CONF_CLIENT_DISABLE_PATH_RESET,
     CONF_CLIENT_NAME,
     CONF_CLIENT_UPDATE_INTERVAL,
-    CONF_CLIENT_DISABLE_PATH_RESET,
-    DEFAULT_CLIENT_UPDATE_INTERVAL,
-    CONF_DEVICE_DISABLED,
-    CONF_LIMIT_DISCOVERED_CONTACTS,
-    CONF_MAX_DISCOVERED_CONTACTS,
-    DEFAULT_MAX_DISCOVERED_CONTACTS,
+    CONF_CONNECTION_TYPE,
+    CONF_CONSUME_INCOMING_MESSAGES,
     CONF_CONTACT_DISCOVERY_MODE,
-    DEFAULT_CONTACT_DISCOVERY_MODE,
-    CONTACT_DISCOVERY_MODES,
-    get_contact_discovery_mode,
-    CONF_SELF_TELEMETRY_ENABLED,
-    CONF_SELF_TELEMETRY_INTERVAL,
-    DEFAULT_SELF_TELEMETRY_INTERVAL,
-    CONF_SELF_DIAGNOSTICS_ENABLED,
-    CONF_SELF_DIAGNOSTICS_INTERVAL,
-    CONF_CLI_CONSOLE_ENABLED,
-    DEFAULT_SELF_DIAGNOSTICS_INTERVAL,
-    CONF_MAP_UPLOAD_ENABLED,
-    CONF_AUTO_CLEANUP_STALE_CONTACTS,
-    CONF_STALE_CONTACT_DAYS,
-    DEFAULT_STALE_CONTACT_DAYS,
-    CONF_ADAPTIVE_POLL_WAIT,
+    CONF_DEVICE_DISABLED,
     CONF_FLOOD_SCOPES,
-    CONF_AUTO_CLEANUP_STALE_NEIGHBORS,
-    CONF_STALE_NEIGHBOR_DAYS,
-    DEFAULT_STALE_NEIGHBOR_DAYS,
+    CONF_LIMIT_DISCOVERED_CONTACTS,
+    CONF_MAP_UPLOAD_ENABLED,
+    CONF_MAX_DISCOVERED_CONTACTS,
+    CONF_MQTT_BROKERS,
     CONF_MQTT_IATA,
     CONF_MQTT_TOKEN_TTL_SECONDS,
-    CONF_MQTT_BROKERS,
+    CONF_NAME,
+    CONF_PUBKEY,
+    CONF_REPEATER_DISABLE_PATH_RESET,
+    CONF_REPEATER_NAME,
+    CONF_REPEATER_NEIGHBORS_ENABLED,
+    CONF_REPEATER_PASSWORD,
+    CONF_REPEATER_SUBSCRIPTIONS,
+    CONF_REPEATER_TELEMETRY_ENABLED,
+    CONF_REPEATER_UPDATE_INTERVAL,
+    CONF_SELF_DIAGNOSTICS_ENABLED,
+    CONF_SELF_DIAGNOSTICS_INTERVAL,
+    CONF_SELF_TELEMETRY_ENABLED,
+    CONF_SELF_TELEMETRY_INTERVAL,
+    CONF_STALE_CONTACT_DAYS,
+    CONF_STALE_NEIGHBOR_DAYS,
+    CONF_TCP_HOST,
+    CONF_TCP_PORT,
+    CONF_TRACKED_CLIENTS,
+    CONF_USB_PATH,
+    CONNECTION_TIMEOUT,
+    CONNECTION_TYPE_BLE,
+    CONNECTION_TYPE_TCP,
+    CONNECTION_TYPE_USB,
+    CONTACT_DISCOVERY_MODES,
+    DEFAULT_BAUDRATE,
+    DEFAULT_CLIENT_UPDATE_INTERVAL,
+    DEFAULT_CONTACT_DISCOVERY_MODE,
+    DEFAULT_MAX_DISCOVERED_CONTACTS,
+    DEFAULT_REPEATER_UPDATE_INTERVAL,
+    DEFAULT_SELF_DIAGNOSTICS_INTERVAL,
+    DEFAULT_SELF_TELEMETRY_INTERVAL,
+    DEFAULT_STALE_CONTACT_DAYS,
+    DEFAULT_STALE_NEIGHBOR_DAYS,
+    DEFAULT_TCP_PORT,
+    DOMAIN,
+    MIN_UPDATE_INTERVAL,
     NodeType,
+    get_contact_discovery_mode,
 )
 from .meshcore_api import MeshCoreAPI
 
@@ -141,7 +142,7 @@ def _contact_discovery_mode_selector() -> SelectSelector:
     )
 
 
-async def validate_common(api: MeshCoreAPI) -> Dict[str, Any]:
+async def validate_common(api: MeshCoreAPI) -> dict[str, Any]:
     """Validate the user input allows us to connect to the USB device."""
     try: 
         # Try to connect with timeout
@@ -172,13 +173,13 @@ async def validate_common(api: MeshCoreAPI) -> Dict[str, Any]:
         
         # If we get here, the connection was successful and we got valid info
         return {"title": f"MeshCore Node {device_name}", "name": device_name, "pubkey": public_key}
-    except asyncio.TimeoutError:
+    except TimeoutError:
         raise CannotConnect("Connection timed out")
     except Exception as ex:
         _LOGGER.error("Validation error: %s", ex)
         raise CannotConnect(f"Failed to connect: {str(ex)}")
 
-async def validate_usb_input(hass: HomeAssistant, data: Dict[str, Any]) -> Dict[str, Any]:
+async def validate_usb_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     """Validate the user input allows us to connect to the USB device."""
     api = MeshCoreAPI(
         hass=hass,
@@ -189,7 +190,7 @@ async def validate_usb_input(hass: HomeAssistant, data: Dict[str, Any]) -> Dict[
     return await validate_common(api)
 
 
-async def validate_ble_input(hass: HomeAssistant, data: Dict[str, Any]) -> Dict[str, Any]:
+async def validate_ble_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     """Validate the user input allows us to connect to the BLE device."""
     api = MeshCoreAPI(
         hass=hass,
@@ -199,7 +200,7 @@ async def validate_ble_input(hass: HomeAssistant, data: Dict[str, Any]) -> Dict[
     return await validate_common(api)
 
 
-async def validate_tcp_input(hass: HomeAssistant, data: Dict[str, Any]) -> Dict[str, Any]:
+async def validate_tcp_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     """Validate the user input allows us to connect to the TCP device."""
     api = MeshCoreAPI(
         hass=hass,
@@ -217,8 +218,8 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
 
     def __init__(self) -> None:
         """Initialize flow."""
-        self.connection_type: Optional[str] = None
-        self.discovery_info: Optional[Dict[str, Any]] = None
+        self.connection_type: str | None = None
+        self.discovery_info: dict[str, Any] | None = None
         
     @staticmethod
     @callback
@@ -226,7 +227,7 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
         """Get the options flow for this handler."""
         return OptionsFlowHandler()
 
-    async def async_step_reconfigure(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
+    async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Handle reconfiguration of the connection type/params."""
         if user_input is not None:
             self.connection_type = user_input[CONF_CONNECTION_TYPE]
@@ -245,7 +246,7 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
             description_placeholders={"current_connection": current_type},
         )
 
-    async def _reconfigure_save(self, connection_data: Dict[str, Any], info: Dict[str, Any]) -> FlowResult:
+    async def _reconfigure_save(self, connection_data: dict[str, Any], info: dict[str, Any]) -> FlowResult:
         """Merge new connection params into existing config entry, preserving all other settings."""
         entry = self._get_reconfigure_entry()
         new_data = dict(entry.data)
@@ -258,9 +259,9 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
         # will detect the mismatch on reload and run entity migration.
         return self.async_update_reload_and_abort(entry, data=new_data, title=info["title"])
 
-    async def async_step_reconfigure_usb(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
+    async def async_step_reconfigure_usb(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Handle USB reconfiguration."""
-        errors: Dict[str, str] = {}
+        errors: dict[str, str] = {}
         entry = self._get_reconfigure_entry()
 
         if user_input is not None:
@@ -288,9 +289,9 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
             errors=errors,
         )
 
-    async def async_step_reconfigure_ble(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
+    async def async_step_reconfigure_ble(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Handle BLE reconfiguration."""
-        errors: Dict[str, str] = {}
+        errors: dict[str, str] = {}
         entry = self._get_reconfigure_entry()
 
         if user_input is not None:
@@ -326,9 +327,9 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
             step_id="reconfigure_ble", data_schema=schema, errors=errors,
         )
 
-    async def async_step_reconfigure_tcp(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
+    async def async_step_reconfigure_tcp(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Handle TCP reconfiguration."""
-        errors: Dict[str, str] = {}
+        errors: dict[str, str] = {}
         entry = self._get_reconfigure_entry()
 
         if user_input is not None:
@@ -356,9 +357,9 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
             errors=errors,
         )
 
-    async def async_step_user(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Handle the initial step."""
-        errors: Dict[str, str] = {}
+        errors: dict[str, str] = {}
 
         if user_input is not None:
             self.connection_type = user_input[CONF_CONNECTION_TYPE]
@@ -374,9 +375,9 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
             step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
         )
 
-    async def async_step_usb(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
+    async def async_step_usb(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Handle USB configuration."""
-        errors: Dict[str, str] = {}
+        errors: dict[str, str] = {}
 
         if user_input is not None:
             try:
@@ -418,9 +419,9 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
             errors=errors
         )
 
-    async def async_step_ble(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
+    async def async_step_ble(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Handle BLE configuration."""
-        errors: Dict[str, str] = {}
+        errors: dict[str, str] = {}
 
         if user_input is not None:
             try:
@@ -483,9 +484,9 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
             step_id="ble", data_schema=schema, errors=errors
         )
 
-    async def async_step_tcp(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
+    async def async_step_tcp(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Handle TCP configuration."""
-        errors: Dict[str, str] = {}
+        errors: dict[str, str] = {}
 
         if user_input is not None:
             try:
@@ -976,7 +977,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             }),
         )
 
-    def _get_mqtt_brokers_data(self) -> Dict[str, Dict[str, Any]]:
+    def _get_mqtt_brokers_data(self) -> dict[str, dict[str, Any]]:
         """Get MQTT broker settings from config entry data."""
         brokers = self.config_entry.data.get(CONF_MQTT_BROKERS, {})
         if isinstance(brokers, dict):
@@ -984,7 +985,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         return {}
 
     @staticmethod
-    def _sorted_mqtt_broker_keys(brokers: Dict[str, Dict[str, Any]]) -> list[str]:
+    def _sorted_mqtt_broker_keys(brokers: dict[str, dict[str, Any]]) -> list[str]:
         """Return broker keys sorted numerically when possible."""
         def key_sorter(value: str) -> tuple[int, str]:
             return (0, f"{int(value):04d}") if value.isdigit() else (1, value)
@@ -992,7 +993,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         return sorted(brokers.keys(), key=key_sorter)
 
     @staticmethod
-    def _format_mqtt_broker_label(broker_key: str, broker: Dict[str, Any]) -> str:
+    def _format_mqtt_broker_label(broker_key: str, broker: dict[str, Any]) -> str:
         """Build display label for a configured broker."""
         enabled = bool(broker.get("enabled", False))
         server = str(broker.get("server", "") or "").strip() or "(no server)"
@@ -1000,7 +1001,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         return f"Broker {broker_key}: {server} ({status})"
 
     @staticmethod
-    def _next_mqtt_broker_key(brokers: Dict[str, Dict[str, Any]]) -> str | None:
+    def _next_mqtt_broker_key(brokers: dict[str, dict[str, Any]]) -> str | None:
         """Find next available broker key within max supported brokers."""
         used = set(brokers.keys())
         for idx in range(1, MAX_MQTT_BROKERS + 1):
@@ -1040,7 +1041,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         broker_list = "\n".join([f"• {label}" for label in broker_options.values()]) or "No MQTT brokers configured."
 
         if broker_options:
-            action_options: Dict[str, str] = {
+            action_options: dict[str, str] = {
                 "edit": "Edit Broker",
                 "remove": "Remove Broker",
                 "back": "Back",
@@ -1153,7 +1154,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
         return client_contacts
 
-    def _iter_known_contacts(self) -> list[Dict[str, Any]]:
+    def _iter_known_contacts(self) -> list[dict[str, Any]]:
         """Return merged contacts from coordinator (added + discovered)."""
         if not self.hass or DOMAIN not in self.hass.data:
             return []
@@ -1172,7 +1173,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         return []
 
     @staticmethod
-    def _contact_name(contact: Dict[str, Any]) -> str:
+    def _contact_name(contact: dict[str, Any]) -> str:
         """Get best available contact display name."""
         return (
             contact.get("adv_name")
@@ -1182,7 +1183,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         )
 
     @staticmethod
-    def _normalize_contact_type(contact: Dict[str, Any]):
+    def _normalize_contact_type(contact: dict[str, Any]):
         """Normalize contact type from various formats to NodeType/int when possible."""
         raw = contact.get("type", contact.get("node_type"))
         if isinstance(raw, NodeType):
@@ -1275,7 +1276,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 repeater["firmware_version"] = ver
 
                 # Update device registry sw_version
-                from homeassistant.helpers.device_registry import async_get as async_get_device_registry
+                from homeassistant.helpers.device_registry import (
+                    async_get as async_get_device_registry,
+                )
                 device_registry = async_get_device_registry(self.hass)
                 device_id = f"{self.config_entry.entry_id}_repeater_{prefix}"
                 for device in device_registry.devices.values():
