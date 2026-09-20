@@ -1,0 +1,87 @@
+// meshcore-ha internal architecture (one config entry = one companion radio)
+pack logos
+
+person user "HA user"
+
+system ha "Home Assistant surfaces" {
+  description: "What users and automations touch"
+  icon: sys/assistant
+  services = sys/webhook  "services.py" { subtitle: "HA services", description: "send_message, execute_command, trace, get_contacts" }
+  ui       = sys/app-window "select / text / button"
+  entities = sys/activity "entities" { subtitle: "push-fed platforms", description: "sensor, binary_sensor, device_tracker, telemetry" }
+  bus      = sys/pubsub   "HA event bus" { subtitle: "meshcore_* events", description: "frozen shapes, pinned by fixtures" }
+  uploads  = sys/globe    "uploaders" { subtitle: "MQTT, map" }
+  options  = sys/cog      "config / options flow"
+  ui -> services
+}
+
+system coord "coordinator.py" {
+  description: "5s tick, per-node polling, entry state"
+  icon: sys/timer
+  tick  = sys/timer    "tick" { subtitle: "every 5s", description: "battery, contacts, self telemetry, message drain" }
+  nodes = sys/repeat   "per-node tasks" { subtitle: "status, telemetry", description: "one background task per tracked node; neighbours paging" }
+  state = sys/database "entry state" datastore { subtitle: "contacts, stats", description: "contacts, discovered FIFO, neighbours, reliability" }
+  tick -> nodes
+  nodes -> state
+}
+
+system traffic "traffic.py" {
+  description: "pure decisions behind traffic_policy"
+  icon: sys/gauge
+  policy = sys/route "traffic_policy" { subtitle: "legacy | governed", description: "legacy (default) keeps today's numbers; governed is cost-weighted with deferral" }
+  budget = sys/gauge "MeshBudget"
+  rules  = sys/cog   "ladder rules" { subtitle: "backoff, login", description: "backoff, login trigger, path reset, auto-disable" }
+  policy -> budget
+  policy -> rules
+}
+
+system radio "radio.py + radio_commands.py" {
+  description: "sole owner of the SDK object"
+  icon: sys/radio
+  session = sys/repeat "RadioSession" { subtitle: "owns the SDK object", description: "start, bounded close, jittered reconnect, subscribe() replayed per generation" }
+  xch     = sys/lock   "exchange()" { subtitle: "short lock", description: "held only for send → local reply" }
+  lease   = sys/lock-keyhole "mesh lease" { subtitle: "one in flight", description: "firmware has a single pending slot" }
+  corr    = sys/search "reply correlation" { subtitle: "prefix + tag", description: "waiter armed before send; matched on node prefix and expected_ack tag" }
+  lease -> corr
+  corr -> xch
+}
+
+sdk = logos/python "meshcore-py" { subtitle: "SDK", description: "MeshCore + EventDispatcher; matches replies by type only" }
+fw  = sys/radio "companion radio" external { subtitle: "firmware", description: "one pending mesh request at a time" }
+mesh = sys/radio-tower "LoRa mesh" external { subtitle: "remote nodes" }
+
+user -> ha.ui
+user -> ha.options
+ha.services -> radio.xch "local commands"
+ha.services -> radio.lease "trace, login"
+ha.options -> radio.xch "probes"
+coord.tick -> radio.xch "get_bat, get_msg, channels"
+coord.nodes -> radio.lease "status, telemetry, neighbours"
+coord.nodes -> traffic.rules
+coord.tick -> traffic.budget
+coord.nodes -> traffic.budget
+radio.xch -> sdk
+sdk <-> fw "serial / BLE / TCP"
+fw <-> mesh "LoRa"
+sdk ~> radio.session "events"
+ha.entities -> radio.session "subscribe (replayed)" { style: dotted }
+coord.state -> radio.session "subscribe (replayed)" { style: dotted }
+ha.bus -> radio.session "subscribe (replayed)" { style: dotted }
+ha.uploads -> radio.session "subscribe (replayed)" { style: dotted }
+coord.state ~> ha.entities "async_update_listeners"
+
+view landscape {
+  title "meshcore-ha: one entry, one radio"
+  include *
+  legend auto
+  layout { rows [user] [ha coord] [traffic] [radio sdk] [fw] [mesh] }
+}
+
+view full {
+  title "Full detail"
+  expand *
+}
+
+view radio {
+  title "radio session and command gate"
+}
