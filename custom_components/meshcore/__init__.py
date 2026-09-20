@@ -768,10 +768,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 except Exception as ex:
                     _LOGGER.error(f"Error saving discovered contacts: {ex}")
 
-                # Update coordinator data with new contacts list
-                updated_data = dict(coordinator.data) if coordinator.data else {}
-                updated_data["contacts"] = coordinator.get_all_contacts()
-                coordinator.async_set_updated_data(updated_data)
+                coordinator._publish_contacts()
 
         _LOGGER.info("Setting up NEW_CONTACT event listener")
         entry.async_on_unload(session.subscribe(EventType.NEW_CONTACT, handle_new_contact))
@@ -800,9 +797,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await api.disconnect()
         raise
 
-    # Fetch initial data immediately
-    # await coordinator._async_update_data()
-    
     return True
 
 async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:

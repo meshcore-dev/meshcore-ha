@@ -88,15 +88,16 @@ MSG_SAFETY_NET_INTERVAL: int = 60
 # Debounce for the governed node-schedule store.
 TRAFFIC_SAVE_DELAY: int = 30
 
+# Stale contact and neighbour sweeps run at most once a day.
+DAILY_CLEANUP_INTERVAL: int = 86400
+
 
 def _log_get_msg_error(action: str, payload: Any) -> None:
     """Log a ``get_msg()`` ERROR result at the appropriate level.
 
-    The ``no_event_received`` reason is a benign startup race: a flush or poll
-    fired before the radio link produced its first event, and the next cycle
-    recovers. It is logged at DEBUG to avoid ERROR-tier noise (e.g. on a
-    config-entry re-add). Every other failure is logged at ERROR. ``action``
-    is the gerund used in the message ("flushing" / "retrieving").
+    ``no_event_received`` is a benign startup race -- a flush or poll fired
+    before the link produced its first event, and the next cycle recovers --
+    so it stays at DEBUG. ``action`` is the gerund used in the message.
     """
     if isinstance(payload, dict) and payload.get("reason") == "no_event_received":
         _LOGGER.debug(
@@ -118,15 +119,10 @@ def _log_self_telemetry_error(payload: Any, already_reported: bool) -> None:
     """Log a failed self-telemetry result at the appropriate level.
 
     ``get_self_telemetry()`` sends the four-byte "self" form of
-    ``CMD_SEND_TELEMETRY_REQ`` (opcode plus three reserved bytes, no pub key).
-    Firmware answers it, but a non-firmware companion need not: an openHop
-    virtual companion up to and including 1.1.1 requires the 36-byte contact
-    form and rejects the short frame with ``ERR_CODE_ILLEGAL_ARG``.
-
-    That is a fixed property of the peer, not a fault, so it is reported once
-    at WARNING naming the cause and the remedy, then demoted to DEBUG. Every
-    other failure keeps ERROR on every occurrence. The caller clears its flag
-    on success, so a genuine later regression is reported afresh.
+    ``CMD_SEND_TELEMETRY_REQ``; an openHop virtual companion up to 1.1.1 wants
+    the 36-byte contact form and rejects it. That is a fixed property of the
+    peer, so it is named once at WARNING and then demoted to DEBUG; every
+    other failure keeps ERROR. The caller clears its flag on success.
     """
     code = payload.get("code_string") if isinstance(payload, dict) else None
     if code in _TELEMETRY_UNSUPPORTED_CODES:
@@ -162,43 +158,37 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             logger,
             name=name,
             update_interval=update_interval,
-        )     
+        )
         self.api = api
         self.config_entry = config_entry
         self.data: dict[str, Any] = {}
-        self._current_node_info = {}
-        self._contacts = {}  # Dict keyed by 12-char public_key prefix
-        self._discovered_contacts = {}  # Dict keyed by public_key
+        self._contacts = {}  # keyed by 12-char public_key prefix
+        self._discovered_contacts = {}  # keyed by public_key
         self._manual_mode_initialized = False
 
-        # Storage for discovered contacts
         self._store = Store[dict[str, dict]](hass, 1, f"meshcore.{config_entry.entry_id}.discovered_contacts")
-        # Storage for neighbor data (persists SNR, seen_timestamps, etc. across restarts)
         self._neighbor_store = Store[dict[str, dict]](
             hass, 1, f"meshcore.{config_entry.entry_id}.neighbor_data"
         )
         self._neighbor_data_loaded = False
-        # Get name and pubkey from config_entry.data (not options)
+        # Identity lives in entry data, not options
         self.name = config_entry.data.get(CONF_NAME)
         self.pubkey = config_entry.data.get(CONF_PUBKEY)
 
-        # Rolling transcript for the CLI console sensor: each entry is a dict of
-        # {timestamp, command, response, is_error}. Bounded so the sensor's
-        # attribute payload stays small regardless of how much the console is
-        # used. The sensor (when CONF_CLI_CONSOLE_ENABLED) registers itself here
-        # so record_cli_console() can push fresh state immediately.
+        # Rolling transcript for the CLI console sensor, bounded so the sensor's
+        # attribute payload stays small. The sensor registers itself here (when
+        # CONF_CLI_CONSOLE_ENABLED) so record_cli_console() can push state.
         self.cli_console_history: deque[dict[str, Any]] = deque(
             maxlen=CLI_CONSOLE_MAX_LINES
         )
         self.cli_console_sensor: Any = None
-        
-        # Set up device info that entities can reference
+
         self._firmware_version = None
         self._hardware_model = None
-        self._max_channels = 4  # Default to 4 channels, updated from DEVICE_INFO
-        self._channel_info = {}  # Dict keyed by channel_idx to store channel info
-        
-        # Create a central device_info dict that all entities can reference
+        self._max_channels = 4  # updated from DEVICE_INFO
+        self._channel_info = {}  # keyed by channel_idx
+
+        # Central device info every entity references
         self.device_info = {
             "identifiers": {(DOMAIN, config_entry.entry_id)},
             "name": f"MeshCore {self.name or 'Node'} ({self.pubkey[:6] if self.pubkey else ''})",
@@ -207,22 +197,19 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             "sw_version": "Unknown",
         }
 
-        # Single map to track all message timestamps (key -> timestamp)
-        # Keys can be channel indices (int) or public key prefixes (str)
-        self.message_timestamps = {}
-
-        # Repeater subscription tracking
+        # Tracked nodes: schedules, in-flight tasks and failure counters, all
+        # keyed by pubkey_prefix and kept separate for status and telemetry.
         self._tracked_repeaters = self.config_entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, [])
-        self._repeater_stats = {}
-        self._repeater_login_times = {}
-        self._next_repeater_update_times = {}  # Track when each repeater should next be updated
-        self._active_repeater_tasks = {}  # Track active update tasks by pubkey_prefix
-        self._repeater_consecutive_failures = {}  # Track consecutive failed updates by pubkey_prefix
-        self._last_successful_request = {}  # Track last successful request timestamp by pubkey_prefix
-        self._auto_disabled_devices = set()  # Track devices auto-disabled due to inactivity (resets on restart)
-        
-        # Tracked clients tracking (no login needed, uses ACLs)
         self._tracked_clients = self.config_entry.data.get(CONF_TRACKED_CLIENTS, [])
+        self._repeater_login_times = {}
+        self._next_repeater_update_times = {}
+        self._active_repeater_tasks = {}
+        self._repeater_consecutive_failures = {}
+        self._next_telemetry_update_times = {}
+        self._active_telemetry_tasks = {}
+        self._telemetry_consecutive_failures = {}
+        self._last_successful_request = {}
+        self._auto_disabled_devices = set()
 
         # Mesh traffic policy: the budget every mesh request crosses, plus the
         # governed-only store that lets node schedules survive a restart.
@@ -234,30 +221,27 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             else None
         )
 
-        # Initialize tracking sets for entities
         self.tracked_contacts = set()
         self.tracked_diagnostic_binary_contacts = set()
         self.channels_added = False
-        
-        # Track last update times for different data types
-        self._last_repeater_updates = {}  # Dictionary to track per-repeater updates
-        self._last_contact_refresh = 0  # Track when contacts were last refreshed
-        
-        # Self telemetry tracking
+        self.telemetry_manager = None
+        self._device_info_initialized = False
+        self._coordinator_start_time = time.time()
+
         self._last_self_telemetry_update = 0
         # Set once a self-telemetry failure has been reported, so a node that
-        # cannot answer the request is named once rather than on every cycle.
-        # Cleared on the next success.
+        # cannot answer is named once rather than on every cycle; cleared on
+        # the next success.
         self._self_telemetry_error_reported = False
         self._self_telemetry_enabled = config_entry.data.get(CONF_SELF_TELEMETRY_ENABLED, False)
         self._self_telemetry_interval = config_entry.data.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL)
 
-        # Self diagnostics tracking (local get_stats_core/radio/packets — no mesh traffic)
+        # Local get_stats_core/radio/packets -- no mesh traffic
         self._last_self_diagnostics_update = 0
         self._self_diagnostics_enabled = config_entry.data.get(CONF_SELF_DIAGNOSTICS_ENABLED, False)
         self._self_diagnostics_interval = config_entry.data.get(CONF_SELF_DIAGNOSTICS_INTERVAL, DEFAULT_SELF_DIAGNOSTICS_INTERVAL)
 
-        # Auto-cleanup of stale discovered contacts (daily)
+        # Daily auto-cleanup of stale discovered contacts and neighbours
         self._auto_cleanup_stale_contacts = config_entry.data.get(
             CONF_AUTO_CLEANUP_STALE_CONTACTS, False
         )
@@ -265,42 +249,6 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             CONF_STALE_CONTACT_DAYS, DEFAULT_STALE_CONTACT_DAYS
         )
         self._last_stale_cleanup: float = 0.0
-
-        # Telemetry tracking - separate from repeater/client specific logic
-        self._next_telemetry_update_times = {}  # Track when each node should have telemetry updated
-        self._active_telemetry_tasks = {}  # Track active telemetry tasks by pubkey_prefix
-        self._telemetry_consecutive_failures = {}  # Track consecutive failed telemetry updates by pubkey_prefix
-        
-        # Initialization tracking flags
-        self._device_info_initialized = False
-
-        # Telemetry sensor manager - will be initialized when sensors are set up
-        self.telemetry_manager = None
-
-        # Track coordinator start time for auto-disable logic
-        self._coordinator_start_time = time.time()
-
-        # Lock to serialize get_msg() calls between MESSAGES_WAITING
-        # auto-fetch and the coordinator's periodic poll
-        self._message_lock = asyncio.Lock()
-
-        # Conditional message polling: track last message activity so the
-        # safety-net poll only fires after MSG_SAFETY_NET_INTERVAL of silence.
-        self._last_msg_activity: float = 0.0
-        self._initial_drain_done: bool = False
-
-        # Repeater neighbor tracking
-        # Key: repeater pubkey_prefix, Value: dict of neighbor data keyed by neighbor pubkey
-        # Each neighbor entry: {pubkey, snr, secs_ago, last_updated, resolved_name}
-        self._repeater_neighbors: dict[str, dict[str, dict]] = {}
-        # Track which neighbor sensor entities have been created: set of "repeater_pubkey:neighbor_pubkey"
-        self._created_neighbor_sensors: set = set()
-
-        # CHANNEL_INFO listener handle; registered once, kept across reconnects
-        self._channel_info_unsub: Callable[[], None] | None = None
-        api.session.add_connect_hook(self._on_radio_connected)
-
-        # Auto-cleanup of stale neighbors (daily)
         self._auto_cleanup_stale_neighbors = config_entry.data.get(
             CONF_AUTO_CLEANUP_STALE_NEIGHBORS, False
         )
@@ -309,26 +257,35 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         )
         self._last_stale_neighbor_cleanup = 0.0
 
-        # RX_LOG correlation cache: auto-evicts after TTL expires
-        # Key: correlation hash, Value: list of RX_LOG data (multiple receptions possible)
+        # Serializes get_msg() between the MESSAGES_WAITING flush and the poll
+        self._message_lock = asyncio.Lock()
+        self._last_msg_activity: float = 0.0
+        self._initial_drain_done: bool = False
+
+        # {repeater prefix: {neighbour pubkey: {pubkey, snr, secs_ago,
+        # last_updated, resolved_name}}}, plus the "repeater:neighbour" keys
+        # whose sensor entities already exist.
+        self._repeater_neighbors: dict[str, dict[str, dict]] = {}
+        self._created_neighbor_sensors: set = set()
+
+        # CHANNEL_INFO listener handle; registered once, kept across reconnects
+        self._channel_info_unsub: Callable[[], None] | None = None
+        api.session.add_connect_hook(self._on_radio_connected)
+
+        # RX_LOG correlation hash -> list of RX_LOG payloads, TTL-evicted. The
+        # send path reserves its key here so the incoming handler does not
+        # pop() a reception the outgoing delivery still needs.
         self._pending_rx_logs = TTLCache(
             maxsize=RX_LOG_CACHE_MAX_SIZE,
             ttl=RX_LOG_CACHE_TTL_SECONDS
         )
-
-        # Track correlation keys reserved for outgoing message delivery.
-        # When we send a channel message, the outgoing handler registers its key here
-        # so the incoming handler knows not to pop() it from _pending_rx_logs.
         self._outgoing_correlation_keys: TTLCache = TTLCache(maxsize=64, ttl=60)
 
         if not hasattr(self, "last_update_success_time"):
             self.last_update_success_time = self._current_time()
 
-        # Initialize reliability stats tracking
         self._reliability_stats = {}
-
-        # Dirty contacts tracking for performance optimization
-        # Set of pubkey prefixes that have been updated and need sensor refresh
+        # Pubkey prefixes whose sensors need a refresh
         self._dirty_contacts = set()
 
     def record_cli_console(
@@ -347,16 +304,15 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             "response": response,
             "is_error": bool(is_error),
         })
-        sensor = self.cli_console_sensor
-        if sensor is not None:
-            try:
-                sensor.async_write_ha_state()
-            except Exception as ex:  # pragma: no cover - defensive
-                _LOGGER.debug("Failed to update CLI console sensor: %s", ex)
+        self._refresh_cli_console()
 
     def clear_cli_console(self) -> None:
         """Empty the CLI console transcript and refresh the sensor."""
         self.cli_console_history.clear()
+        self._refresh_cli_console()
+
+    def _refresh_cli_console(self) -> None:
+        """Push the transcript to the console sensor, if one is registered."""
         sensor = self.cli_console_sensor
         if sensor is not None:
             try:
@@ -365,48 +321,30 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 _LOGGER.debug("Failed to update CLI console sensor: %s", ex)
 
     def mark_contact_dirty(self, pubkey_prefix: str):
-        """Mark a contact as needing update (for performance optimization).
-
-        Accepts either full public key or 12-char prefix, normalizes to 12-char prefix.
-        """
+        """Flag a contact's sensors for refresh; takes a full key or a prefix."""
         if pubkey_prefix:
-            normalized = pubkey_prefix[:12]
-            self._dirty_contacts.add(normalized)
+            self._dirty_contacts.add(pubkey_prefix[:12])
 
     def is_contact_dirty(self, pubkey_prefix: str) -> bool:
-        """Check if a contact needs update.
-
-        Accepts either full public key or 12-char prefix, normalizes to 12-char prefix.
-        """
-        if not pubkey_prefix:
-            return False
-        normalized = pubkey_prefix[:12]
-        return normalized in self._dirty_contacts
+        """Whether a contact's sensors still need a refresh."""
+        return bool(pubkey_prefix) and pubkey_prefix[:12] in self._dirty_contacts
 
     def clear_contact_dirty(self, pubkey_prefix: str):
-        """Clear dirty flag after updating contact sensor.
-
-        Accepts either full public key or 12-char prefix, normalizes to 12-char prefix.
-        """
+        """Clear the refresh flag once a contact's sensors are up to date."""
         if pubkey_prefix:
-            normalized = pubkey_prefix[:12]
-            self._dirty_contacts.discard(normalized)
+            self._dirty_contacts.discard(pubkey_prefix[:12])
 
     def get_all_contacts(self) -> list:
-        """Get deduplicated list of all contacts (added + discovered).
+        """Merge added and discovered contacts, keeping the latest lastmod.
 
-        For each public_key, uses the contact with the latest lastmod.
-        Marks as added_to_node=True if contact exists in added list.
+        Each entry gains ``pubkey_prefix`` and ``added_to_node``.
         """
-        contacts_dict = {}
+        contacts_dict: dict[str, dict] = {}
+        added_pubkeys = {
+            c.get("public_key") for c in self._contacts.values() if c.get("public_key")
+        }
 
-        # Build set of public keys that are in added contacts
-        added_pubkeys = set(c.get("public_key") for c in self._contacts.values() if c.get("public_key"))
-
-        # Process all contacts (discovered + added)
-        all_contacts = list(self._discovered_contacts.values()) + list(self._contacts.values())
-
-        for contact in all_contacts:
+        for contact in list(self._discovered_contacts.values()) + list(self._contacts.values()):
             public_key = contact.get("public_key")
             if not public_key:
                 continue
@@ -415,38 +353,48 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             contact_copy["pubkey_prefix"] = public_key[:12]
             contact_copy["added_to_node"] = public_key in added_pubkeys
 
-            # If we already have this contact, keep the one with latest lastmod
-            if public_key in contacts_dict:
-                existing = contacts_dict[public_key]
-                existing_lastmod = existing.get("lastmod", 0)
-                new_lastmod = contact_copy.get("lastmod", 0)
-
-                if new_lastmod > existing_lastmod:
-                    contacts_dict[public_key] = contact_copy
-            else:
+            existing = contacts_dict.get(public_key)
+            if existing is None or contact_copy.get("lastmod", 0) > existing.get("lastmod", 0):
                 contacts_dict[public_key] = contact_copy
 
         return list(contacts_dict.values())
 
-    def _remove_discovered_contact_entities(self, public_key: str) -> bool:
-        """Remove the per-contact entities for one discovered (un-added) contact.
+    def _remove_contact_entity(self, entity_registry, pubkey_prefix: str) -> str | None:
+        """Remove one contact's diagnostic binary_sensor; return its entity id.
 
-        Removes the contact-diagnostic ``binary_sensor`` and, unless the node
-        has a repeater/client tracking subscription (whose telemetry/GPS
-        entities recreate dynamically), its telemetry and GPS-tracker entities.
-        Allowlists by unique_id SHAPE (``<entry_id>_<prefix>_*`` ending in
-        ``_telemetry`` / ``_gps_tracker``) so a bare substring match cannot hit
-        a repeater-neighbor sensor (which embeds another node's pubkey) or a
-        subscription-backed entity. Returns True if a contact binary_sensor was
-        removed.
-
-        This mirrors the data-only demote teardown in
-        ``services.async_execute_command_service`` (keep the two in sync); the
-        mode reconciler reuses it to bring the existing discovered population
-        into the configured mode.
+        Contact unique_ids have been scoped by entry_id since PR #236, and
+        __init__.py:_migrate_unique_ids_scope_contact_diagnostics guarantees
+        every existing entity uses that format. In data-only/off modes there is
+        no entity to find and this is a harmless no-op that also clears any
+        entity orphaned by an earlier mode switch.
         """
-        # Imported in-function to avoid a module-level import cycle
-        # (services -> binary_sensor -> ... ; coordinator stays a leaf).
+        entity_id = entity_registry.async_get_entity_id(
+            "binary_sensor", DOMAIN, f"{self.config_entry.entry_id}_contact_{pubkey_prefix}"
+        )
+        if not entity_id:
+            return None
+        entity_registry.async_remove(entity_id)
+        return entity_id
+
+    def _publish_contacts(self) -> None:
+        """Broadcast the merged contact list after it has changed."""
+        updated_data = dict(self.data) if self.data else {}
+        updated_data["contacts"] = self.get_all_contacts()
+        self.async_set_updated_data(updated_data)
+
+    def _remove_discovered_contact_entities(self, public_key: str) -> bool:
+        """Remove one discovered contact's entities; True if it had a sensor.
+
+        Unless the node has a tracking subscription (whose telemetry/GPS
+        entities recreate dynamically), its telemetry and GPS-tracker entities
+        go too. The allowlist matches unique_id SHAPE (``<entry_id>_<prefix>_*``
+        ending in ``_telemetry`` / ``_gps_tracker``) so a bare substring match
+        cannot hit a repeater-neighbor sensor or a subscription-backed entity.
+
+        Mirrors the data-only demote teardown in
+        ``services.async_execute_command_service``; keep the two in sync.
+        """
+        # In-function import: services -> binary_sensor -> ... would cycle.
         from .services import _node_has_tracked_subscription
 
         prefix = public_key[:12]
@@ -456,14 +404,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         if tracked is not None:
             tracked.discard(public_key)
 
-        removed = False
-        unique_id = f"{self.config_entry.entry_id}_contact_{prefix}"
-        entity_id = entity_registry.async_get_entity_id(
-            "binary_sensor", DOMAIN, unique_id
-        )
-        if entity_id:
-            entity_registry.async_remove(entity_id)
-            removed = True
+        removed = self._remove_contact_entity(entity_registry, prefix) is not None
 
         if not _node_has_tracked_subscription(self, prefix):
             uid_prefix = f"{self.config_entry.entry_id}_{prefix}_"
@@ -481,9 +422,8 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             for stale_entity_id in to_remove:
                 entity_registry.async_remove(stale_entity_id)
 
-            # In-memory dedup maps: without these discards the managers keep
-            # updating deregistered entities and a same-session re-add will not
-            # recreate the sensors.
+            # Without these the managers keep updating deregistered entities
+            # and a same-session re-add will not recreate the sensors.
             tm = getattr(self, "telemetry_manager", None)
             if tm is not None:
                 for key in [k for k in tm.discovered_sensors if k.startswith(prefix)]:
@@ -500,35 +440,21 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
     async def async_reconcile_discovered_for_mode(self) -> None:
         """Enforce the configured contact discovery mode on EXISTING contacts.
 
-        ``contact_discovery_mode`` is otherwise a creation-time gate: switching
-        modes governs new contacts but leaves the existing discovered
-        population as-is. This pass reconciles what already exists so each mode
-        is the source of truth on every setup (start / reload — and because a
-        mode change reloads the entry, on every mode switch too):
+        ``contact_discovery_mode`` is otherwise a creation-time gate, so this
+        pass runs on every setup (a mode change reloads the entry):
 
-        - ``full``      -- ensure every discovered contact has a per-contact
-                           entity (idempotent safety net; the platform setup
-                           create-pass and the NEW_CONTACT event path already
-                           cover the common cases).
-        - ``data_only`` -- remove the per-contact entities for discovered
-                           contacts; keep the discovered data (summary sensor /
-                           dropdown / get_discovered_contact).
-        - ``off``       -- remove the per-contact entities AND clear + persist
-                           the discovered set so it does not repopulate on the
-                           next store-load. The advert handler is gated
-                           separately (NEW_CONTACT off early-return).
+        - ``full``      -- create a per-contact entity for any discovered
+                           contact still missing one (idempotent safety net).
+        - ``data_only`` -- remove those entities, keep the discovered data.
+        - ``off``       -- remove them AND clear + persist the discovered set
+                           so the next store-load does not repopulate it.
 
         Added/curated contacts are never touched: membership is tested against
-        the added set (the same source create_contact_sensor uses), unioned
-        with the SDK's authoritative contact list as a safety net so a
-        transient-empty ``_contacts`` cannot misclassify an added contact as
-        discovered. Entirely HA-side -- the companion is in manual mode and
-        never stored discovered contacts. Runs in the coordinator at
-        post-reload setup with the correct (new) coordinator reference, so it
-        does not reintroduce the pre-reload race.
+        the added set unioned with the SDK's contact list, so a
+        transient-empty ``_contacts`` cannot misclassify one as discovered.
         """
-        # Reconciliation needs a trustworthy contact picture; skip when the
-        # device is not connected and reconcile on the next connected setup.
+        # A trustworthy contact picture needs a live link; reconcile on the
+        # next connected setup instead.
         mesh_core = getattr(self.api, "mesh_core", None)
         if not getattr(self.api, "connected", False) or mesh_core is None:
             _LOGGER.debug(
@@ -546,9 +472,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         }
 
         if mode == MODE_FULL:
-            # Create an entity for any discovered contact still lacking one.
             # create_contact_sensor dedups via tracked_diagnostic_binary_contacts
-            # so already-created contacts are skipped (no double-create).
             add_entities = getattr(self, "binary_sensor_async_add_entities", None)
             if add_entities is None:
                 return
@@ -580,7 +504,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 )
             return
 
-        # data_only / off: remove per-contact entities for discovered contacts.
+        # data_only / off: discovered contacts lose their per-contact entities
         removed = 0
         for public_key in list(self._discovered_contacts.keys()):
             if public_key in added_pubkeys:
@@ -589,8 +513,6 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 removed += 1
 
         if mode == MODE_OFF:
-            # Disabled: do not keep/track discovered contacts. Clear and persist
-            # the empty set so the next store-load does not repopulate it.
             self._discovered_contacts.clear()
             try:
                 await self._store.async_save(self._discovered_contacts)
@@ -601,9 +523,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 )
 
         if removed or mode == MODE_OFF:
-            updated_data = dict(self.data) if self.data else {}
-            updated_data["contacts"] = self.get_all_contacts()
-            self.async_set_updated_data(updated_data)
+            self._publish_contacts()
             _LOGGER.info(
                 "Contact-mode reconcile (%s): removed %d discovered contact "
                 "entities",
@@ -619,33 +539,17 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         if len(self._discovered_contacts) <= max_contacts:
             return False
 
-        from homeassistant.helpers import entity_registry as er
-
         evict_count = len(self._discovered_contacts) - max_contacts
         keys_to_evict = list(self._discovered_contacts.keys())[:evict_count]
 
         entity_registry = er.async_get(self.hass)
 
-        # Removal runs unconditionally. In data-only/off modes discovered
-        # contacts have no per-contact entity, so async_get_entity_id below
-        # returns None and the removal is a harmless no-op; the dict trim still
-        # bounds the discovered set by max_contacts. Running it in every mode
-        # also clears any entity orphaned by a prior mode switch.
         for public_key in keys_to_evict:
-            pubkey_prefix = public_key[:12]
             del self._discovered_contacts[public_key]
             self.tracked_diagnostic_binary_contacts.discard(public_key)
-
-            # Post-PR-#236 contact unique_ids are scoped by entry_id; the
-            # migration at __init__.py:_migrate_unique_ids_scope_contact_diagnostics
-            # guarantees every existing entity uses this format.
-            unique_id = f"{self.config_entry.entry_id}_contact_{pubkey_prefix}"
-            entity_id = entity_registry.async_get_entity_id(
-                "binary_sensor", DOMAIN, unique_id
-            )
+            entity_id = self._remove_contact_entity(entity_registry, public_key[:12])
             if entity_id:
                 _LOGGER.info(f"Evicting binary sensor entity: {entity_id}")
-                entity_registry.async_remove(entity_id)
 
         _LOGGER.info(f"Evicted {evict_count} oldest discovered contacts (limit: {max_contacts})")
 
@@ -654,30 +558,19 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         except Exception as ex:
             _LOGGER.error(f"Error saving discovered contacts after eviction: {ex}")
 
-        updated_data = dict(self.data) if self.data else {}
-        updated_data["contacts"] = self.get_all_contacts()
-        self.async_set_updated_data(updated_data)
-
+        self._publish_contacts()
         return True
 
     async def _cleanup_stale_discovered_contacts(self, days_threshold: int) -> int:
         """Remove discovered contacts whose lastmod exceeds the age threshold.
 
-        Uses lastmod (companion device's local clock, synced by HA) instead of
-        last_advert (which may contain timestamps from advertising nodes with
-        incorrect clocks).
+        Ages on lastmod (the companion's own clock) rather than last_advert,
+        which can carry an advertising node's wrong clock. ``added_to_node``
+        contacts are always preserved. Removals are batched so a large sweep
+        cannot flood the event bus and block the main thread.
 
-        Contacts with added_to_node=True are always preserved.
-
-        Removals are batched to avoid flooding the event bus with state_changed
-        events, which can overwhelm WebSocket clients and block the main thread.
-
-        Returns the number of contacts removed.
-
-        Note: this function ALWAYS runs the Phase 4 orphan sweep, even when
-        the dict is empty or no stale contacts are found. Orphans live in the
-        entity registry, not the dict — early-returning on empty-stale would
-        skip the sweep on every typical call once the dict is stable.
+        Never early-returns: the orphan sweep below lives in the entity
+        registry, not the dict, so it must run even when nothing is stale.
         """
         now = time.time()
         threshold_seconds = days_threshold * 86400
@@ -685,7 +578,6 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         skipped_node_contacts = 0
         batch_size = 10
 
-        # Phase 1: Collect stale contacts (no side effects).
         stale_keys: list[str] = []
         for public_key, contact in self._discovered_contacts.items():
             if contact.get("added_to_node", False):
@@ -695,16 +587,8 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             if not lastmod or (now - lastmod) > threshold_seconds:
                 stale_keys.append(public_key)
 
-        # Phase 2: Remove in batches, yielding the event loop between each
-        # batch so WebSocket clients can drain their message queues. No-op
-        # when stale_keys is empty; Phase 4 still runs.
+        # Yields the event loop between batches so WebSocket clients can drain
         removed_count = 0
-
-        # Removal runs unconditionally. In data-only/off modes discovered
-        # contacts have no per-contact entity, so the registry lookup returns
-        # None and removal is a no-op; the dict trim still removes stale
-        # contacts. Running it in every mode also clears any entity orphaned by
-        # a prior mode switch.
         for i, public_key in enumerate(stale_keys):
             contact = self._discovered_contacts.get(public_key)
             if contact is None:
@@ -716,16 +600,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
 
             del self._discovered_contacts[public_key]
             self.tracked_diagnostic_binary_contacts.discard(public_key)
-
-            # Post-PR-#236 contact unique_ids are scoped by entry_id; the
-            # migration at __init__.py:_migrate_unique_ids_scope_contact_diagnostics
-            # guarantees every existing entity uses this format.
-            unique_id = f"{self.config_entry.entry_id}_contact_{pubkey_prefix}"
-            entity_id = entity_registry.async_get_entity_id(
-                "binary_sensor", DOMAIN, unique_id
-            )
-            if entity_id:
-                entity_registry.async_remove(entity_id)
+            self._remove_contact_entity(entity_registry, pubkey_prefix)
 
             removed_count += 1
             _LOGGER.debug(
@@ -733,30 +608,19 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 contact_name, pubkey_prefix, (now - lastmod) / 86400 if lastmod else 0,
             )
 
-            # Yield the event loop every batch_size removals
             if (i + 1) % batch_size == 0:
                 await asyncio.sleep(0)
 
-        # Phase 3: Save and refresh once after all removals
         if removed_count > 0:
             try:
                 await self._store.async_save(self._discovered_contacts)
             except Exception as ex:
                 _LOGGER.error("Error saving discovered contacts: %s", ex)
+            self._publish_contacts()
 
-            updated_data = dict(self.data) if self.data else {}
-            updated_data["contacts"] = self.get_all_contacts()
-            self.async_set_updated_data(updated_data)
-
-        # Phase 4: Sweep pre-existing orphaned contact entities.
-        #
-        # Catches entities that were "removed" by buggy cleanup calls between
-        # PR #236's migration (2026-05-10) and the lookup-format fix in this
-        # change set — the dict deletion ran but the entity-lookup format was
-        # wrong, so the entity stayed in the registry. Walks entities tied to
-        # this config entry whose unique_id matches
-        # "<entry_id>_contact_<hex12>" and removes any whose pubkey is not in
-        # the current contact set (added + discovered).
+        # Sweep contact entities left orphaned by cleanup calls made between
+        # PR #236's migration and its lookup-format fix: the dict deletion ran
+        # but the entity stayed in the registry.
         #
         # The 12-hex suffix check is load-bearing: the contact-selector entity
         # has unique_id "<entry_id>_contact_select" which would otherwise match
@@ -782,7 +646,6 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 continue
             entity_registry.async_remove(entity.entity_id)
             orphan_count += 1
-            # Yield the event loop every batch_size removals (consistent with Phase 2).
             if orphan_count % batch_size == 0:
                 await asyncio.sleep(0)
 
@@ -795,50 +658,45 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         return removed_count
 
     def get_contact_by_prefix(self, prefix: str) -> dict[str, Any]:
-        """Get a contact by its public key prefix.
-
-        Searches all contacts (both added and discovered).
-        Returns the contact dict if found, otherwise returns an empty dict.
-        """
+        """Return the added or discovered contact matching a prefix, else {}."""
         if not prefix:
             return {}
-
-        all_contacts = self.get_all_contacts()
-
-        for contact in all_contacts:
-            pubkey = contact.get("public_key", "")
-            if pubkey.startswith(prefix):
+        for contact in self.get_all_contacts():
+            if contact.get("public_key", "").startswith(prefix):
                 return contact
-
         return {}
 
     def _increment_success(self, pubkey_prefix: str) -> None:
-        """Increment success counter for a node."""
+        """Count a successful request and stamp the node's last success."""
         stats_key = f"{pubkey_prefix}_request_successes"
         self._reliability_stats[stats_key] = self._reliability_stats.get(stats_key, 0) + 1
-        # Track last successful request time
         self._last_successful_request[pubkey_prefix] = time.time()
-        
+
     def _increment_failure(self, pubkey_prefix: str) -> None:
-        """Increment failure counter for a node."""
+        """Count a failed request against a node's reliability stats."""
         stats_key = f"{pubkey_prefix}_request_failures"
         self._reliability_stats[stats_key] = self._reliability_stats.get(stats_key, 0) + 1
-    
+
+
     def get_device_update_interval(self, pubkey_prefix: str) -> int:
-        """Get the configured update interval for a device by its pubkey prefix."""
-        # Check repeaters - use startswith to handle varying prefix lengths
-        for repeater_config in self._tracked_repeaters:
-            config_prefix = repeater_config.get("pubkey_prefix", "")
-            if config_prefix and (pubkey_prefix.startswith(config_prefix) or config_prefix.startswith(pubkey_prefix)):
-                return repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
-        
-        # Check clients - use startswith to handle varying prefix lengths
-        for client_config in self._tracked_clients:
-            config_prefix = client_config.get("pubkey_prefix", "")
-            if config_prefix and (pubkey_prefix.startswith(config_prefix) or config_prefix.startswith(pubkey_prefix)):
-                return client_config.get(CONF_CLIENT_UPDATE_INTERVAL, DEFAULT_CLIENT_UPDATE_INTERVAL)
-        
-        # Default fallback - use a reasonable timeout
+        """Return a tracked node's update interval, repeater configs first.
+
+        Prefixes are compared both ways round because configs and events do not
+        always carry the same prefix length.
+        """
+        for configs, key, default in (
+            (self._tracked_repeaters, CONF_REPEATER_UPDATE_INTERVAL,
+             DEFAULT_REPEATER_UPDATE_INTERVAL),
+            (self._tracked_clients, CONF_CLIENT_UPDATE_INTERVAL,
+             DEFAULT_CLIENT_UPDATE_INTERVAL),
+        ):
+            for node_config in configs:
+                config_prefix = node_config.get("pubkey_prefix", "")
+                if config_prefix and (
+                    pubkey_prefix.startswith(config_prefix)
+                    or config_prefix.startswith(pubkey_prefix)
+                ):
+                    return node_config.get(key, default)
         return DEFAULT_CLIENT_UPDATE_INTERVAL
     
     def _tracked_node_count(self) -> int:
@@ -988,13 +846,12 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             EventType.CHANNEL_INFO, handle_channel_info
         )
         self.logger.debug("Registered CHANNEL_INFO event listener")
-    
+
     async def fetch_all_channel_info(self) -> None:
         """Fetch channel info for all channels on startup."""
         self.logger.info(f"Fetching channel info for {self._max_channels} channels...")
         for channel_idx in range(self._max_channels):
             try:
-                # Use get_channel command
                 channel_info_result = await self.api.session.exchange(
                     self.api.mesh_core.commands.get_channel, channel_idx
                 )
@@ -1094,13 +951,11 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         return neighbor_pubkey[:6].upper()
 
     async def _fetch_repeater_neighbors(self, contact, repeater_name: str, pubkey_prefix: str):
-        """Fetch neighbor data for a repeater after a successful status request.
+        """Page a repeater's neighbour table after a successful status request.
 
-        Pages the neighbour table through the session and stores the result
-        in self._repeater_neighbors. Creates new sensor entities for
-        any neighbors not previously seen. Tracks sightings as timestamps in
-        a rolling 48h window (seen_timestamps). Persists neighbor data to
-        storage for survival across restarts.
+        Stores the result in ``_repeater_neighbors``, persists it, creates
+        sensors for neighbours not seen before, and tracks sightings as
+        timestamps in a rolling 48 h window.
         """
         try:
             # Legacy pays one token for the whole scan; governed pays per page.
@@ -1123,7 +978,6 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             now = time.time()
             updated_neighbors = {}
 
-            # Get existing data before iteration (for seen_timestamps carry-over)
             existing = self._repeater_neighbors.get(pubkey_prefix, {})
             cutoff = now - SEEN_WINDOW_SECS
 
@@ -1136,31 +990,20 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 n_snr = neighbour.get("snr", 0)
                 n_secs_ago = neighbour.get("secs_ago", 0)
 
-                # Track sightings as timestamps in a rolling 48h window.
-                # The firmware computes secs_ago from its own RTC, so if secs_ago
-                # decreased since last poll, heard_timestamp was refreshed — the
-                # neighbor was heard again. If secs_ago grew or stayed the same,
-                # nothing new happened.
+                # The firmware computes secs_ago from its own RTC, so a
+                # secs_ago that shrank since the last poll means the neighbour
+                # was heard again. The window check is load-bearing: after a
+                # restart the stored secs_ago is inflated by the downtime, and
+                # without it every stale neighbour reads as newly heard.
                 existing_data = existing.get(n_pubkey, {})
                 prev_secs_ago = existing_data.get("secs_ago")
-
-                # Carry forward existing timestamps, pruning entries older than 48h
-                prev_timestamps = existing_data.get("seen_timestamps", [])
-                seen_timestamps = [t for t in prev_timestamps if t > cutoff]
-
-                # Only record a sighting if the neighbor was actually heard
-                # within the 48h window.  After an HA restart the stored
-                # secs_ago is inflated by the elapsed downtime, so the
-                # "n_secs_ago < prev_secs_ago" comparison would incorrectly
-                # treat every stale neighbor as newly heard.
-                if n_secs_ago <= SEEN_WINDOW_SECS:
-                    if prev_secs_ago is None:
-                        # First sighting — always record it
-                        seen_timestamps.append(now)
-                    elif n_secs_ago < prev_secs_ago:
-                        # secs_ago decreased — firmware heard this neighbor again
-                        seen_timestamps.append(now)
-                # else: stale (>48h) or secs_ago grew/stayed same — don't record
+                seen_timestamps = [
+                    t for t in existing_data.get("seen_timestamps", []) if t > cutoff
+                ]
+                if n_secs_ago <= SEEN_WINDOW_SECS and (
+                    prev_secs_ago is None or n_secs_ago < prev_secs_ago
+                ):
+                    seen_timestamps.append(now)
 
                 updated_neighbors[n_pubkey] = {
                     "pubkey": n_pubkey,
@@ -1171,23 +1014,18 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     "seen_timestamps": seen_timestamps,
                 }
 
-            # Preserve neighbors from previous polls that aren't in this response
-            # (they may still be valid, just not in the current page)
+            # Neighbours missing from this response may just be off the page:
+            # keep them, but leave last_updated alone (staleness comes from the
+            # most recent poll that did include them) and prune their window.
             for n_pubkey, n_data in existing.items():
                 if n_pubkey not in updated_neighbors:
-                    # Keep old data but don't update last_updated — staleness
-                    # is tracked via secs_ago from the most recent poll that included it.
-                    # Prune seen_timestamps so stale entries don't inflate the count.
                     prev_ts = n_data.get("seen_timestamps", [])
                     n_data["seen_timestamps"] = [t for t in prev_ts if t > cutoff]
                     updated_neighbors[n_pubkey] = n_data
 
             self._repeater_neighbors[pubkey_prefix] = updated_neighbors
-
-            # Persist neighbor data (strip resolved_name — resolved live from contacts)
             await self._save_neighbor_data()
 
-            # Create sensor entities for any new neighbors
             new_neighbors = []
             for n_pubkey in updated_neighbors:
                 sensor_key = f"{pubkey_prefix}:{n_pubkey}"
@@ -1232,6 +1070,18 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         except Exception as ex:
             self.logger.warning(f"Exception fetching neighbors for {repeater_name}: {ex}")
 
+    def _remove_neighbor_entities(self, entity_registry, unique_id_prefix: str) -> list[str]:
+        """Remove every neighbour entity under a unique_id prefix; return their ids."""
+        removed = [
+            entity.entity_id
+            for entity in list(entity_registry.entities.values())
+            if entity.platform == DOMAIN
+            and (entity.unique_id or "").startswith(unique_id_prefix)
+        ]
+        for entity_id in removed:
+            entity_registry.async_remove(entity_id)
+        return removed
+
     def _persistable_neighbors(self) -> dict:
         """Return neighbor data suitable for persistence (no transient fields)."""
         result = {}
@@ -1253,31 +1103,21 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
     async def _cleanup_stale_neighbors(self, days_threshold: int) -> int:
         """Remove neighbors whose last_heard exceeds the age threshold.
 
-        Uses last_heard = last_updated - secs_ago (the actual time the repeater
-        heard the neighbor, not the poll time).
-
-        Three-phase approach mirroring stale contacts cleanup:
-        1. Collect stale neighbors (no side effects)
-        2. Remove entities + in-memory data in batches
-        3. Persist and refresh state
-
-        Returns the number of neighbors removed.
+        ``last_heard`` is ``last_updated - secs_ago``: when the repeater
+        actually heard the neighbour, not when HA polled for it.
         """
-        from homeassistant.helpers import entity_registry as er
-
         now = time.time()
         threshold_seconds = days_threshold * 86400
         entity_registry = er.async_get(self.hass)
 
-        # Phase 1: Collect stale neighbors across all repeaters
-        stale_entries: list[tuple[str, str, str]] = []  # (repeater_prefix, neighbor_pubkey, resolved_name)
+        # (repeater_prefix, neighbor_pubkey, resolved_name)
+        stale_entries: list[tuple[str, str, str]] = []
         for rptr_prefix, neighbors in self._repeater_neighbors.items():
             for n_pubkey, n_data in neighbors.items():
                 last_updated = n_data.get("last_updated", 0)
                 secs_ago = n_data.get("secs_ago", 0)
 
-                # Skip neighbors with no data yet (just loaded from storage
-                # without a poll)
+                # Loaded from storage but never polled: nothing to age yet
                 if last_updated == 0 and secs_ago == 0:
                     continue
 
@@ -1293,28 +1133,18 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             )
             return 0
 
-        # Phase 2: Remove in batches, yielding the event loop between each
-        # batch so WebSocket clients can drain their message queues.
+        # Yields the event loop between batches so WebSocket clients can drain
         batch_size = 10
         removed_count = 0
 
         for i, (rptr_prefix, n_pubkey, resolved_name) in enumerate(stale_entries):
-            # Remove both sensor entities (SNR + Seen) from entity registry
-            unique_id_prefix = (
+            self._remove_neighbor_entities(
+                entity_registry,
                 f"{self.config_entry.entry_id}_repeater_{rptr_prefix}"
-                f"_neighbor_{n_pubkey[:12]}"
+                f"_neighbor_{n_pubkey[:12]}",
             )
-            for entity in list(entity_registry.entities.values()):
-                if entity.platform == DOMAIN and (entity.unique_id or "").startswith(unique_id_prefix):
-                    entity_registry.async_remove(entity.entity_id)
-
-            # Remove from created sensors tracking
-            sensor_key = f"{rptr_prefix}:{n_pubkey}"
-            self._created_neighbor_sensors.discard(sensor_key)
-
-            # Remove from in-memory neighbor data
-            repeater_neighbors = self._repeater_neighbors.get(rptr_prefix, {})
-            repeater_neighbors.pop(n_pubkey, None)
+            self._created_neighbor_sensors.discard(f"{rptr_prefix}:{n_pubkey}")
+            self._repeater_neighbors.get(rptr_prefix, {}).pop(n_pubkey, None)
 
             removed_count += 1
             _LOGGER.debug(
@@ -1322,11 +1152,9 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 resolved_name, n_pubkey[:6], rptr_prefix[:6],
             )
 
-            # Yield the event loop every batch_size removals
             if (i + 1) % batch_size == 0:
                 await asyncio.sleep(0)
 
-        # Phase 3: Persist and refresh once after all removals
         if removed_count > 0:
             await self._save_neighbor_data()
             self.async_update_listeners()
@@ -1340,10 +1168,9 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
     async def async_load_neighbor_data(self) -> None:
         """Load persisted neighbor data from storage.
 
-        Must be called before sensor platform setup so that sensor.py can
-        recreate neighbor sensor entities from the persisted data. Does NOT
-        populate _created_neighbor_sensors — that is done by sensor.py when
-        it actually instantiates the sensor objects.
+        Must run before sensor platform setup so sensor.py can recreate the
+        entities. Leaves ``_created_neighbor_sensors`` alone: sensor.py fills
+        it when it instantiates the sensors.
         """
         if self._neighbor_data_loaded:
             return
@@ -1357,7 +1184,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                         elapsed = now - last_updated
                         n_data["secs_ago"] = n_data.get("secs_ago", 0) + int(elapsed)
                         n_data["resolved_name"] = self.resolve_neighbor_name(n_pubkey)
-                        # Migrate from seen_count (integer) to seen_timestamps (list)
+                        # Migrate seen_count (int) to seen_timestamps (list)
                         if "seen_count" in n_data and "seen_timestamps" not in n_data:
                             n_data["seen_timestamps"] = []
                             del n_data["seen_count"]
@@ -1372,72 +1199,58 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self._neighbor_data_loaded = True
 
     def cleanup_neighbor_entities(self, pubkey_prefix: str) -> int:
-        """Remove all neighbor sensor entities for a repeater from the entity registry.
+        """Drop a repeater's neighbour sensors when its toggle is turned off.
 
-        Called when the neighbors_enabled toggle is turned off for a repeater.
-        Removes both SNR and Seen sensor entities, clears in-memory tracking,
-        and removes persisted data for this repeater.
-        Returns the number of entities removed.
+        Removes the SNR and Seen entities, the in-memory tracking and the
+        persisted data. Returns the number of entities removed.
         """
-        from homeassistant.helpers import entity_registry as er
-
         entity_registry = er.async_get(self.hass)
-        unique_id_prefix = f"{self.config_entry.entry_id}_repeater_{pubkey_prefix}_neighbor_"
-        removed = 0
+        removed_ids = self._remove_neighbor_entities(
+            entity_registry,
+            f"{self.config_entry.entry_id}_repeater_{pubkey_prefix}_neighbor_",
+        )
+        for entity_id in removed_ids:
+            _LOGGER.info("Removing neighbor entity: %s", entity_id)
 
-        for entity in list(entity_registry.entities.values()):
-            if entity.platform == DOMAIN and (entity.unique_id or "").startswith(unique_id_prefix):
-                _LOGGER.info("Removing neighbor entity: %s", entity.entity_id)
-                entity_registry.async_remove(entity.entity_id)
-                removed += 1
-
-        # Clear in-memory tracking for this repeater's neighbors
         self._repeater_neighbors.pop(pubkey_prefix, None)
         self._created_neighbor_sensors = {
             k for k in self._created_neighbor_sensors
             if not k.startswith(f"{pubkey_prefix}:")
         }
-
-        # Remove persisted data for this repeater and save
         self.hass.async_create_task(self._save_neighbor_data())
 
-        if removed:
+        if removed_ids:
             _LOGGER.info(
                 "Cleaned up %d neighbor entities for repeater %s",
-                removed, pubkey_prefix[:6]
+                len(removed_ids), pubkey_prefix[:6]
             )
 
-        return removed
+        return len(removed_ids)
 
     async def _update_repeater(self, repeater_config):
-        """Update a repeater and schedule the next update.
+        """Request a repeater's status, logging in first when it keeps failing.
 
-        
-        This runs as a separate task so it doesn't block the main update loop.
-        If we fail to get stats multiple times, we'll try to login.
+        Runs as its own background task so the coordinator tick never blocks on
+        the mesh.
         """
-        # add a random delay to avoid all repeaters updating at the same time
-        # 0-30 seconds random delay
-        random_delay = random.uniform(0, MAX_RANDOM_DELAY)
-        await asyncio.sleep(random_delay)
+        await asyncio.sleep(random.uniform(0, MAX_RANDOM_DELAY))
 
-        
         pubkey_prefix = repeater_config.get("pubkey_prefix")
         repeater_name = repeater_config.get("name")
-        
         if not pubkey_prefix or not repeater_name:
             self.logger.warning(f"Cannot update repeater with missing pubkey_prefix or name: {repeater_config}")
             return
-            
+
+        update_interval = repeater_config.get(
+            CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL
+        )
         try:
-            # Find the contact by public key prefix
             contact = self.api.mesh_core.get_contact_by_key_prefix(pubkey_prefix)
             if not contact:
+                # A contact we cannot find was never asked, so it never failed.
                 self.logger.warning(f"Could not find repeater contact with pubkey_prefix: {pubkey_prefix}")
-                # Don't count this as a failure since the contact isn't found
                 return
-                
-            # Get the current failure count
+
             failure_count = self._repeater_consecutive_failures.get(pubkey_prefix, 0)
             has_path = contact.get("out_path_len", -1) > -1
             cost = request_cost(self._traffic_policy, COST_LOGIN_STATUS, has_path=has_path)
@@ -1450,13 +1263,13 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             ):
                 self.logger.info(f"Attempting login to repeater {repeater_name} after {failure_count} failures")
 
-                # Check the mesh budget before making the request
                 if not self._rate_limiter.try_consume(cost):
                     self.logger.debug(f"Rate limited: skipping login to {repeater_name}")
-                    update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
                     if denial_counts_as_failure(self._traffic_policy):
+                        # Legacy has never counted this one against the
+                        # consecutive counter, only against the reliability stat.
                         self._increment_failure(pubkey_prefix)
-                        self._apply_repeater_backoff(pubkey_prefix, failure_count + 1, update_interval)
+                        self._apply_backoff(pubkey_prefix, failure_count + 1, update_interval)
                     else:
                         self._defer_node(pubkey_prefix, cost, "repeater")
                     return
@@ -1480,220 +1293,183 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 except Exception as ex:
                     self.logger.error(f"Exception during login to repeater {repeater_name}: {ex}")
                     self._increment_failure(pubkey_prefix)
-                    # Update login time to enforce cooldown even on exception
+                    # Cooldown applies even when the attempt itself blew up
                     self._repeater_login_times[pubkey_prefix] = self._current_time()
                 await asyncio.sleep(1)
-            
-            # Request status from the repeater
+
             self.logger.debug(f"Sending status request to repeater: {repeater_name} ({pubkey_prefix})")
 
-            # Check the mesh budget before making the request
             if not self._rate_limiter.try_consume(cost):
                 self.logger.debug(f"Rate limited: skipping status request to {repeater_name}")
-                if not denial_counts_as_failure(self._traffic_policy):
+                if denial_counts_as_failure(self._traffic_policy):
+                    await self._record_node_failure(
+                        pubkey_prefix, failure_count + 1, update_interval, "repeater"
+                    )
+                else:
                     self._defer_node(pubkey_prefix, cost, "repeater")
-                    return
-                new_failure_count = failure_count + 1
-                self._repeater_consecutive_failures[pubkey_prefix] = new_failure_count
-                self._increment_failure(pubkey_prefix)
-                update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
-                self._apply_repeater_backoff(pubkey_prefix, new_failure_count, update_interval)
                 return
 
             status_event = await self.api.session.req_status(contact)
             result = status_event.payload if status_event else None
             _LOGGER.debug(f"Status response received: {result}")
 
-
-            # Handle response -- a missing status event means no reply
             if not result:
                 self.logger.warning(f"Error requesting status from repeater {repeater_name}: no response (timeout or send failure)")
-                # Increment failure count and apply backoff
-                new_failure_count = failure_count + 1
-                self._repeater_consecutive_failures[pubkey_prefix] = new_failure_count
-                self._increment_failure(pubkey_prefix)
-
-                if should_reset_path(
-                    self._traffic_policy,
-                    new_failure_count,
-                    has_path,
-                    self._path_reset_disabled(repeater_config),
-                ):
-                    await self._reset_node_path(contact, repeater_config)
-
-                update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
-                self._apply_repeater_backoff(pubkey_prefix, new_failure_count, update_interval)
+                await self._record_node_failure(
+                    pubkey_prefix, failure_count + 1, update_interval, "repeater",
+                    node_config=repeater_config, contact=contact, has_path=has_path,
+                )
             elif result.get('uptime', 0) == 0:
                 self.logger.warning(f"Malformed status response from repeater {repeater_name}: {result}")
-                new_failure_count = failure_count + 1
-                self._repeater_consecutive_failures[pubkey_prefix] = new_failure_count
-                self._increment_failure(pubkey_prefix)
-                update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
-                self._apply_repeater_backoff(pubkey_prefix, new_failure_count, update_interval)
+                await self._record_node_failure(
+                    pubkey_prefix, failure_count + 1, update_interval, "repeater"
+                )
             else:
                 self.logger.debug(f"Successfully updated repeater {repeater_name}")
-                # Reset failure count on success
                 self._repeater_consecutive_failures[pubkey_prefix] = 0
                 self._increment_success(pubkey_prefix)
 
-                # Fetch neighbor data while we have a good connection (if enabled)
                 if repeater_config.get(CONF_REPEATER_NEIGHBORS_ENABLED, False):
                     await self._fetch_repeater_neighbors(contact, repeater_name, pubkey_prefix)
 
-                # Trigger state updates for any entities listening for this repeater
                 self.async_update_listeners()
-
-                # Schedule next update based on configured interval
-                update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
-                next_update_time = self._current_time() + update_interval
-                self._next_repeater_update_times[pubkey_prefix] = next_update_time
+                self._next_repeater_update_times[pubkey_prefix] = (
+                    self._current_time() + update_interval
+                )
 
         except Exception as ex:
             self.logger.warning(f"Exception updating repeater {repeater_name}: {ex}")
-            # Increment failure count and apply backoff
-            new_failure_count = self._repeater_consecutive_failures.get(pubkey_prefix, 0) + 1
-            self._repeater_consecutive_failures[pubkey_prefix] = new_failure_count
-            self._increment_failure(pubkey_prefix)
-            update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
-            self._apply_repeater_backoff(pubkey_prefix, new_failure_count, update_interval)
+            await self._record_node_failure(
+                pubkey_prefix,
+                self._repeater_consecutive_failures.get(pubkey_prefix, 0) + 1,
+                update_interval,
+                "repeater",
+            )
         finally:
-            # Remove this task from active tasks
-            if pubkey_prefix in self._active_repeater_tasks:
-                self._active_repeater_tasks.pop(pubkey_prefix)
+            self._active_repeater_tasks.pop(pubkey_prefix, None)
             self._save_traffic_state()
             await asyncio.sleep(1)  # Small delay to avoid tight loops
+
+    async def _record_node_failure(
+        self,
+        pubkey_prefix: str,
+        failures: int,
+        update_interval: int,
+        update_type: str,
+        *,
+        node_config: dict | None = None,
+        contact: Any = None,
+        has_path: bool = False,
+    ) -> None:
+        """Book one failed poll: counter, reliability stat, path reset, backoff.
+
+        ``node_config`` is passed only where a failure can justify rediscovering
+        the node's path; the policy decides whether this failure does.
+        """
+        counters = (
+            self._telemetry_consecutive_failures
+            if update_type == "telemetry"
+            else self._repeater_consecutive_failures
+        )
+        counters[pubkey_prefix] = failures
+        self._increment_failure(pubkey_prefix)
+        if node_config is not None and should_reset_path(
+            self._traffic_policy, failures, has_path, self._path_reset_disabled(node_config)
+        ):
+            await self._reset_node_path(contact, node_config)
+        self._apply_backoff(pubkey_prefix, failures, update_interval, update_type)
+
+    def _set_next_due(self, pubkey_prefix: str, update_type: str, when: int) -> None:
+        """Record when a node's next status or telemetry attempt falls due."""
+        if update_type == "telemetry":
+            self._next_telemetry_update_times[pubkey_prefix] = when
+        else:
+            self._next_repeater_update_times[pubkey_prefix] = when
 
     def _defer_node(self, pubkey_prefix: str, cost: int, update_type: str) -> None:
         """Push a node's next attempt to the moment the budget can pay for it."""
         wait = int(self._rate_limiter.next_eligible(cost))
-        next_update_time = self._current_time() + wait
-        if update_type == "telemetry":
-            self._next_telemetry_update_times[pubkey_prefix] = next_update_time
-        else:
-            self._next_repeater_update_times[pubkey_prefix] = next_update_time
+        self._set_next_due(pubkey_prefix, update_type, self._current_time() + wait)
         self.logger.debug(
             f"Deferred {update_type} {pubkey_prefix} for {wait}s: mesh budget exhausted"
         )
 
-    def _apply_backoff(self, pubkey_prefix: str, failure_count: int, update_interval: int, update_type: str = "repeater") -> None:
-        """Apply the policy's backoff delay for a failed update.
-
-        Args:
-            pubkey_prefix: The node's public key prefix
-            failure_count: Number of consecutive failures
-            update_interval: The configured update interval the backoff is sized from
-            update_type: Type of update ("repeater" or "telemetry")
-        """
+    def _apply_backoff(
+        self,
+        pubkey_prefix: str,
+        failure_count: int,
+        update_interval: int,
+        update_type: str = "repeater",
+    ) -> None:
+        """Delay a failing node's next attempt by the policy's backoff."""
         delay = backoff_delay(self._traffic_policy, failure_count, update_interval)
-        next_update_time = self._current_time() + delay
-
-        if update_type == "telemetry":
-            self._next_telemetry_update_times[pubkey_prefix] = next_update_time
-        else:
-            self._next_repeater_update_times[pubkey_prefix] = next_update_time
-
+        self._set_next_due(pubkey_prefix, update_type, self._current_time() + delay)
         self.logger.debug(f"Applied backoff for {update_type} {pubkey_prefix}: "
                          f"failure_count={failure_count}, "
                          f"policy={self._traffic_policy}, "
                          f"delay={delay}s, "
                          f"interval_cap={update_interval}s")
 
-    def _apply_repeater_backoff(self, pubkey_prefix: str, failure_count: int, update_interval: int) -> None:
-        """Apply exponential backoff delay for failed repeater updates."""
-        self._apply_backoff(pubkey_prefix, failure_count, update_interval, "repeater")
-
     async def _update_node_telemetry(self, contact, node_config: dict):
-        """Update telemetry for a node (repeater or client).
-        
-        This is a separate method that can be used by both repeater and client update logic.
-        Assumes repeater login has already been handled by status update logic.
+        """Request telemetry from a tracked node.
+
+        Repeater login, when one is needed, has already been handled by the
+        status loop.
         """
-        # Extract values from node_config
         pubkey_prefix = node_config.get("pubkey_prefix")
         node_name = node_config.get("name")
-        
-        # Validate required fields
         if not pubkey_prefix or not node_name:
             self.logger.warning(f"Node config missing required fields - pubkey_prefix: {pubkey_prefix}, name: {node_name}")
             return
-            
-        # Handle different field names for update_interval between repeaters and clients
-        update_interval = (node_config.get(CONF_REPEATER_UPDATE_INTERVAL) or 
+
+        # Repeaters and clients name their interval differently
+        update_interval = (node_config.get(CONF_REPEATER_UPDATE_INTERVAL) or
                           node_config.get(CONF_CLIENT_UPDATE_INTERVAL, DEFAULT_CLIENT_UPDATE_INTERVAL))
-        
-        # Get current failure count
+
         failure_count = self._telemetry_consecutive_failures.get(pubkey_prefix, 0)
         has_path = bool(contact) and contact.get("out_path_len", -1) > -1
         cost = request_cost(self._traffic_policy, COST_DIRECT, has_path=has_path)
 
-        # add a random delay to avoid all updating at the same time
-        # 0-30 seconds random delay
-        random_delay = random.uniform(0, MAX_RANDOM_DELAY)
-        await asyncio.sleep(random_delay)
+        await asyncio.sleep(random.uniform(0, MAX_RANDOM_DELAY))
 
         try:
             self.logger.debug(f"Sending telemetry request to node: {node_name} ({pubkey_prefix})")
 
-            # Check the mesh budget before making the request
             if not self._rate_limiter.try_consume(cost):
                 self.logger.debug(f"Rate limited: skipping telemetry request to {node_name}")
-                if not denial_counts_as_failure(self._traffic_policy):
+                if denial_counts_as_failure(self._traffic_policy):
+                    await self._record_node_failure(
+                        pubkey_prefix, failure_count + 1, update_interval, "telemetry"
+                    )
+                else:
                     self._defer_node(pubkey_prefix, cost, "telemetry")
-                    return
-                new_failure_count = failure_count + 1
-                self._telemetry_consecutive_failures[pubkey_prefix] = new_failure_count
-                self._increment_failure(pubkey_prefix)
-                self._apply_backoff(pubkey_prefix, new_failure_count, update_interval, "telemetry")
                 return
 
             telemetry_event = await self.api.session.req_telemetry(contact)
             telemetry_result = telemetry_event.payload.get("lpp") if telemetry_event else None
-            
+
             if telemetry_result:
                 self.logger.debug(f"Telemetry response received from {node_name}: {telemetry_result}")
-                # Reset failure count on success
                 self._telemetry_consecutive_failures[pubkey_prefix] = 0
                 self._increment_success(pubkey_prefix)
-                # Schedule next telemetry update
-                next_telemetry_time = self._current_time() + update_interval
-                self._next_telemetry_update_times[pubkey_prefix] = next_telemetry_time
+                self._next_telemetry_update_times[pubkey_prefix] = (
+                    self._current_time() + update_interval
+                )
             else:
                 self.logger.debug(f"No telemetry response received from {node_name}")
-                # Increment failure count and apply backoff
-                new_failure_count = failure_count + 1
-                self._telemetry_consecutive_failures[pubkey_prefix] = new_failure_count
-                self._increment_failure(pubkey_prefix)
-
-                if should_reset_path(
-                    self._traffic_policy,
-                    new_failure_count,
-                    has_path,
-                    self._path_reset_disabled(node_config),
-                ):
-                    await self._reset_node_path(contact, node_config)
-
-                self._apply_backoff(pubkey_prefix, new_failure_count, update_interval, "telemetry")
+                await self._record_node_failure(
+                    pubkey_prefix, failure_count + 1, update_interval, "telemetry",
+                    node_config=node_config, contact=contact, has_path=has_path,
+                )
 
         except Exception as ex:
             self.logger.warning(f"Exception requesting telemetry from node {node_name}: {ex}")
-            # Increment failure count and apply backoff
-            new_failure_count = failure_count + 1
-            self._telemetry_consecutive_failures[pubkey_prefix] = new_failure_count
-            self._increment_failure(pubkey_prefix)
-
-            if should_reset_path(
-                self._traffic_policy,
-                new_failure_count,
-                has_path,
-                self._path_reset_disabled(node_config),
-            ):
-                await self._reset_node_path(contact, node_config)
-
-            self._apply_backoff(pubkey_prefix, new_failure_count, update_interval, "telemetry")
+            await self._record_node_failure(
+                pubkey_prefix, failure_count + 1, update_interval, "telemetry",
+                node_config=node_config, contact=contact, has_path=has_path,
+            )
         finally:
-            # Remove this task from active telemetry tasks
-            if pubkey_prefix in self._active_telemetry_tasks:
-                self._active_telemetry_tasks.pop(pubkey_prefix)
+            self._active_telemetry_tasks.pop(pubkey_prefix, None)
             self._save_traffic_state()
             await asyncio.sleep(1)  # Small delay to avoid tight loops
 
@@ -1727,39 +1503,29 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 _LOGGER.error("Error in async_flush_messages: %s", ex)
 
     async def _async_update_data(self) -> dict[str, Any]:
-        """Trigger commands that will generate events on schedule.
-        
-        In the event-driven architecture, this method:
-        1. Ensures we're connected to the device
-        2. Triggers commands based on scheduled intervals
-        3. Maintains shared data like contacts list
-        
-        The actual state updates happen through event subscriptions in the entities.
+        """Fire the scheduled commands whose events drive the entities.
+
+        Entities update from event subscriptions, not from what this returns;
+        the tick only maintains the shared contact list and decides which
+        commands are due.
         """
-        # Initialize result with previous data
         result_data = dict(self.data) if self.data else {
-            "name": "MeshCore Node", 
+            "name": "MeshCore Node",
             "contacts": []
         }
-        # Check and update repeaters that need updating
         current_time = self._current_time()
         _LOGGER.debug("Starting data update...")
-        
         _LOGGER.debug(f"Timings:"
                       f"Now: {current_time}, "
                       f"Next: {self._next_repeater_update_times}, "
                       f"Failures: {self._repeater_consecutive_failures}")
-        
-    
+
         # The session owns recovery; a tick during an outage simply fails.
         if not self.api.connected:
             raise UpdateFailed("Device not connected")
 
-
-        # Always get battery status
         await self.api.session.exchange(self.api.mesh_core.commands.get_bat)
-        
-        # Initialize manual contact mode on first run
+
         if not self._manual_mode_initialized:
             try:
                 self.logger.info("Setting manual contact mode...")
@@ -1769,8 +1535,6 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 if result and result.type != EventType.ERROR:
                     self.logger.info("Manual contact mode enabled")
                     self._manual_mode_initialized = True
-
-                    # Load discovered contacts from storage
                     stored_contacts = await self._store.async_load()
                     if stored_contacts:
                         self._discovered_contacts = stored_contacts
@@ -1780,7 +1544,6 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             except Exception as ex:
                 self.logger.error(f"Error setting manual contact mode: {ex}")
 
-        # Fetch device info if we don't have it yet or don't have complete info
         if not self._device_info_initialized:
             try:
                 self.logger.info("Fetching device info...")
@@ -1790,7 +1553,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 if device_query_result.type is EventType.DEVICE_INFO:
                     self._firmware_version = device_query_result.payload.get("ver")
                     self._hardware_model = device_query_result.payload.get("model")
-                    self._max_channels = device_query_result.payload.get("max_channels", 4)  # Default to 4 if not provided
+                    self._max_channels = device_query_result.payload.get("max_channels", 4)
 
                     if self._firmware_version:
                         self.device_info["sw_version"] = self._firmware_version
@@ -1799,18 +1562,13 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
 
                     self.logger.info(f"Device info updated - Firmware: {self._firmware_version}, Model: {self._hardware_model}, Max Channels: {self._max_channels}")
                     self._device_info_initialized = True
-
-                    # Set up CHANNEL_INFO event listener
                     self._setup_channel_info_listener()
-
-                    # Fetch channel info for all channels
                     await self.fetch_all_channel_info()
-
                     self.async_update_listeners()
             except Exception as ex:
                 self.logger.error(f"Error fetching device info: {ex}")
         
-        # Sync contacts if dirty (uses SDK's internal dirty flag)
+        # The SDK owns the dirty flag that decides whether this resyncs
         try:
             contacts_changed = await self.api.mesh_core.ensure_contacts(follow=True)
             if contacts_changed:
@@ -1824,13 +1582,11 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         except Exception as ex:
             self.logger.error(f"Error syncing contacts: {ex}")
 
-        # Store combined contacts (added + discovered) in result data
         result_data["contacts"] = self.get_all_contacts()
 
-        # Auto-cleanup stale discovered contacts (once per day)
         if self._auto_cleanup_stale_contacts and self._stale_contact_days > 0:
             now_ts = time.time()
-            if now_ts - self._last_stale_cleanup >= 86400:  # 24 hours
+            if now_ts - self._last_stale_cleanup >= DAILY_CLEANUP_INTERVAL:
                 self._last_stale_cleanup = now_ts
                 removed = await self._cleanup_stale_discovered_contacts(
                     self._stale_contact_days
@@ -1841,20 +1597,14 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                         "(older than %d days)",
                         removed, self._stale_contact_days,
                     )
-                    # Refresh contacts in result_data after cleanup
                     result_data["contacts"] = self.get_all_contacts()
 
-        # Check for self telemetry updates if enabled
         if self._self_telemetry_enabled:
             if current_time - self._last_self_telemetry_update >= self._self_telemetry_interval:
                 self.logger.debug(f"Getting self telemetry (interval: {self._self_telemetry_interval}s)")
-                # The interval gates *attempts*, not successes. Recording the
-                # attempt before it runs keeps a failing node on the configured
-                # cadence; advancing this only in the success branch left the
-                # gate permanently open against a node that cannot answer, so a
-                # 300 s setting collapsed to the coordinator tick and re-sent a
-                # request that could never succeed (~17k ERROR lines a day at a
-                # 5 s tick).
+                # The interval gates *attempts*: advancing it only on success
+                # left the gate open against a node that can never answer, and
+                # a 300 s setting collapsed to the coordinator tick.
                 self._last_self_telemetry_update = current_time
                 try:
                     telemetry_result = await self.api.session.exchange(
@@ -1873,12 +1623,9 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             else:
                 self.logger.debug(f"Skipping self telemetry (next in {self._self_telemetry_interval - (current_time - self._last_self_telemetry_update):.1f}s)")
 
-        # Check for self diagnostics updates if enabled.
-        # These are LOCAL-transport queries to the attached radio (a 2-byte
-        # GET_STATS opcode frame, no destination contact) — they add no mesh
-        # traffic and consume no airtime/duty-cycle. The SDK dispatches
-        # STATS_CORE/RADIO/PACKETS events that the diagnostic sensor entities
-        # subscribe to, so no return-value handling is needed here.
+        # Local GET_STATS frames: no mesh traffic, no airtime. The SDK
+        # dispatches STATS_CORE/RADIO/PACKETS to the diagnostic sensors, so
+        # there is nothing to do with the return values here.
         if self._self_diagnostics_enabled:
             if current_time - self._last_self_diagnostics_update >= self._self_diagnostics_interval:
                 self.logger.debug(f"Getting self diagnostics (interval: {self._self_diagnostics_interval}s)")
@@ -1894,10 +1641,9 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             else:
                 self.logger.debug(f"Skipping self diagnostics (next in {self._self_diagnostics_interval - (current_time - self._last_self_diagnostics_update):.1f}s)")
 
-        # --- Message handling ---
-        # On first cycle: drain any messages queued while disconnected.
-        # After that: only poll if no message activity in MSG_SAFETY_NET_INTERVAL.
-        # Normal message delivery is event-driven via MESSAGES_WAITING -> async_flush_messages().
+        # Delivery is event-driven (MESSAGES_WAITING -> async_flush_messages).
+        # The first cycle drains whatever queued while disconnected; after that
+        # this only polls once MSG_SAFETY_NET_INTERVAL passes with no activity.
         current_time_mono = time.time()
         should_poll = (
             not self._initial_drain_done
@@ -1927,178 +1673,117 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     self._initial_drain_done = True
                     _LOGGER.info("Initial message drain complete")
 
-            # Update activity timestamp even if queue was empty,
-            # so we don't re-poll until another MSG_SAFETY_NET_INTERVAL elapses.
+            # Stamped even on an empty queue, so the next poll waits a full
+            # MSG_SAFETY_NET_INTERVAL.
             self._last_msg_activity = current_time_mono
 
-        for repeater_config in self._tracked_repeaters:
-            if not repeater_config.get('name') or not repeater_config.get('pubkey_prefix'):
-                _LOGGER.warning(f"Repeater config missing name or pubkey_prefix: {repeater_config}")
-                continue
+        # One pass per node loop, in the order they have always run:
+        # (key, configs, kind, tasks, due times, enabled key, warn on a bad
+        # config, skip auto-disabled nodes, may auto-disable, messages) where
+        # messages is (task name, busy, failed, starting, contact missing).
+        node_loops = (
+            ("status", self._tracked_repeaters, NODE_REPEATER,
+             self._active_repeater_tasks, self._next_repeater_update_times,
+             None, True, True, auto_disable_applies(self._traffic_policy, NODE_REPEATER),
+             ("update_repeater_{name}",
+              "Update task for repeater %s still running, skipping",
+              "Repeater update task for %s failed with exception: %s",
+              "Starting repeater update task for %s",
+              None)),
+            ("repeater_telemetry", self._tracked_repeaters, NODE_REPEATER,
+             self._active_telemetry_tasks, self._next_telemetry_update_times,
+             CONF_REPEATER_TELEMETRY_ENABLED, False,
+             auto_disable_applies(self._traffic_policy, NODE_REPEATER, telemetry=True), False,
+             ("telemetry_{name}",
+              "Telemetry task for %s still running, skipping",
+              "Telemetry update task for %s failed with exception: %s",
+              "Starting telemetry update task for %s",
+              "Could not find contact for telemetry request: %s")),
+            ("client_telemetry", self._tracked_clients, NODE_CLIENT,
+             self._active_telemetry_tasks, self._next_telemetry_update_times,
+             None, True, True,
+             auto_disable_applies(self._traffic_policy, NODE_CLIENT, telemetry=True),
+             ("client_telemetry_{name}",
+              "Client telemetry task for %s still running, skipping",
+              "Client telemetry update task for %s failed with exception: %s",
+              "Starting telemetry update task for client %s",
+              "Could not find contact for client telemetry request: %s")),
+        )
 
-            pubkey_prefix = repeater_config.get("pubkey_prefix")
-            repeater_name = repeater_config.get("name")
+        for (
+            key, configs, kind, tasks, due, enabled_key, warn_missing,
+            skip_auto_disabled, may_auto_disable, messages,
+        ) in node_loops:
+            task_name, busy_msg, failed_msg, start_msg, no_contact_msg = messages
+            if key == "repeater_telemetry":
+                _LOGGER.debug("Checking telemetry for tracked repeaters: %s", due)
+            elif key == "client_telemetry":
+                _LOGGER.debug("Checking telemetry for tracked clients")
 
-            # Check if device is disabled (either in config or auto-disabled)
-            if repeater_config.get(CONF_DEVICE_DISABLED, False) or pubkey_prefix in self._auto_disabled_devices:
-                continue
-
-            # Check if repeater has had no successful requests in AUTO_DISABLE_HOURS
-            # Use last success time, or coordinator start time if never succeeded
-            last_success_time = self._last_successful_request.get(pubkey_prefix, self._coordinator_start_time)
-            hours_since_success = (current_time - last_success_time) / 3600  # Convert to hours
-
-            if hours_since_success >= AUTO_DISABLE_HOURS:
-                _LOGGER.warning(
-                    f"Repeater {repeater_name} has had no successful requests in {hours_since_success:.1f} hours. "
-                    f"Automatically disabling to reduce network traffic. This will reset on restart."
-                )
-                # Add to auto-disabled set (will reset on restart)
-                self._auto_disabled_devices.add(pubkey_prefix)
-                self._save_traffic_state()
-                continue
-
-            # Clean c completed or failed tasks
-            if pubkey_prefix in self._active_repeater_tasks:
-                task = self._active_repeater_tasks[pubkey_prefix]
-                if task.done():
-                    # Remove completed task
-                    self._active_repeater_tasks.pop(pubkey_prefix)
-                    # Handle exceptions
-                    if task.exception():
-                        _LOGGER.error(f"Repeater update task for {repeater_name} failed with exception: {task.exception()}")
-                else:
-                    # Task is still running, skip this repeater
-                    _LOGGER.debug(f"Update task for repeater {repeater_name} still running, skipping")
-                    continue
-                
-            # Check if it's time to update this repeater
-            next_update_time = self._next_repeater_update_times.get(pubkey_prefix, 0)
-            if current_time >= next_update_time:
-                _LOGGER.debug(f"Starting repeater update task for {repeater_name}")
-
-                self._active_repeater_tasks[pubkey_prefix] = (
-                    self.config_entry.async_create_background_task(
-                        self.hass,
-                        self._update_repeater(repeater_config),
-                        f"update_repeater_{repeater_name}",
-                        eager_start=False,
-                    )
-                )
-
-        # Check and update telemetry for nodes that have it enabled
-        _LOGGER.debug("Checking telemetry for tracked repeaters: %s", self._next_telemetry_update_times)
-        for repeater_config in self._tracked_repeaters:
-            if not repeater_config.get('name') or not repeater_config.get('pubkey_prefix'):
-                continue
-
-            if repeater_config.get(CONF_DEVICE_DISABLED, False):
-                continue
-
-            telemetry_enabled = repeater_config.get(CONF_REPEATER_TELEMETRY_ENABLED, False)
-            if not telemetry_enabled:
-                continue
-
-            pubkey_prefix = repeater_config.get("pubkey_prefix")
-            repeater_name = repeater_config.get("name")
-
-            # Legacy keeps polling telemetry from a node the status loop gave up on
-            if (
-                auto_disable_applies(self._traffic_policy, NODE_REPEATER, telemetry=True)
-                and pubkey_prefix in self._auto_disabled_devices
-            ):
-                continue
-
-            # Clean up completed telemetry tasks
-            if pubkey_prefix in self._active_telemetry_tasks:
-                task = self._active_telemetry_tasks[pubkey_prefix]
-                if task.done():
-                    self._active_telemetry_tasks.pop(pubkey_prefix)
-                    if task.exception():
-                        _LOGGER.error(f"Telemetry update task for {repeater_name} failed with exception: {task.exception()}")
-                else:
-                    # Task is still running, skip this node
-                    _LOGGER.debug(f"Telemetry task for {repeater_name} still running, skipping")
-                    continue
-            
-            # Check if it's time to update telemetry for this node
-            next_telemetry_time = self._next_telemetry_update_times.get(pubkey_prefix, 0)
-            if current_time >= next_telemetry_time:
-                # Find the contact for this node
-                contact = self.api.mesh_core.get_contact_by_key_prefix(pubkey_prefix)
-                if contact:
-                    _LOGGER.debug(f"Starting telemetry update task for {repeater_name}")
-
-                    self._active_telemetry_tasks[pubkey_prefix] = (
-                        self.config_entry.async_create_background_task(
-                            self.hass,
-                            self._update_node_telemetry(contact, repeater_config),
-                            f"telemetry_{repeater_name}",
-                            eager_start=False,
+            for node_config in configs:
+                pubkey_prefix = node_config.get("pubkey_prefix")
+                node_name = node_config.get("name")
+                if not node_name or not pubkey_prefix:
+                    if warn_missing:
+                        _LOGGER.warning(
+                            f"{kind.capitalize()} config missing name or "
+                            f"pubkey_prefix: {node_config}"
                         )
-                    )
-                else:
-                    _LOGGER.warning(f"Could not find contact for telemetry request: {pubkey_prefix}")
-        
-        _LOGGER.debug("Checking telemetry for tracked clients")
-        for client_config in self._tracked_clients:
-            if not client_config.get('name') or not client_config.get('pubkey_prefix'):
-                _LOGGER.warning(f"Client config missing name or pubkey_prefix: {client_config}")
-                continue
-
-            pubkey_prefix = client_config.get("pubkey_prefix")
-            client_name = client_config.get("name")
-
-            # Check if device is disabled (either in config or auto-disabled)
-            if client_config.get(CONF_DEVICE_DISABLED, False) or pubkey_prefix in self._auto_disabled_devices:
-                continue
-
-            # Legacy never auto-disables a client: it checks the set but never adds to it
-            if auto_disable_applies(self._traffic_policy, NODE_CLIENT, telemetry=True):
-                last_success_time = self._last_successful_request.get(
-                    pubkey_prefix, self._coordinator_start_time
-                )
-                hours_since_success = (current_time - last_success_time) / 3600
-                if hours_since_success >= AUTO_DISABLE_HOURS:
-                    _LOGGER.warning(
-                        f"Client {client_name} has had no successful requests in {hours_since_success:.1f} hours. "
-                        f"Automatically disabling to reduce network traffic. This will reset on restart."
-                    )
-                    self._auto_disabled_devices.add(pubkey_prefix)
-                    self._save_traffic_state()
+                    continue
+                if node_config.get(CONF_DEVICE_DISABLED, False):
+                    continue
+                if enabled_key is not None and not node_config.get(enabled_key, False):
+                    continue
+                if skip_auto_disabled and pubkey_prefix in self._auto_disabled_devices:
                     continue
 
-            if pubkey_prefix in self._active_telemetry_tasks:
-                task = self._active_telemetry_tasks[pubkey_prefix]
-                if task.done():
-                    self._active_telemetry_tasks.pop(pubkey_prefix)
-                    if task.exception():
-                        _LOGGER.error(f"Client telemetry update task for {client_name} failed with exception: {task.exception()}")
-                else:
-                    _LOGGER.debug(f"Client telemetry task for {client_name} still running, skipping")
-                    continue
-            
-            next_telemetry_time = self._next_telemetry_update_times.get(pubkey_prefix, 0)
-            if current_time >= next_telemetry_time:
-                contact = self.api.mesh_core.get_contact_by_key_prefix(pubkey_prefix)
-                if contact:
-                    _LOGGER.debug(f"Starting telemetry update task for client {client_name}")
-
-                    self._active_telemetry_tasks[pubkey_prefix] = (
-                        self.config_entry.async_create_background_task(
-                            self.hass,
-                            self._update_node_telemetry(contact, client_config),
-                            f"client_telemetry_{client_name}",
-                            eager_start=False,
+                if may_auto_disable:
+                    last_success = self._last_successful_request.get(
+                        pubkey_prefix, self._coordinator_start_time
+                    )
+                    idle_hours = (current_time - last_success) / 3600
+                    if idle_hours >= AUTO_DISABLE_HOURS:
+                        _LOGGER.warning(
+                            f"{kind.capitalize()} {node_name} has had no successful requests "
+                            f"in {idle_hours:.1f} hours. Automatically disabling to reduce "
+                            f"network traffic. This will reset on restart."
                         )
-                    )
-                else:
-                    _LOGGER.warning(f"Could not find contact for client telemetry request: {pubkey_prefix}")
+                        self._auto_disabled_devices.add(pubkey_prefix)
+                        self._save_traffic_state()
+                        continue
 
-        # Auto-cleanup stale neighbors (once per day)
+                task = tasks.get(pubkey_prefix)
+                if task is not None:
+                    if not task.done():
+                        _LOGGER.debug(busy_msg, node_name)
+                        continue
+                    tasks.pop(pubkey_prefix)
+                    if task.exception():
+                        _LOGGER.error(failed_msg, node_name, task.exception())
+
+                if current_time < due.get(pubkey_prefix, 0):
+                    continue
+
+                contact = None
+                if key != "status":
+                    contact = self.api.mesh_core.get_contact_by_key_prefix(pubkey_prefix)
+                    if not contact:
+                        _LOGGER.warning(no_contact_msg, pubkey_prefix)
+                        continue
+
+                _LOGGER.debug(start_msg, node_name)
+                tasks[pubkey_prefix] = self.config_entry.async_create_background_task(
+                    self.hass,
+                    self._update_repeater(node_config)
+                    if contact is None
+                    else self._update_node_telemetry(contact, node_config),
+                    task_name.format(name=node_name),
+                    eager_start=False,
+                )
+
         if self._auto_cleanup_stale_neighbors and self._stale_neighbor_days > 0:
             now_ts = time.time()
-            if now_ts - self._last_stale_neighbor_cleanup >= 86400:  # 24 hours
+            if now_ts - self._last_stale_neighbor_cleanup >= DAILY_CLEANUP_INTERVAL:
                 self._last_stale_neighbor_cleanup = now_ts
                 removed = await self._cleanup_stale_neighbors(
                     self._stale_neighbor_days

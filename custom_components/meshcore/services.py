@@ -986,10 +986,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                                 except Exception as sensor_ex:
                                     _LOGGER.warning("Failed to create binary sensor for contact %s: %s", prefix, sensor_ex)
 
-                                # Trigger immediate update
-                                updated_data = dict(coordinator.data) if coordinator.data else {}
-                                updated_data["contacts"] = coordinator.get_all_contacts()
-                                coordinator.async_set_updated_data(updated_data)
+                                coordinator._publish_contacts()
                     elif command_name == "remove_contact" and result.type != EventType.ERROR:
                         api.mesh_core._contacts_dirty = True
                         # Also remove from SDK's internal contacts dict and coordinator
@@ -1009,90 +1006,24 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                                 # Mark contact as dirty so binary sensors update
                                 coordinator.mark_contact_dirty(prefix)
 
-                                # Data-only mode: a demoted contact (added ->
-                                # discovered) becomes data-only, so its per-contact
-                                # binary_sensor must be removed. In data-only mode
-                                # nothing else deletes it -- the discovered-cleanup
-                                # paths only find an entity when one exists, and a
-                                # demoted contact's entity must go immediately rather
-                                # than wait for eviction/stale-cleanup. In full mode
-                                # the contact stays a valid discovered entity, so this
-                                # block is gated off and the entity is left untouched.
-                                # NOTE: this gate is the INVERSE of the discovered-
-                                # cleanup paths; data-only mode is exactly when the
-                                # entity must go. Discard the FULL public_key (the key
-                                # create_contact_sensor added), not the 12-hex prefix.
+                                # Data-only mode is exactly when a demoted
+                                # contact (added -> discovered) must lose its
+                                # per-contact entities: nothing else deletes
+                                # them, and waiting for eviction or stale
+                                # cleanup is too late. In full mode the contact
+                                # stays a valid discovered entity, so this is
+                                # gated off. The coordinator owns the teardown.
                                 if (
                                     get_contact_discovery_mode(coordinator.config_entry)
                                     == MODE_DATA_ONLY
                                 ):
-                                    coordinator.tracked_diagnostic_binary_contacts.discard(pubkey)
-                                    entity_registry = er.async_get(hass)
-                                    unique_id = f"{coordinator.config_entry.entry_id}_contact_{prefix}"
-                                    entity_id = entity_registry.async_get_entity_id(
-                                        "binary_sensor", DOMAIN, unique_id
+                                    _LOGGER.info(
+                                        "Data-only mode: removing entities for demoted contact %s",
+                                        prefix,
                                     )
-                                    if entity_id:
-                                        _LOGGER.info(
-                                            "Data-only mode: removing entity for demoted contact %s",
-                                            entity_id,
-                                        )
-                                        entity_registry.async_remove(entity_id)
+                                    coordinator._remove_discovered_contact_entities(pubkey)
 
-                                    # Telemetry sensors and the GPS tracker are created
-                                    # dynamically while a contact is added and have no
-                                    # other demote teardown. Sweep them too -- except
-                                    # for nodes with a tracked-device subscription,
-                                    # whose entities are subscription-backed and would
-                                    # recreate on the next response.
-                                    # Allowlist by unique_id SHAPE (prefix + suffix):
-                                    # a bare "contains pubkey" match would wrongly hit
-                                    # repeater-neighbor sensors (they embed OTHER
-                                    # nodes' pubkeys) and tracked-client entities.
-                                    if not _node_has_tracked_subscription(coordinator, prefix):
-                                        uid_prefix = (
-                                            f"{coordinator.config_entry.entry_id}_{prefix}_"
-                                        )
-                                        to_remove = [
-                                            e.entity_id
-                                            for e in er.async_entries_for_config_entry(
-                                                entity_registry,
-                                                coordinator.config_entry.entry_id,
-                                            )
-                                            if (e.unique_id or "").startswith(uid_prefix)
-                                            and (
-                                                e.unique_id.endswith("_telemetry")
-                                                or e.unique_id.endswith("_gps_tracker")
-                                            )
-                                        ]
-                                        for stale_entity_id in to_remove:
-                                            _LOGGER.info(
-                                                "Data-only mode: removing telemetry/GPS entity for demoted contact %s",
-                                                stale_entity_id,
-                                            )
-                                            entity_registry.async_remove(stale_entity_id)
-
-                                        # In-memory dedup maps: without these discards
-                                        # the managers keep updating deregistered
-                                        # entities and a same-session re-add will not
-                                        # recreate the sensors (same desync class as
-                                        # the tracked-set discard above).
-                                        tm = getattr(coordinator, "telemetry_manager", None)
-                                        if tm is not None:
-                                            for key in [
-                                                k for k in tm.discovered_sensors if k.startswith(prefix)
-                                            ]:
-                                                del tm.discovered_sensors[key]
-                                        dtm = getattr(coordinator, "device_tracker_manager", None)
-                                        if dtm is not None:
-                                            for key in [
-                                                k for k in dtm.discovered_trackers if k.startswith(prefix)
-                                            ]:
-                                                del dtm.discovered_trackers[key]
-
-                                updated_data = dict(coordinator.data) if coordinator.data else {}
-                                updated_data["contacts"] = coordinator.get_all_contacts()
-                                coordinator.async_set_updated_data(updated_data)
+                                coordinator._publish_contacts()
 
                     # Normalize the SDK return value into a JSON-safe response.
                     # Possible shapes:
@@ -1500,10 +1431,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         # Mark contact as dirty so binary sensors update
         coordinator.mark_contact_dirty(pubkey_prefix)
 
-        # Trigger coordinator update
-        updated_data = dict(coordinator.data) if coordinator.data else {}
-        updated_data["contacts"] = coordinator.get_all_contacts()
-        coordinator.async_set_updated_data(updated_data)
+        coordinator._publish_contacts()
 
         # Remove the binary sensor entity for this contact. Removal runs
         # unconditionally: in data-only/off modes discovered contacts have no
@@ -1637,9 +1565,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             except Exception as ex:
                 _LOGGER.error(f"Error saving discovered contacts: {ex}")
 
-            updated_data = dict(coordinator.data) if coordinator.data else {}
-            updated_data["contacts"] = coordinator.get_all_contacts()
-            coordinator.async_set_updated_data(updated_data)
+            coordinator._publish_contacts()
 
             _LOGGER.info(f"Cleared {removed_count} discovered contacts")
 

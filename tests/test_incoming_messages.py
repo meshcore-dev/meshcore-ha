@@ -98,6 +98,8 @@ def make_coordinator(enabled):
     coord._initial_drain_done = False
     coord._last_msg_activity = 0
     coord._tracked_repeaters = coord._tracked_clients = []
+    coord._active_repeater_tasks = {}
+    coord._active_telemetry_tasks = {}
     return coord
 
 
