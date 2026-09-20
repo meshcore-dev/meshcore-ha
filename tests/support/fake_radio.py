@@ -111,6 +111,11 @@ class FakeRadio:
         ]:
             await asyncio.gather(*pending)
 
+    @property
+    def is_connected(self) -> bool:
+        """Mirror the SDK's link-state property."""
+        return self.connected
+
     async def drop_link(self) -> None:
         """Publish the SDK's link-loss event and reject subsequent commands."""
         self.connected = False

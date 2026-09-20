@@ -74,6 +74,7 @@ class RadioSession:
         self._mesh_core: MeshCore | None = None
         self._connected = False
         self._closing = False
+        self._started = False
         self._forwarding = True
         self._registrations: list[_Registration] = []
         self._connect_hooks: list[Callable[[], None]] = []
@@ -94,8 +95,7 @@ class RadioSession:
         self._closing = False
         if not await self._open():
             return False
-        await self._on_connected()
-        return True
+        return await self._on_connected()
 
     async def close(self, deadline: float = CLOSE_DEADLINE) -> None:
         """Stop recovery and release the link; safe to call more than once."""
@@ -112,6 +112,8 @@ class RadioSession:
 
         mesh_core, self._mesh_core = self._mesh_core, None
         self._detach_all()
+        if not self._started:
+            return
         self.hass.bus.async_fire(f"{DOMAIN}_disconnected", {})
         if mesh_core is not None:
             await self._shutdown_instance(mesh_core, deadline)
@@ -175,6 +177,7 @@ class RadioSession:
             return False
 
         self._mesh_core = mesh_core
+        self._started = True
         return True
 
     async def _create(self) -> MeshCore | None:
@@ -233,11 +236,15 @@ class RadioSession:
         _LOGGER.info("Connection validated successfully: %s", result)
         return True
 
-    async def _on_connected(self) -> None:
-        """Replay subscriptions, sync time, run hooks and announce the edge."""
+    async def _on_connected(self) -> bool:
+        """Replay subscriptions, sync time, run hooks and announce the edge.
+
+        Returns False, with the instance released, if the link dropped before
+        the edge could be declared; callers treat that as a failed attempt.
+        """
         mesh_core = self._mesh_core
         if mesh_core is None:
-            return
+            return False
 
         mesh_core.dispatcher.subscribe(EventType.DISCONNECTED, self._handle_sdk_disconnect)
         for registration in self._registrations:
@@ -251,6 +258,13 @@ class RadioSession:
         except Exception as ex:
             _LOGGER.error("Failed to sync time on connection: %s", ex)
 
+        if not mesh_core.is_connected:
+            _LOGGER.warning("MeshCore link dropped during connect; retrying")
+            self._mesh_core = None
+            self._detach_all()
+            await self._shutdown_instance(mesh_core, CLOSE_DEADLINE)
+            return False
+
         self._connected = True
         for hook in list(self._connect_hooks):
             try:
@@ -262,6 +276,7 @@ class RadioSession:
             f"{DOMAIN}_connected", {"connection_type": self.connection_type}
         )
         _LOGGER.info("Successfully connected to MeshCore device")
+        return True
 
     def _handle_sdk_disconnect(self, event: Event) -> None:
         """React to the SDK's link-loss event exactly once per edge."""
@@ -290,8 +305,7 @@ class RadioSession:
             await asyncio.sleep(base * (1 + random.uniform(-RECONNECT_JITTER, RECONNECT_JITTER)))
             if self._closing:
                 return
-            if await self._open():
-                await self._on_connected()
+            if await self._open() and await self._on_connected():
                 return
             attempt += 1
 
@@ -325,6 +339,8 @@ class RadioSession:
         """Bind one registration to the current dispatcher, if there is one."""
         if self._mesh_core is None:
             return
+        if registration.live is not None:
+            registration.live.unsubscribe()
         registration.live = self._mesh_core.dispatcher.subscribe(
             registration.event_type, registration.handler, registration.attribute_filters
         )
