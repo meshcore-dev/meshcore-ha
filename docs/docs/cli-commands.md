@@ -38,7 +38,7 @@ is run with `record_to_console: true` — in the CLI Console transcript and on t
 `meshcore_cli_response` event.
 
 :::warning
-`reboot`, `import_private_key`, the factory-reset commands and the raw-frame
+`import_private_key`, the factory-reset commands and the raw-frame
 commands are refused by the integration — use the node's own console for
 those. Commands prefixed `set_*` and `send_advert` **change your
 device or put traffic on the mesh**. Read-only `get_*` / `send_device_query`

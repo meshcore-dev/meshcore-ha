@@ -94,7 +94,6 @@ _SELF_INFO_COMMANDS = frozenset({
 # bypass every gate above; none of them has a legitimate caller here. The gate
 # also refuses private SDK attributes, which is what a leading underscore is.
 DENIED_COMMANDS: Final = frozenset({
-    "reboot",
     "request_factory_reset",
     "confirm_factory_reset",
     "import_private_key",

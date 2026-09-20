@@ -110,7 +110,7 @@ These are refused before they reach the radio, because each one either
 destroys the node's identity, wipes its configuration, or hands the radio raw
 frames that bypass every check the integration makes:
 
-`reboot`, `request_factory_reset`, `confirm_factory_reset`,
+`request_factory_reset`, `confirm_factory_reset`,
 `import_private_key`, `send_raw_packet`, `send_raw_data`, and any name
 starting with `_`.
 

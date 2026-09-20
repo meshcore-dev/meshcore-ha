@@ -25,6 +25,7 @@ def _coordinator(entry_id: str, contact: dict | None = None) -> SimpleNamespace:
     commands = MagicMock()
     commands.get_time = AsyncMock(return_value=Event(EventType.OK, {"time": 1}))
     commands.reboot = AsyncMock(return_value=Event(EventType.OK, {}))
+    commands.request_factory_reset = AsyncMock(return_value=Event(EventType.OK, {}))
     api = StubSession(
         commands,
         connected=True,
@@ -77,14 +78,14 @@ async def test_send_message_without_a_recipient_is_refused(
 async def test_a_denied_command_never_reaches_the_radio(
     hass: HomeAssistant, services: SimpleNamespace
 ) -> None:
-    """Commands that reset the node are refused with a translated error."""
+    """Commands that wipe the node are refused with a translated error."""
     with pytest.raises(HomeAssistantError) as refusal:
         await hass.services.async_call(
-            DOMAIN, "execute_command", {"command": "reboot"}, blocking=True
+            DOMAIN, "execute_command", {"command": "request_factory_reset"}, blocking=True
         )
 
     assert refusal.value.translation_key == "command_denied"
-    services.coordinator.api.commands.reboot.assert_not_awaited()
+    services.coordinator.api.commands.request_factory_reset.assert_not_awaited()
 
 
 async def test_an_allowed_command_still_runs(
