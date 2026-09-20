@@ -296,7 +296,7 @@ trace:
         text:
     timeout:
       name: Timeout
-      description: Maximum seconds to wait for the trace response. The effective timeout also respects the firmware's suggested_timeout.
+      description: Seconds to wait for the trace response. The effective wait is at least the firmware's suggested timeout and never more than 60 seconds, whatever is requested here.
       required: false
       default: 15
       example: 15

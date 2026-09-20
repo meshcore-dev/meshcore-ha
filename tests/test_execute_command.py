@@ -110,10 +110,10 @@ def _call(command):
 async def test_event_payload_returned_as_dict():
     """Regression: Event with .payload dict still flows through unchanged."""
     payload = {"status": "ok", "value": 42}
-    coord = _build_coordinator("reboot", _Event(_ET.MSG_SENT, payload))
+    coord = _build_coordinator("get_time", _Event(_ET.MSG_SENT, payload))
     handler = await _get_execute_handler(coord)
 
-    result = await handler(_call("reboot"))
+    result = await handler(_call("get_time"))
 
     assert result == payload
 
@@ -122,10 +122,10 @@ async def test_event_payload_returned_as_dict():
 async def test_event_with_bytes_in_payload_is_hex_encoded():
     """Bytes inside an Event payload are converted to hex strings."""
     payload = {"key": b"\x01\x02\xff", "name": "node"}
-    coord = _build_coordinator("reboot", _Event(_ET.MSG_SENT, payload))
+    coord = _build_coordinator("get_time", _Event(_ET.MSG_SENT, payload))
     handler = await _get_execute_handler(coord)
 
-    result = await handler(_call("reboot"))
+    result = await handler(_call("get_time"))
 
     assert result == {"key": "0102ff", "name": "node"}
 
@@ -227,10 +227,10 @@ async def test_none_response_returns_structured_error():
 async def test_empty_event_payload_returns_none():
     """Regression: Event with empty-dict payload preserves the original
     implicit-None return so callers that don't expect data aren't surprised."""
-    coord = _build_coordinator("reboot", _Event(_ET.MSG_SENT, {}))
+    coord = _build_coordinator("get_time", _Event(_ET.MSG_SENT, {}))
     handler = await _get_execute_handler(coord)
 
-    result = await handler(_call("reboot"))
+    result = await handler(_call("get_time"))
 
     assert result is None
 

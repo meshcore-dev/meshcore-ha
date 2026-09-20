@@ -38,7 +38,9 @@ is run with `record_to_console: true` — in the CLI Console transcript and on t
 `meshcore_cli_response` event.
 
 :::warning
-Commands prefixed `set_*`, `import_*`, `reboot`, and `send_advert` **change your
+`reboot`, `import_private_key`, the factory-reset commands and the raw-frame
+commands are refused by the integration — use the node's own console for
+those. Commands prefixed `set_*` and `send_advert` **change your
 device or put traffic on the mesh**. Read-only `get_*` / `send_device_query`
 commands are safe to experiment with.
 :::
@@ -81,7 +83,6 @@ commands are safe to experiment with.
 | `set_custom_var` | `<key> <value>` | Set a custom variable |
 | `set_devicepin` | `<int>` | Device/BLE PIN |
 | `send_advert` | `[flood]` | Broadcast an advert packet to the mesh |
-| `reboot` | — | **Reboots the radio** |
 
 ## Channels
 

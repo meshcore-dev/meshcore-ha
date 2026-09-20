@@ -695,6 +695,12 @@
   "exceptions": {
     "traffic_deferred": {
       "message": "Mesh traffic {lane} lane is empty; try again in {seconds} seconds"
+    },
+    "command_denied": {
+      "message": "The command '{command}' is not available through this integration: it would reset the node, replace its identity, or hand the radio raw frames"
+    },
+    "send_message_target_required": {
+      "message": "send_message needs a recipient: give either node_id or pubkey_prefix"
     }
   },
   "selector": {
