@@ -13,11 +13,13 @@ import pytest
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from meshcore.events import Event, EventType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.meshcore import PLATFORMS, async_setup_entry
+from custom_components.meshcore import events as events_module
 from custom_components.meshcore.const import DOMAIN
 from custom_components.meshcore.coordinator import MeshCoreDataUpdateCoordinator
 from custom_components.meshcore.logbook import (
@@ -29,6 +31,7 @@ from custom_components.meshcore.logbook import (
 from custom_components.meshcore.radio import RadioSession
 from custom_components.meshcore.services import async_setup_services
 from custom_components.meshcore.utils import create_message_correlation_key
+from tests.support.contracts import with_identity
 from tests.support.fake_radio import FakeRadio
 
 CONTRACTS: Final = Path(__file__).with_name("contracts")
@@ -85,6 +88,21 @@ def _validator(value: Any) -> Any:
     return value
 
 
+def _legacy(events: list[dict], device_id: str) -> list[dict]:
+    """Expect the frozen fields plus the identity of the fixture entry."""
+    return with_identity(events, entry_id="contract", device_id=device_id)
+
+
+def _assert_additive(fired: list[dict], name: str, device_id: str) -> None:
+    """Every event of this type carries the fields added since the freeze."""
+    fields = _fixture("events_additive")[name]
+    assert fired, name
+    for event in fired:
+        assert set(fields) <= event.keys(), (name, event)
+        assert event["device_id"] == device_id
+        assert event["entry_id"] == "contract"
+
+
 def _services(hass: HomeAssistant) -> dict:
     """Read every registered integration service, schema, and response mode."""
     return {
@@ -102,7 +120,9 @@ async def runtime(hass: HomeAssistant) -> AsyncIterator[SimpleNamespace]:
     radio = FakeRadio()
     await radio.start()
     radio.contacts = {c["public_key"]: c for c in fixture["contacts"]}
-    api = RadioSession(hass=hass, connection_type="tcp", tcp_host="fixture.invalid")
+    api = RadioSession(
+        hass=hass, connection_type="tcp", tcp_host="fixture.invalid", entry=entry
+    )
     api._mesh_core = radio
     api._connected = True
     coordinator = MeshCoreDataUpdateCoordinator(
@@ -119,8 +139,17 @@ async def runtime(hass: HomeAssistant) -> AsyncIterator[SimpleNamespace]:
     coordinator._max_channels = 2
     coordinator.data = {"contacts": coordinator.get_all_contacts()}
     hass.data[DOMAIN] = {entry.entry_id: coordinator}
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, entry.entry_id)}
+    )
     try:
-        yield SimpleNamespace(entry=entry, radio=radio, api=api, coordinator=coordinator)
+        yield SimpleNamespace(
+            entry=entry,
+            radio=radio,
+            api=api,
+            coordinator=coordinator,
+            device_id=device.id,
+        )
     finally:
         await coordinator.async_shutdown()
         await api.disconnect()
@@ -131,7 +160,7 @@ async def runtime(hass: HomeAssistant) -> AsyncIterator[SimpleNamespace]:
 @pytest.fixture
 def events(hass: HomeAssistant) -> dict[str, list[dict]]:
     """Capture the real HA bus, with deterministic producer clocks and send IDs."""
-    captured = {name: [] for name in _fixture("events")}
+    captured = {name: [] for name in {**_fixture("events"), **_fixture("events_additive")}}
 
     @callback
     def receive(event: Any) -> None:
@@ -156,7 +185,7 @@ def producer_clock() -> Iterator[None]:
             "custom_components.meshcore.logbook.dt_util",
             SimpleNamespace(utcnow=lambda: datetime.fromtimestamp(NOW, UTC)),
         ),
-        patch("custom_components.meshcore.time", SimpleNamespace(time=lambda: float(NOW))),
+        patch("custom_components.meshcore.events.time", SimpleNamespace(time=lambda: float(NOW))),
     ):
         yield
 
@@ -242,8 +271,47 @@ async def test_message_and_delivery_contracts(
     await _collect_incoming_rx_logs(hass, coordinator, key, base)
     await hass.async_block_till_done()
     expected = _fixture("events")
-    _assert_contract(events["meshcore_message"], expected["meshcore_message"])
-    _assert_contract(events["meshcore_delivery_update"], expected["meshcore_delivery_update"])
+    device_id = runtime.device_id
+    _assert_contract(events["meshcore_message"], _legacy(expected["meshcore_message"], device_id))
+    _assert_contract(
+        events["meshcore_delivery_update"],
+        _legacy(expected["meshcore_delivery_update"], device_id),
+    )
+    _assert_additive(events["meshcore_message"], "meshcore_message", device_id)
+    _assert_additive(
+        events["meshcore_delivery_update"], "meshcore_delivery_update", device_id
+    )
+
+
+async def test_dropped_legacy_field_has_teeth(
+    hass: HomeAssistant,
+    runtime: SimpleNamespace,
+    events: dict,
+) -> None:
+    """A producer that stops sending a frozen field fails the same assertion."""
+    real = events_module.fire_message
+
+    def without_hop_count(hass: HomeAssistant, entry: Any, payload: dict) -> None:
+        """Emit the direct-message event one legacy field short."""
+        real(hass, entry, {k: v for k, v in payload.items() if k != "hop_count"})
+
+    with patch("custom_components.meshcore.logbook.fire_message", without_hop_count):
+        handle_contact_message(
+            Event(
+                EventType.CONTACT_MSG_RECV,
+                {
+                    "pubkey_prefix": "bbbbbbbbbbbb",
+                    "text": "Hello",
+                    "path_len": 255,
+                    "SNR": 7.5,
+                },
+            ),
+            runtime.coordinator,
+        )
+    await hass.async_block_till_done()
+    expected = _legacy(_fixture("events")["meshcore_message"][:1], runtime.device_id)
+    with pytest.raises(AssertionError):
+        _assert_contract(events["meshcore_message"], expected)
 
 
 async def test_service_event_contracts(
@@ -270,8 +338,19 @@ async def test_service_event_contracts(
         )
         await hass.async_block_till_done()
     expected = _fixture("events")
-    _assert_contract(events["meshcore_message_sent"], expected["meshcore_message_sent"])
-    _assert_contract(events["meshcore_cli_response"], expected["meshcore_cli_response"])
+    device_id = runtime.device_id
+    _assert_contract(
+        events["meshcore_message_sent"], _legacy(expected["meshcore_message_sent"], device_id)
+    )
+    _assert_contract(
+        events["meshcore_cli_response"],
+        [
+            {**event, "resolved_entry_id": "contract"}
+            for event in _legacy(expected["meshcore_cli_response"], device_id)
+        ],
+    )
+    _assert_additive(events["meshcore_message_sent"], "meshcore_message_sent", device_id)
+    _assert_additive(events["meshcore_cli_response"], "meshcore_cli_response", device_id)
 
 
 async def test_message_optional_fields_and_fallbacks(
@@ -334,7 +413,9 @@ async def test_message_optional_fields_and_fallbacks(
             coordinator,
         )
     await hass.async_block_till_done()
-    _assert_contract(events["meshcore_message"], _fixture("message_fallbacks"))
+    _assert_contract(
+        events["meshcore_message"], _legacy(_fixture("message_fallbacks"), runtime.device_id)
+    )
 
 
 async def test_connection_event_contracts(
@@ -355,8 +436,15 @@ async def test_connection_event_contracts(
         await runtime.api.disconnect()
     await hass.async_block_till_done()
     expected = _fixture("events")
-    _assert_contract(events["meshcore_connected"], expected["meshcore_connected"])
-    _assert_contract(events["meshcore_disconnected"], expected["meshcore_disconnected"])
+    device_id = runtime.device_id
+    _assert_contract(
+        events["meshcore_connected"], _legacy(expected["meshcore_connected"], device_id)
+    )
+    _assert_contract(
+        events["meshcore_disconnected"], _legacy(expected["meshcore_disconnected"], device_id)
+    )
+    _assert_additive(events["meshcore_connected"], "meshcore_connected", device_id)
+    _assert_additive(events["meshcore_disconnected"], "meshcore_disconnected", device_id)
 
 
 async def test_raw_event_contracts(
@@ -391,7 +479,11 @@ async def test_raw_event_contracts(
     ):
         await runtime.radio.emit(EventType.BATTERY, {"level": 50})
     await hass.async_block_till_done()
-    _assert_contract(events["meshcore_raw_event"], _fixture("events")["meshcore_raw_event"])
+    _assert_contract(
+        events["meshcore_raw_event"],
+        _legacy(_fixture("events")["meshcore_raw_event"], runtime.device_id),
+    )
+    _assert_additive(events["meshcore_raw_event"], "meshcore_raw_event", runtime.device_id)
 
 
 async def test_entity_contracts(

@@ -652,7 +652,7 @@ async def async_setup_entry(
     # - meshcore_message_sent: fires immediately when a message is sent (from services.py)
     # - meshcore_delivery_update: fires on each intermediate collection pass (sensor only)
     # - meshcore_message: fires once on the final pass (logbook + sensor)
-    from .logbook import EVENT_MESHCORE_DELIVERY_UPDATE, EVENT_MESHCORE_MESSAGE
+    from .events import EVENT_DELIVERY_UPDATE, EVENT_MESSAGE
 
     @callback
     def _handle_message_sent(event):
@@ -676,8 +676,8 @@ async def async_setup_entry(
             delivery_sensor.update_from_event(data)
 
     unsub_sent = hass.bus.async_listen(f"{DOMAIN}_message_sent", _handle_message_sent)
-    unsub_delivery = hass.bus.async_listen(EVENT_MESHCORE_DELIVERY_UPDATE, _handle_delivery_update)
-    unsub_logbook = hass.bus.async_listen(EVENT_MESHCORE_MESSAGE, _handle_message_event)
+    unsub_delivery = hass.bus.async_listen(EVENT_DELIVERY_UPDATE, _handle_delivery_update)
+    unsub_logbook = hass.bus.async_listen(EVENT_MESSAGE, _handle_message_event)
     entry.async_on_unload(unsub_sent)
     entry.async_on_unload(unsub_delivery)
     entry.async_on_unload(unsub_logbook)

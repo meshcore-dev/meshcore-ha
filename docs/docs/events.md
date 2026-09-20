@@ -15,6 +15,40 @@ The integration provides three levels of events:
 2. **Raw SDK Events** - Direct access to all Meshcore SDK events
 3. **Connection Events** - Integration status events
 
+### Which radio fired the event
+
+Every `meshcore_*` event carries two extra fields:
+
+- `entry_id` - The config entry (radio) that produced the event
+- `device_id` - That radio's device ID in the Home Assistant device registry, or `null` before the device is registered
+
+Use them to filter automations when you run more than one MeshCore radio:
+
+```yaml
+triggers:
+  - trigger: event
+    event_type: meshcore_message
+    event_data:
+      entry_id: 01J0ABCDEFGHJKMNPQRSTVWXYZ
+```
+
+On `meshcore_cli_response`, `entry_id` keeps its original meaning — the entry the
+service call named, which is `null` when the call named none. The entry the
+command actually ran on is the additional `resolved_entry_id`.
+
+### Secrets in events
+
+Raw events reach both the Home Assistant event bus and any MQTT broker
+configured for raw payload mode, so node secrets are withheld by default:
+
+- `EventType.PRIVATE_KEY` events are not forwarded at all
+- `channel_secret` and `secret` values are replaced with `"<redacted>"`
+
+Channel decryption inside the integration is unaffected. To forward the real
+values, turn on **Expose Node Secrets in Events** in the integration's Global
+Settings, and be aware that anyone who can read your event bus or your MQTT
+broker can then read them.
+
 ## First-Class Message Events
 
 These events are designed for easy use in automations, with simplified field structures.
@@ -345,7 +379,9 @@ automations without polling the console sensor.
 - `command` - The command string that was run
 - `response` - The normalized response (see [execute_command Response Shapes](#execute_command-response-shapes)), or `null` on failure
 - `is_error` - `true` when the command failed or returned no response
-- `entry_id` - The config entry the command ran against (may be `null`)
+- `entry_id` - The config entry named in the service call (`null` when none was named)
+- `resolved_entry_id` - The config entry the command actually ran against
+- `device_id` - That entry's device ID in the device registry
 - `timestamp` - Unix epoch seconds when the response was recorded
 
 **Example:**
@@ -369,8 +405,14 @@ action:
 ### meshcore_connected
 Fired when the Meshcore device connects.
 
+- `connection_type` - `usb`, `ble` or `tcp`
+- `entry_id` / `device_id` - Which radio connected
+
 ### meshcore_disconnected  
 Fired when the Meshcore device disconnects.
+
+- `unexpected` - `true` when the link was lost rather than closed; absent on a normal teardown
+- `entry_id` / `device_id` - Which radio disconnected
 
 **Example:**
 ```yaml

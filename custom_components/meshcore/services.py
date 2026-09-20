@@ -29,7 +29,6 @@ from .const import (
     ATTR_RECORD_TO_CONSOLE,
     ATTR_SCOPE,
     DOMAIN,
-    EVENT_CLI_RESPONSE,
     MODE_DATA_ONLY,
     SELECT_NO_ADDED,
     SELECT_NO_CONTACTS,
@@ -51,6 +50,7 @@ from .const import (
     SERVICE_TRACE,
     get_contact_discovery_mode,
 )
+from .events import fire_cli_response, fire_message_sent
 from .traffic import (
     OP_ADVERT,
     OP_CHANNEL_MESSAGE,
@@ -427,6 +427,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                         # corrupting ``device``.
                         async def _wait_for_ack_and_notify(
                             sender_entry_id=config_entry_id,
+                            entry=coordinator.config_entry,
                             api=api,
                             result=result,
                             contact=contact,
@@ -469,7 +470,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                                 "ack_received": ack_received,
                                 "send_id": send_id,
                             }
-                            hass.bus.async_fire(f"{DOMAIN}_message_sent", outgoing_msg)
+                            fire_message_sent(hass, entry, outgoing_msg)
 
                         # Retain the task reference (HA-native; ties it to the event
                         # loop so it cannot be GC'd before the ACK resolves).
@@ -577,7 +578,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                             "scope": scope,
                         }
                         # Fire event for outgoing message to update message-related entities
-                        hass.bus.async_fire(f"{DOMAIN}_message_sent", outgoing_msg)
+                        fire_message_sent(hass, coordinator.config_entry, outgoing_msg)
                 except HomeAssistantError:
                     raise
                 except Exception as ex:
@@ -1090,13 +1091,14 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         coordinator = _resolve_console_coordinator(entry_id)
         if coordinator is not None:
             coordinator.record_cli_console(command_str, response, is_error)
-        hass.bus.async_fire(EVENT_CLI_RESPONSE, {
-            "command": command_str,
-            "response": response,
-            "is_error": is_error,
-            "entry_id": entry_id,
-            "timestamp": int(time.time()),
-        })
+        fire_cli_response(
+            hass,
+            getattr(coordinator, "config_entry", None),
+            command=command_str,
+            response=response,
+            is_error=is_error,
+            requested_entry_id=entry_id,
+        )
 
     async def async_execute_command_service(call: ServiceCall):
         """Handle execute command service call.

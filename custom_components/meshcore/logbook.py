@@ -11,14 +11,10 @@ from .const import (
     DOMAIN,
     ENTITY_DOMAIN_BINARY_SENSOR,
 )
+from .events import EVENT_MESSAGE, fire_delivery_update, fire_message
 from .utils import create_message_correlation_key, get_channel_entity_id, get_contact_entity_id
 
 _LOGGER = logging.getLogger(__name__)
-
-# Single event type for all messages
-EVENT_MESHCORE_MESSAGE = "meshcore_message"
-# Lightweight event for progressive delivery sensor updates (not logged)
-EVENT_MESHCORE_DELIVERY_UPDATE = "meshcore_delivery_update"
 
 
 @callback
@@ -52,7 +48,7 @@ def async_describe_events(
             "icon": icon,
         }
 
-    async_describe_event(DOMAIN, EVENT_MESHCORE_MESSAGE, process_message_event)
+    async_describe_event(DOMAIN, EVENT_MESSAGE, process_message_event)
 
 async def handle_channel_message(event, coordinator) -> None:
     """Handle channel message event."""
@@ -194,7 +190,7 @@ async def handle_channel_message(event, coordinator) -> None:
             _LOGGER.debug("Error in RX_LOG correlation: %s", ex)
 
         # Fire the meshcore_message event
-        hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, event_data)
+        fire_message(hass, coordinator.config_entry, event_data)
 
         # In adaptive mode, start background collection for late-arriving
         # repeater RX_LOGs (progressive delivery updates).
@@ -269,7 +265,7 @@ async def _collect_incoming_rx_logs(
             # sender_name, message, and timestamp — enough for downstream
             # listeners to correlate back to a previously-received
             # meshcore_message event without re-hashing the message text.
-            hass.bus.async_fire(EVENT_MESHCORE_DELIVERY_UPDATE, update_data)
+            fire_delivery_update(hass, coordinator.config_entry, update_data)
 
     except Exception as ex:
         _LOGGER.debug("Error in background RX_LOG collection: %s", ex)
@@ -347,7 +343,7 @@ def handle_contact_message(event, coordinator) -> None:
             event_data["snr"] = snr
 
         # Fire event
-        hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, event_data)
+        fire_message(hass, coordinator.config_entry, event_data)
 
         _LOGGER.debug(
             "Logged direct message from %s (%s): %s",
@@ -369,6 +365,7 @@ async def handle_outgoing_message(event_data, coordinator) -> None:
         return
         
     hass = coordinator.hass
+    entry = coordinator.config_entry
     message_type = event_data.get("message_type")
     message_text = event_data.get("message", "")
     device_key = coordinator.pubkey
@@ -409,7 +406,7 @@ async def handle_outgoing_message(event_data, coordinator) -> None:
             logbook_event["ack_received"] = ack_received
 
         # Fire event
-        hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, logbook_event)
+        fire_message(hass, entry, logbook_event)
 
         _LOGGER.debug(
             "Logged outgoing direct message to %s (%s): %s (ack: %s)",
@@ -495,7 +492,7 @@ async def handle_outgoing_message(event_data, coordinator) -> None:
 
                         if is_final:
                             # Final pass: fire the real logbook event (single entry)
-                            hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, update_event)
+                            fire_message(hass, entry, update_event)
                         else:
                             # Intermediate: lightweight event only the sensor listens to.
                             # Correlation fields: every meshcore_delivery_update carries
@@ -503,7 +500,7 @@ async def handle_outgoing_message(event_data, coordinator) -> None:
                             # for downstream listeners to correlate back to a
                             # previously-received meshcore_message event without
                             # re-hashing the message text.
-                            hass.bus.async_fire(EVENT_MESHCORE_DELIVERY_UPDATE, update_event)
+                            fire_delivery_update(hass, entry, update_event)
                 finally:
                     # Always release the reservation so the cache key can be
                     # reused by future messages on the same channel+timestamp.
@@ -527,11 +524,11 @@ async def handle_outgoing_message(event_data, coordinator) -> None:
             else:
                 # No timestamp available for correlation, fire single event
                 logbook_event["repeater_count"] = 0
-                hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, logbook_event)
+                fire_message(hass, entry, logbook_event)
         except Exception as ex:
             _LOGGER.debug(f"Error correlating outgoing channel message with RX_LOG: {ex}")
             # Fire event even on error so logbook still gets the entry
-            hass.bus.async_fire(EVENT_MESHCORE_MESSAGE, logbook_event)
+            fire_message(hass, entry, logbook_event)
 
         _LOGGER.debug(
             "Logged outgoing channel message to %s: %s (repeaters: %s)",

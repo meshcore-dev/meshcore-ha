@@ -29,6 +29,7 @@ from custom_components.meshcore import radio as radio_module
 from custom_components.meshcore.const import DOMAIN
 from custom_components.meshcore.coordinator import MeshCoreDataUpdateCoordinator
 from custom_components.meshcore.radio import RadioSession
+from tests.support.contracts import with_identity
 from tests.support.fake_radio import FakeRadio
 
 CONTRACTS: Final = Path(__file__).with_name("contracts")
@@ -205,8 +206,10 @@ async def test_connection_events_fire_once_per_edge(hass: HomeAssistant) -> None
         await session.close()
 
     await hass.async_block_till_done()
-    assert captured[f"{DOMAIN}_connected"] == expected["meshcore_connected"]
-    assert captured[f"{DOMAIN}_disconnected"] == expected["meshcore_disconnected"]
+    assert captured[f"{DOMAIN}_connected"] == with_identity(expected["meshcore_connected"])
+    assert captured[f"{DOMAIN}_disconnected"] == with_identity(
+        expected["meshcore_disconnected"]
+    )
 
 
 async def test_failed_validation_leaves_no_open_handle(hass: HomeAssistant) -> None:

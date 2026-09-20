@@ -20,6 +20,7 @@ from meshcore.packets import BinaryReqType
 from custom_components.meshcore import radio as radio_module
 from custom_components.meshcore.const import DOMAIN
 from custom_components.meshcore.radio import RadioSession, RadioUnavailable
+from tests.support.contracts import with_identity
 from tests.support.fake_radio import FakeRadio
 
 CONTRACTS: Final = Path(__file__).with_name("contracts")
@@ -333,7 +334,7 @@ async def test_a_dead_link_during_a_command_crosses_the_edge_once(
         await session.close()
 
     await hass.async_block_till_done()
-    assert captured == expected["meshcore_disconnected"]
+    assert captured == with_identity(expected["meshcore_disconnected"])
 
 
 async def test_a_hanging_create_gives_up_at_the_timeout(hass: HomeAssistant) -> None:

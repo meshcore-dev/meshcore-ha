@@ -28,6 +28,7 @@ from .const import (
     CONF_CONSUME_INCOMING_MESSAGES,
     CONF_CONTACT_DISCOVERY_MODE,
     CONF_DEVICE_DISABLED,
+    CONF_EXPOSE_SECRETS,
     CONF_FLOOD_SCOPES,
     CONF_LIMIT_DISCOVERED_CONTACTS,
     CONF_MAP_UPLOAD_ENABLED,
@@ -100,6 +101,7 @@ SETTINGS_KEYS: Final = (
     CONF_CONSUME_INCOMING_MESSAGES,
     CONF_ADAPTIVE_POLL_WAIT,
     CONF_FLOOD_SCOPES,
+    CONF_EXPOSE_SECRETS,
     CONF_TRAFFIC_POLICY,
     CONF_MQTT_BROKERS,
     CONF_MQTT_IATA,
@@ -392,6 +394,7 @@ class Settings:
     consume_incoming_messages: bool = True
     adaptive_poll_wait: bool = False
     flood_scopes: str = ""
+    expose_secrets: bool = False
     traffic_policy: str = DEFAULT_TRAFFIC_POLICY
     mqtt_iata: Any = DEFAULT_MQTT_IATA
     mqtt_decoder_cmd: Any = DEFAULT_MQTT_DECODER_CMD
@@ -421,6 +424,7 @@ class Settings:
         "consume_incoming_messages": (CONF_CONSUME_INCOMING_MESSAGES, _as_bool),
         "adaptive_poll_wait": (CONF_ADAPTIVE_POLL_WAIT, _as_bool),
         "flood_scopes": (CONF_FLOOD_SCOPES, _as_str),
+        "expose_secrets": (CONF_EXPOSE_SECRETS, _as_bool),
         "traffic_policy": (CONF_TRAFFIC_POLICY, _as_str),
         # The uploader owns the normalisation of its own settings.
         "mqtt_iata": (CONF_MQTT_IATA, _as_given),

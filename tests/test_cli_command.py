@@ -55,7 +55,7 @@ DOMAIN = _module.DOMAIN
 ATTR_COMMAND = _module.ATTR_COMMAND
 ATTR_ENTRY_ID = _module.ATTR_ENTRY_ID
 ATTR_RECORD_TO_CONSOLE = _module.ATTR_RECORD_TO_CONSOLE
-EVENT_CLI_RESPONSE = _module.EVENT_CLI_RESPONSE
+EVENT_CLI_RESPONSE = sys.modules["custom_components.meshcore.events"].EVENT_CLI_RESPONSE
 
 
 class _Event:
