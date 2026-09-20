@@ -475,34 +475,32 @@ SCOPE_NONE: Final[ReloadScope] = "none"
 SCOPE_APPLY: Final[ReloadScope] = "apply"
 SCOPE_RELOAD: Final[ReloadScope] = "reload"
 
-# Settings that decide which entities a platform builds at setup. Applying one
-# in place would mean inventing entities outside the platform that owns them,
-# so a change to these reloads the entry exactly as it always has.
+# Entry-wide toggles whose entities sit on the companion device and are only
+# built at setup. Unlike a tracked node, they have no per-node builder to call
+# on a loaded entry, so a change to these reloads it exactly as it always has.
 ENTITY_SHAPING_FIELDS: Final = ("cli_console_enabled", "self_diagnostics_enabled")
-
-
-def _tracked_keys(settings: Settings) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Return the identities of the tracked nodes, in stored order."""
-    return (
-        tuple(repeater.pubkey_prefix for repeater in settings.repeaters),
-        tuple(client.pubkey_prefix for client in settings.clients),
-    )
 
 
 def diff_settings(old: Settings, new: Settings) -> ReloadScope:
     """Classify a settings change: nothing to do, apply live, or reload.
 
-    Only the radio's identity, and the settings that decide which entities
-    exist, need the entry rebuilt; everything else is pushed into the running
-    entry so the traffic budget and every node's schedule survive the edit.
+    Two things still rebuild the entry, and nothing else does:
+
+    - the radio's identity (``connection``), which is what the entry is
+      built around;
+    - ``ENTITY_SHAPING_FIELDS``, the two entry-wide toggles whose entities
+      belong to the companion device and are only built at setup.
+
+    Everything else is pushed into the running entry, tracked nodes included:
+    adding, removing or editing one is the commonest edit there is, and a
+    reload would reset the traffic budget and zero every other node's
+    schedule to pay for it.
     """
     if old == new:
         return SCOPE_NONE
     if old.connection != new.connection:
         return SCOPE_RELOAD
     if any(getattr(old, name) != getattr(new, name) for name in ENTITY_SHAPING_FIELDS):
-        return SCOPE_RELOAD
-    if _tracked_keys(old) != _tracked_keys(new):
         return SCOPE_RELOAD
     return SCOPE_APPLY
 
@@ -524,8 +522,83 @@ async def apply_settings(hass: Any, entry: Any, coordinator: Any, new: Settings)
     ):
         await coordinator.async_evict_discovered_contacts(new.max_discovered_contacts)
 
+    _apply_tracked_nodes(coordinator, old, new)
     await _apply_uploaders(hass, entry, coordinator, old, new)
     coordinator.async_update_listeners()
+
+
+def _by_prefix(records: Sequence[Any]) -> dict[str, Any]:
+    """Index tracked-node records by the prefix that identifies the node."""
+    return {record.pubkey_prefix: record for record in records if record.pubkey_prefix}
+
+
+def _apply_tracked_nodes(coordinator: Any, old: Settings, new: Settings) -> None:
+    """Add, remove and edit tracked nodes on the loaded entry.
+
+    Entities are built by the platforms that own them and handed to the
+    add-entity callbacks they stored at setup, so a node added here is
+    indistinguishable from one a fresh setup built.
+    """
+    for node_type, before, after in (
+        ("repeater", old.repeaters, new.repeaters),
+        ("client", old.clients, new.clients),
+    ):
+        was, now = _by_prefix(before), _by_prefix(after)
+        for prefix in was.keys() - now.keys():
+            coordinator.forget_tracked_node(prefix, node_type)
+        for prefix in now.keys() - was.keys():
+            coordinator.seed_tracked_node(prefix)
+            _add_node_entities(coordinator, now[prefix].to_dict(), node_type)
+        for prefix in now.keys() & was.keys():
+            _apply_node_edit(coordinator, was[prefix], now[prefix])
+
+
+def _add_entities(add: Any, entities: Sequence[Any]) -> None:
+    """Hand new entities to a platform, skipping one that is not up yet."""
+    if add is not None and entities:
+        add(list(entities))
+
+
+def _add_node_entities(coordinator: Any, record: dict[str, Any], node_type: str) -> None:
+    """Create one tracked node's static entities through the platform builders."""
+    from .binary_sensor import build_node_online_sensors
+    from .button import build_repeater_buttons
+    from .sensor import build_node_sensors
+
+    _add_entities(
+        getattr(coordinator, "sensor_add_entities", None),
+        build_node_sensors(coordinator, record, node_type),
+    )
+    _add_entities(
+        getattr(coordinator, "binary_sensor_async_add_entities", None),
+        build_node_online_sensors(coordinator, record, node_type),
+    )
+    if node_type == "repeater":
+        _add_entities(
+            getattr(coordinator, "button_add_entities", None),
+            build_repeater_buttons(coordinator, record),
+        )
+
+
+def _apply_node_edit(coordinator: Any, old: Any, new: Any) -> None:
+    """Follow one tracked node's own edits on the loaded entry.
+
+    Interval, telemetry, path-reset and disabled are read off the replaced
+    record on the next tick, so only the neighbours toggle needs doing here:
+    switching it on creates the counter a fresh setup would have built,
+    switching it off tears the neighbour sensors down.
+    """
+    from .sensor import build_neighbor_count_sensors
+
+    if old == new or not isinstance(new, RepeaterConfig):
+        return
+    if new.neighbors_enabled and not old.neighbors_enabled:
+        _add_entities(
+            getattr(coordinator, "sensor_add_entities", None),
+            build_neighbor_count_sensors(coordinator, new.to_dict()),
+        )
+    elif old.neighbors_enabled and not new.neighbors_enabled:
+        coordinator.cleanup_neighbor_entities(new.pubkey_prefix)
 
 
 async def _apply_uploaders(

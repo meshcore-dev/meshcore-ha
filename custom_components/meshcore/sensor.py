@@ -487,6 +487,76 @@ REPEATER_SENSORS = [
 ]
 
 
+def build_neighbor_count_sensors(coordinator, repeater: dict) -> list[SensorEntity]:
+    """Build a repeater's neighbour counter, or nothing when the toggle is off.
+
+    Split out so turning neighbours on for a tracked repeater creates the same
+    sensor a fresh setup would have created.
+    """
+    if not repeater.get(CONF_REPEATER_NEIGHBORS_ENABLED, False):
+        return []
+    try:
+        return [
+            MeshCoreNeighborCountSensor(
+                coordinator,
+                repeater.get("pubkey_prefix", ""),
+                repeater.get("name", "Unknown"),
+            )
+        ]
+    except Exception as ex:
+        _LOGGER.error(f"Error creating neighbor count sensor for repeater: {ex}")
+        return []
+
+
+def build_node_sensors(
+    coordinator, node_config: dict, node_type: str
+) -> list[SensorEntity]:
+    """Build one tracked node's static sensors, in the order setup builds them.
+
+    Setup and a live tracked-node add both come through here, so a node added
+    to a loaded entry gets the entity ids a fresh setup would have given it.
+    """
+    entities: list[SensorEntity] = []
+
+    if node_type == "repeater":
+        for description in REPEATER_SENSORS:
+            try:
+                entities.append(
+                    MeshCoreRepeaterSensor(coordinator, description, node_config)
+                )
+            except Exception as ex:
+                _LOGGER.error(f"Error creating repeater sensor {description.key}: {ex}")
+
+    for path_description in PATH_SENSORS:
+        try:
+            entities.append(
+                MeshCorePathSensor(coordinator, path_description, node_config, node_type)
+            )
+        except Exception as ex:
+            _LOGGER.error(
+                f"Error creating path sensor {path_description.key} "
+                f"for {node_type}: {ex}"
+            )
+
+    for reliability_description in RELIABILITY_SENSORS:
+        try:
+            entities.append(
+                MeshCoreReliabilitySensor(
+                    coordinator, reliability_description, node_config, node_type
+                )
+            )
+        except Exception as ex:
+            _LOGGER.error(
+                f"Error creating reliability sensor {reliability_description.key} "
+                f"for {node_type}: {ex}"
+            )
+
+    if node_type == "repeater":
+        entities.extend(build_neighbor_count_sensors(coordinator, node_config))
+
+    return entities
+
+
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
@@ -556,93 +626,15 @@ async def async_setup_entry(
                     _LOGGER.info(f"Removing device {device.name} ({device_id}) as it's no longer configured")
                     device_registry.async_remove_device(device.id)
 
-    if repeater_subscriptions:
-        for repeater in repeater_subscriptions:
-            _LOGGER.info(f"Creating sensors for repeater: {repeater.get("name")} ({repeater.get("pubkey_prefix")})")
-
-            # Create repeater sensors for other stats (not status which is now a binary sensor)
-            for description in REPEATER_SENSORS:
-                try:
-                    # Create a sensor for this repeater stat with public key
-                    sensor = MeshCoreRepeaterSensor(
-                        coordinator,
-                        description,
-                        repeater
-                    )
-                    entities.append(sensor)
-                except Exception as ex:
-                    _LOGGER.error(f"Error creating repeater sensor {description.key}: {ex}")
-
-            # Add path tracking sensors for this repeater
-            for path_description in PATH_SENSORS:
-                try:
-                    sensor = MeshCorePathSensor(
-                        coordinator,
-                        path_description,
-                        repeater,
-                        "repeater"
-                    )
-                    entities.append(sensor)
-                except Exception as ex:
-                    _LOGGER.error(f"Error creating path sensor {path_description.key} for repeater: {ex}")
-
-            # Add reliability tracking sensors for this repeater
-            for reliability_description in RELIABILITY_SENSORS:
-                try:
-                    sensor = MeshCoreReliabilitySensor(
-                        coordinator,
-                        reliability_description,
-                        repeater,
-                        "repeater"
-                    )
-                    entities.append(sensor)
-                except Exception as ex:
-                    _LOGGER.error(f"Error creating reliability sensor {reliability_description.key} for repeater: {ex}")
-
-            # Add neighbor count sensor when neighbor tracking is enabled
-            if repeater.get(CONF_REPEATER_NEIGHBORS_ENABLED, False):
-                try:
-                    entities.append(
-                        MeshCoreNeighborCountSensor(
-                            coordinator,
-                            repeater.get("pubkey_prefix", ""),
-                            repeater.get("name", "Unknown"),
-                        )
-                    )
-                except Exception as ex:
-                    _LOGGER.error(f"Error creating neighbor count sensor for repeater: {ex}")
+    for repeater in repeater_subscriptions:
+        _LOGGER.info(f"Creating sensors for repeater: {repeater.get("name")} ({repeater.get("pubkey_prefix")})")
+        entities.extend(build_node_sensors(coordinator, repeater, "repeater"))
 
     # Add path sensors for tracked clients
     client_subscriptions = coordinator.settings.client_records
-    if client_subscriptions:
-        for client in client_subscriptions:
-            _LOGGER.info(f"Creating path sensors for client: {client.get('name')} ({client.get('pubkey_prefix')})")
-
-            # Add path tracking sensors for this client
-            for path_description in PATH_SENSORS:
-                try:
-                    sensor = MeshCorePathSensor(
-                        coordinator,
-                        path_description,
-                        client,
-                        "client"
-                    )
-                    entities.append(sensor)
-                except Exception as ex:
-                    _LOGGER.error(f"Error creating path sensor {path_description.key} for client: {ex}")
-
-            # Add reliability tracking sensors for this client
-            for reliability_description in RELIABILITY_SENSORS:
-                try:
-                    sensor = MeshCoreReliabilitySensor(
-                        coordinator,
-                        reliability_description,
-                        client,
-                        "client"
-                    )
-                    entities.append(sensor)
-                except Exception as ex:
-                    _LOGGER.error(f"Error creating reliability sensor {reliability_description.key} for client: {ex}")
+    for client in client_subscriptions:
+        _LOGGER.info(f"Creating path sensors for client: {client.get('name')} ({client.get('pubkey_prefix')})")
+        entities.extend(build_node_sensors(coordinator, client, "client"))
 
     # Add message delivery status sensor (tracks repeater count for channel msgs, ACK for direct msgs)
     delivery_sensor = LastMessageDeliverySensor(coordinator)

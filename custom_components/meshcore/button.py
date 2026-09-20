@@ -26,11 +26,19 @@ from .utils import format_entity_id
 _LOGGER = logging.getLogger(__name__)
 
 
+def build_repeater_buttons(coordinator, repeater: dict) -> list[ButtonEntity]:
+    """Build a tracked repeater's buttons, for setup and for a live add."""
+    return [MeshCoreRepeaterFirmwareRefreshButton(coordinator, repeater)]
+
+
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Set up MeshCore button entities from a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
+
+    # Kept so a repeater added to a loaded entry gets its button without a reload.
+    coordinator.button_add_entities = async_add_entities
 
     settings = coordinator.settings
     entities: list[ButtonEntity] = []
@@ -38,10 +46,8 @@ async def async_setup_entry(
         entities.append(MeshCoreCLIRunButton(coordinator))
         entities.append(MeshCoreCLIClearButton(coordinator))
 
-    entities.extend(
-        MeshCoreRepeaterFirmwareRefreshButton(coordinator, repeater)
-        for repeater in settings.repeater_records
-    )
+    for repeater in settings.repeater_records:
+        entities.extend(build_repeater_buttons(coordinator, repeater))
 
     if entities:
         async_add_entities(entities)

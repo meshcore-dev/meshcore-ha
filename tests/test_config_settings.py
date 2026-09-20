@@ -242,15 +242,15 @@ def test_entity_shaping_settings_reload(key, value):
     assert scopes(None, None, **{key: value}) == "reload"
 
 
-def test_tracked_node_membership_reloads():
-    """Adding or removing a node reloads so its entities follow."""
+def test_tracked_node_membership_applies_in_place():
+    """Adding or removing a node is applied live, entities and all."""
     options = {
         "repeater_subscriptions": [{"name": "R", "pubkey_prefix": "aabbccddeeff"}]
     }
-    assert scopes(None, options, repeater_subscriptions=[]) == "reload"
+    assert scopes(None, options, repeater_subscriptions=[]) == "apply"
     assert (
         scopes(None, options, tracked_clients=[{"name": "C", "pubkey_prefix": "bb"}])
-        == "reload"
+        == "apply"
     )
 
 

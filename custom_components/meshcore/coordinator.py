@@ -969,6 +969,101 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self._stale_neighbor_days = self.settings.stale_neighbor_days
         _LOGGER.debug(f"Updated telemetry settings - Enabled: {self._self_telemetry_enabled}, Interval: {self._self_telemetry_interval}, Tracked clients: {len(self._tracked_clients)}")
 
+    def seed_tracked_node(self, pubkey_prefix: str) -> None:
+        """Arm a node the user just started tracking, as a fresh setup would.
+
+        Its first poll is due immediately, it carries no inherited failures,
+        and its inactivity clock starts now rather than at the coordinator's
+        start time, which a long-running entry would already have passed.
+        """
+        if not pubkey_prefix:
+            return
+        self._next_repeater_update_times[pubkey_prefix] = 0
+        self._next_telemetry_update_times[pubkey_prefix] = 0
+        self._repeater_consecutive_failures.pop(pubkey_prefix, None)
+        self._telemetry_consecutive_failures.pop(pubkey_prefix, None)
+        self._auto_disabled_devices.discard(pubkey_prefix)
+        self._last_successful_request[pubkey_prefix] = time.time()
+        self._save_traffic_state()
+
+    def forget_tracked_node(self, pubkey_prefix: str, node_type: str) -> None:
+        """Drop every trace of a node the user stopped tracking.
+
+        Cancels its in-flight polls, clears the schedules, counters and
+        reliability stats it owned, and removes its entities and its device.
+        The node stays a mesh contact: its discovered record and its contact
+        entity are left alone.
+        """
+        if not pubkey_prefix:
+            return
+
+        for tasks in (self._active_repeater_tasks, self._active_telemetry_tasks):
+            task = tasks.pop(pubkey_prefix, None)
+            if task is not None and not task.done():
+                task.cancel()
+
+        for node_state in (
+            self._next_repeater_update_times,
+            self._next_telemetry_update_times,
+            self._repeater_consecutive_failures,
+            self._telemetry_consecutive_failures,
+            self._last_successful_request,
+            self._repeater_login_times,
+            self._repeater_firmware,
+        ):
+            node_state.pop(pubkey_prefix, None)
+        self._auto_disabled_devices.discard(pubkey_prefix)
+        self._path_reset_pending.discard(pubkey_prefix)
+        for stat in ("request_successes", "request_failures"):
+            self._reliability_stats.pop(f"{pubkey_prefix}_{stat}", None)
+        for key in [k for k in self._deferred_nodes if k[0] == pubkey_prefix]:
+            self._deferred_nodes.pop(key, None)
+        for key in [k for k in self._last_defer_log if k[0] == pubkey_prefix]:
+            self._last_defer_log.pop(key, None)
+
+        if node_type == NODE_REPEATER:
+            self.cleanup_neighbor_entities(pubkey_prefix)
+
+        self._remove_node_device(pubkey_prefix, node_type)
+        self._save_traffic_state()
+
+    def _remove_node_device(self, pubkey_prefix: str, node_type: str) -> None:
+        """Remove a tracked node's device and every entity that sat on it.
+
+        Telemetry sensors and GPS trackers live on the same device, so the
+        managers are told to forget the node too: without that they would keep
+        pushing to deregistered entities and a re-add in the same session would
+        recreate nothing.
+        """
+        device_id = f"{self.config_entry.entry_id}_{node_type}_{pubkey_prefix}"
+        device_registry = dr.async_get(self.hass)
+        device = device_registry.async_get_device(identifiers={(DOMAIN, device_id)})
+        if device is not None:
+            entity_registry = er.async_get(self.hass)
+            removed = [
+                entity.entity_id
+                for entity in er.async_entries_for_device(
+                    entity_registry, device.id, include_disabled_entities=True
+                )
+            ]
+            for entity_id in removed:
+                entity_registry.async_remove(entity_id)
+            device_registry.async_remove_device(device.id)
+            _LOGGER.info(
+                "Removed untracked %s %s: device and %d entities",
+                node_type, pubkey_prefix[:6], len(removed),
+            )
+
+        for manager, cache_name in (
+            (getattr(self, "telemetry_manager", None), "discovered_sensors"),
+            (getattr(self, "device_tracker_manager", None), "discovered_trackers"),
+        ):
+            cache = getattr(manager, cache_name, None)
+            if cache is None:
+                continue
+            for key in [k for k in cache if k.startswith(pubkey_prefix)]:
+                del cache[key]
+
     def _current_time(self) -> int:
         """Return current time as integer seconds since epoch."""
         return int(time.time())
