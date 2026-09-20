@@ -21,7 +21,6 @@ from meshcore.events import EventType
 
 from .const import (
     CHANNEL_PREFIX,
-    CONF_SELF_DIAGNOSTICS_ENABLED,
     CONTACT_SUFFIX,
     DOMAIN,
     ENTITY_DOMAIN_BINARY_SENSOR,
@@ -223,6 +222,19 @@ async def handle_channel_message(event, coordinator, async_add_entities):
      # Log message to the logbook
     await log_channel_message(event, coordinator)
 
+
+def build_node_online_sensors(
+    coordinator, node_config: dict, node_type: str
+) -> list[BinarySensorEntity]:
+    """Build one tracked node's online sensor, for setup and for a live add.
+
+    A record without a pubkey prefix names no node, so it gets no entity.
+    """
+    if not node_config.get("pubkey_prefix"):
+        return []
+    return [MeshCoreDeviceOnlineBinarySensor(coordinator, node_config, node_type)]
+
+
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
@@ -287,15 +299,13 @@ async def async_setup_entry(
     # Create online status binary sensors for managed devices
     online_entities = []
     for repeater_config in coordinator._tracked_repeaters:
-        if repeater_config.get("pubkey_prefix"):
-            online_entities.append(
-                MeshCoreDeviceOnlineBinarySensor(coordinator, repeater_config, "repeater")
-            )
+        online_entities.extend(
+            build_node_online_sensors(coordinator, repeater_config, "repeater")
+        )
     for client_config in coordinator._tracked_clients:
-        if client_config.get("pubkey_prefix"):
-            online_entities.append(
-                MeshCoreDeviceOnlineBinarySensor(coordinator, client_config, "client")
-            )
+        online_entities.extend(
+            build_node_online_sensors(coordinator, client_config, "client")
+        )
     if online_entities:
         async_add_entities(online_entities)
 
@@ -303,7 +313,7 @@ async def async_setup_entry(
     # opted in (default off). The STATS_CORE `errors` field is a latching
     # bitmask of radio dispatcher faults; each bit is decoded into its own
     # `problem` binary sensor.
-    if entry.data.get(CONF_SELF_DIAGNOSTICS_ENABLED, False):
+    if coordinator.settings.self_diagnostics_enabled:
         async_add_entities([
             MeshCoreSelfDiagnosticBinarySensor(coordinator, "err_pool_full", SELF_DIAG_ERR_POOL_FULL),
             MeshCoreSelfDiagnosticBinarySensor(coordinator, "err_cad_timeout", SELF_DIAG_ERR_CAD_TIMEOUT),

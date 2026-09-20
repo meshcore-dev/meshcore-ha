@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import time
@@ -14,21 +15,28 @@ from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import Event as HassEvent
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.device_registry import DeviceEntry
+from homeassistant.helpers.storage import Store
 
 from meshcore.events import EventType
 
+from .config import (
+    SCOPE_APPLY,
+    SCOPE_RELOAD,
+    SETTINGS_KEYS,
+    Settings,
+    apply_settings,
+    diff_settings,
+    normalise_prefix,
+)
 from .const import (
     CONF_BAUDRATE,
     CONF_BLE_ADDRESS,
     CONF_CONNECTION_TYPE,
     CONF_CONTACT_DISCOVERY_MODE,
-    CONF_FLOOD_SCOPES,
-    CONF_LIMIT_DISCOVERED_CONTACTS,
-    CONF_MAX_DISCOVERED_CONTACTS,
-    CONF_MESSAGES_INTERVAL,
     CONF_NAME,
     CONF_PUBKEY,
     CONF_REPEATER_SUBSCRIPTIONS,
@@ -37,8 +45,6 @@ from .const import (
     CONF_TCP_PORT,
     CONF_TRACKED_CLIENTS,
     CONF_USB_PATH,
-    DEFAULT_MAX_DISCOVERED_CONTACTS,
-    DEFAULT_UPDATE_TICK,
     DOMAIN,
     MODE_DATA_ONLY,
     MODE_FULL,
@@ -82,7 +88,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     _LOGGER.debug("Migrating configuration from version %s", config_entry.version)
     
     # Don't allow downgrading from future versions
-    if config_entry.version > 3:
+    if config_entry.version > 4:
         _LOGGER.error("Cannot downgrade from version %s", config_entry.version)
         return False
     
@@ -131,8 +137,97 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         hass.config_entries.async_update_entry(config_entry, data=new_data, version=3)
         _LOGGER.info("Migrated contact-discovery settings to %s (version 3)", mode)
 
+    # Migrate from version 3 to version 4: user settings move to entry
+    # options, which the readers already prefer, while connection identity
+    # stays in entry data. The data copies are left in place so a downgrade
+    # still finds them. Stored pubkey prefixes are lower-cased so a record and
+    # the mesh identity it names compare equal.
+    if config_entry.version == 3:
+        new_data = copy.deepcopy(dict(config_entry.data))
+        new_options = copy.deepcopy(dict(config_entry.options))
+        for key in SETTINGS_KEYS:
+            if key not in new_options and key in new_data:
+                new_options[key] = copy.deepcopy(new_data[key])
+        for mapping in (new_data, new_options):
+            for key in (CONF_REPEATER_SUBSCRIPTIONS, CONF_TRACKED_CLIENTS):
+                for record in mapping.get(key) or []:
+                    if isinstance(record, dict) and record.get("pubkey_prefix"):
+                        record["pubkey_prefix"] = normalise_prefix(record["pubkey_prefix"])
+        _move_firmware_to_device_registry(hass, config_entry, new_data, new_options)
+
+        hass.config_entries.async_update_entry(
+            config_entry,
+            data=new_data,
+            options=new_options,
+            version=4,
+            unique_id=_entry_unique_id(hass, config_entry),
+        )
+        _LOGGER.info("Migrated user settings to entry options (version 4)")
+
     _LOGGER.debug("Migration to configuration version %s successful", config_entry.version)
     return True
+
+
+
+def _move_firmware_to_device_registry(
+    hass: HomeAssistant, entry: ConfigEntry, *mappings: dict
+) -> None:
+    """Take observed firmware out of the entry, seeding the device registry.
+
+    A firmware version is an observation of the mesh, not a setting; the
+    device registry is where it survives a restart. Only an absent
+    ``sw_version`` is filled, so a newer observation is never overwritten.
+    """
+    device_registry = dr.async_get(hass)
+    for mapping in mappings:
+        for record in mapping.get(CONF_REPEATER_SUBSCRIPTIONS) or []:
+            if not isinstance(record, dict):
+                continue
+            version = record.pop("firmware_version", None)
+            prefix = record.get("pubkey_prefix")
+            if not version or not prefix:
+                continue
+            device = device_registry.async_get_device(
+                identifiers={(DOMAIN, f"{entry.entry_id}_repeater_{prefix}")}
+            )
+            if device is not None and not device.sw_version:
+                device_registry.async_update_device(device.id, sw_version=version)
+
+
+def _entry_unique_id(hass: HomeAssistant, entry: ConfigEntry) -> str | None:
+    """Return the pubkey to own as unique_id, or None when it is taken.
+
+    A radio identifies an entry, so the same node cannot be added twice. An
+    existing duplicate keeps its unique_id: the loser stays unclaimed rather
+    than silently adopting another entry's identity.
+    """
+    pubkey = str(entry.data.get(CONF_PUBKEY) or "").strip().lower()
+    if not pubkey:
+        return entry.unique_id
+    for other in hass.config_entries.async_entries(DOMAIN):
+        if other.entry_id != entry.entry_id and other.unique_id == pubkey:
+            _LOGGER.warning(
+                "Public key %s... already identifies entry %s; leaving %s unclaimed",
+                pubkey[:12], other.entry_id, entry.entry_id,
+            )
+            return entry.unique_id
+    return pubkey
+
+
+def _adopted_unique_id(hass: HomeAssistant, entry: ConfigEntry, pubkey: str) -> str | None:
+    """Return the unique_id for a radio whose public key just changed."""
+    candidate = str(pubkey or "").strip().lower()
+    if not candidate:
+        return entry.unique_id
+    for other in hass.config_entries.async_entries(DOMAIN):
+        if other.entry_id != entry.entry_id and other.unique_id == candidate:
+            _LOGGER.warning(
+                "Public key %s... already identifies entry %s; keeping %s unchanged",
+                candidate[:12], other.entry_id, entry.entry_id,
+            )
+            return entry.unique_id
+    return candidate
+
 
 def _migrate_entity_ids(
     hass: HomeAssistant,
@@ -214,14 +309,10 @@ def _migrate_unique_ids_remove_name(
     names_raw: set[str] = set()
     if companion_name:
         names_raw.add(companion_name)
-    for sub in entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, []):
-        name = sub.get("name", "")
-        if name:
-            names_raw.add(name)
-    for sub in entry.data.get(CONF_TRACKED_CLIENTS, []):
-        name = sub.get("name", "")
-        if name:
-            names_raw.add(name)
+    settings = Settings.from_entry(entry)
+    for node in (*settings.repeaters, *settings.clients):
+        if node.name:
+            names_raw.add(node.name)
 
     names_to_strip = sorted(names_raw, key=len, reverse=True)
 
@@ -421,7 +512,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Update config entry with new pubkey so coordinator picks it up
             new_data = dict(entry.data)
             new_data[CONF_PUBKEY] = live_pubkey
-            hass.config_entries.async_update_entry(entry, data=new_data)
+            hass.config_entries.async_update_entry(
+                entry, data=new_data, unique_id=_adopted_unique_id(hass, entry, live_pubkey)
+            )
 
             # Create persistent repair issue to warn about automation/dashboard references
             ir.async_create_issue(
@@ -441,7 +534,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # First time getting pubkey (shouldn't normally happen, but handle gracefully)
             new_data = dict(entry.data)
             new_data[CONF_PUBKEY] = live_pubkey
-            hass.config_entries.async_update_entry(entry, data=new_data)
+            hass.config_entries.async_update_entry(
+                entry, data=new_data, unique_id=_adopted_unique_id(hass, entry, live_pubkey)
+            )
             _LOGGER.info("Stored initial public key: %s...", live_pubkey[:12])
 
         # One-time migration: remove device name from unique_ids
@@ -452,12 +547,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _migrate_unique_ids_scope_contact_diagnostics(hass, entry)
 
         # TODO: remove this with contact refresh interval migration?
-        # Get the messages interval for base update frequency
-        # Check options first, then data, then use default
-        messages_interval = entry.options.get(
-            CONF_MESSAGES_INTERVAL,
-            entry.data.get(CONF_MESSAGES_INTERVAL, DEFAULT_UPDATE_TICK)
-        )
+        # Base update frequency for the coordinator tick.
+        settings = Settings.from_entry(entry)
+        messages_interval = settings.messages_interval
     
         coordinator = MeshCoreDataUpdateCoordinator(
             hass,
@@ -483,8 +575,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.error(f"Error loading discovered contacts: {ex}")
 
         # Enforce discovered contacts limit on startup (trim dict + save only, no entity cleanup)
-        if entry.data.get(CONF_LIMIT_DISCOVERED_CONTACTS, False):
-            max_contacts = entry.data.get(CONF_MAX_DISCOVERED_CONTACTS, DEFAULT_MAX_DISCOVERED_CONTACTS)
+        if settings.limit_discovered_contacts:
+            max_contacts = settings.max_discovered_contacts
             if len(coordinator._discovered_contacts) > max_contacts:
                 evict_count = len(coordinator._discovered_contacts) - max_contacts
                 keys_to_evict = list(coordinator._discovered_contacts.keys())[:evict_count]
@@ -557,6 +649,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Load persisted neighbor data before sensor platform setup so that
         # sensor.py can recreate neighbor sensor entities from the stored data.
         await coordinator.async_load_neighbor_data()
+
+        # Repeater firmware versions are runtime state; the device registry is
+        # where the last observation survived the restart.
+        coordinator.seed_repeater_firmware()
 
         # Restore node schedules so a restart does not re-poll the whole mesh
         # (governed policy only; legacy has never persisted schedule state).
@@ -645,7 +741,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             pkt_payload = event.payload.get("pkt_payload", b"")
                             payload_type_int = event.payload.get("payload_type", 0)
                             scope_keys = load_flood_scope_keys(
-                                coordinator.config_entry.data.get(CONF_FLOOD_SCOPES, "")
+                                coordinator.settings.flood_scopes
                             )
                             if scope_keys and pkt_hex and pkt_payload:
                                 try:
@@ -755,9 +851,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 coordinator.mark_contact_dirty(public_key[:12])
 
                 # Evict oldest contacts if limit is enabled
-                limit_enabled = entry.data.get(CONF_LIMIT_DISCOVERED_CONTACTS, False)
-                if limit_enabled:
-                    max_contacts = entry.data.get(CONF_MAX_DISCOVERED_CONTACTS, DEFAULT_MAX_DISCOVERED_CONTACTS)
+                if coordinator.settings.limit_discovered_contacts:
+                    max_contacts = coordinator.settings.max_discovered_contacts
                     evicted = await coordinator.async_evict_discovered_contacts(max_contacts)
                     if evicted:
                         return  # eviction already saves and triggers async_set_updated_data
@@ -800,9 +895,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Update options for a config entry."""
-    # Reload the entry to apply the new options
-    await hass.config_entries.async_reload(entry.entry_id)
+    """Apply an entry update, reloading only when the entry must be rebuilt.
+
+    Most edits are pushed into the running entry: a reload would reset the
+    traffic budget and zero every tracked node's schedule.
+    """
+    coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if coordinator is None:
+        await hass.config_entries.async_reload(entry.entry_id)
+        return
+
+    scope = diff_settings(coordinator.settings, Settings.from_entry(entry))
+    if scope == SCOPE_RELOAD:
+        await hass.config_entries.async_reload(entry.entry_id)
+    elif scope == SCOPE_APPLY:
+        await apply_settings(hass, entry, coordinator, Settings.from_entry(entry))
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -839,6 +946,21 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return unload_ok
 
 
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Delete what only this entry owns: its stores and its repair issues."""
+    for key in (
+        f"{DOMAIN}.{entry.entry_id}.discovered_contacts",
+        f"{DOMAIN}.{entry.entry_id}.neighbor_data",
+        f"{DOMAIN}.traffic_{entry.entry_id}",
+    ):
+        try:
+            await Store(hass, 1, key).async_remove()
+        except Exception as ex:
+            _LOGGER.warning("Could not remove stored data %s: %s", key, ex)
+
+    ir.async_delete_issue(hass, DOMAIN, f"{REPAIR_PUBKEY_CHANGED}_{entry.entry_id}")
+
+
 async def async_remove_config_entry_device(
     hass: HomeAssistant, config_entry: ConfigEntry, device_entry: DeviceEntry
 ) -> bool:
@@ -863,15 +985,12 @@ async def async_remove_config_entry_device(
         ):
             return True
 
+    settings = Settings.from_entry(config_entry)
     repeater_prefixes = {
-        r.get("pubkey_prefix")
-        for r in config_entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, [])
-        if r.get("pubkey_prefix")
+        repeater.pubkey_prefix for repeater in settings.repeaters if repeater.pubkey_prefix
     }
     client_prefixes = {
-        c.get("pubkey_prefix")
-        for c in config_entry.data.get(CONF_TRACKED_CLIENTS, [])
-        if c.get("pubkey_prefix")
+        client.pubkey_prefix for client in settings.clients if client.pubkey_prefix
     }
 
     # Build the set of live contact prefixes from the coordinator. Config

@@ -85,6 +85,27 @@ The integration will:
 - Create sensors for received data
 - Monitor connection status
 
+### When a Change Takes Effect
+
+Adding, removing or editing a monitored device is applied to the running
+integration straight away. Nothing reloads, so the mesh traffic budget and
+every other node's schedule survive the edit:
+
+- **Add**: the node's sensors, its online binary sensor and its firmware
+  refresh button appear at once, and its first poll is due immediately.
+- **Remove**: polling stops and the node's entities and device are deleted.
+  The node stays in your contacts.
+- **Edit**: the new update interval, telemetry, neighbours, path-reset and
+  disabled values are used from the next cycle. Turning neighbours on creates
+  the neighbour counter; turning it off removes the neighbour sensors.
+
+Only two kinds of change rebuild the integration:
+
+- the connection settings (USB path, BLE address, TCP host and port), which
+  are what the entry is built around;
+- **CLI Console** and **Self Diagnostics**, whose entities sit on the
+  companion device and are only created when the integration starts.
+
 ## Update Intervals
 
 ### Recommended Settings
@@ -229,8 +250,8 @@ fix is a route, not more budget: keep **Disable Path Reset** on (in each node's
 entry under **Manage Monitored Devices**) so a node with a good manual path is
 never dropped back to flooding.
 
-Switch policies only if your mesh is congested; saving the setting reloads the
-integration.
+Switch policies only if your mesh is congested; saving the setting is applied
+to the running integration, and every node keeps its schedule.
 
 ## Data Collection
 

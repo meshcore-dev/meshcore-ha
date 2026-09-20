@@ -17,6 +17,7 @@ from tests.support.session import stub_session
 BASE = Path(__file__).resolve().parents[1] / "custom_components" / "meshcore"
 load_module("const")
 load_module("rate_limiter")
+CONFIG = load_module("config")
 TRAFFIC = load_module("traffic")
 
 
@@ -43,6 +44,7 @@ def coordinator_class():
             NO_MORE_MSGS="empty", ERROR="error", TELEMETRY_RESPONSE="telemetry"
         ),
         auto_disable_applies=TRAFFIC.auto_disable_applies,
+        get_conf=CONFIG.get_conf,
         NODE_CLIENT=TRAFFIC.NODE_CLIENT,
         NODE_REPEATER=TRAFFIC.NODE_REPEATER,
     )

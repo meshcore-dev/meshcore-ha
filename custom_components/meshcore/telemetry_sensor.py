@@ -24,8 +24,6 @@ from meshcore import EventType
 from meshcore.events import Event
 
 from .const import (
-    CONF_REPEATER_SUBSCRIPTIONS,
-    CONF_TRACKED_CLIENTS,
     DOMAIN,
     SENSOR_AVAILABILITY_TIMEOUT_MULTIPLIER,
 )
@@ -267,9 +265,7 @@ class TelemetrySensorManager:
     def _get_node_info(self, pubkey_prefix: str) -> dict[str, Any]:
         """Get node information for smart naming."""
         # Check if this is a tracked repeater
-        repeater_subscriptions = self.coordinator.config_entry.data.get(
-            CONF_REPEATER_SUBSCRIPTIONS, []
-        )
+        repeater_subscriptions = self.coordinator.settings.repeater_records
         for repeater in repeater_subscriptions:
             if repeater.get("pubkey_prefix", "").startswith(pubkey_prefix):
                 return {
@@ -279,9 +275,7 @@ class TelemetrySensorManager:
                 }
 
         # Check if this is a tracked client
-        tracked_clients = self.coordinator.config_entry.data.get(
-            CONF_TRACKED_CLIENTS, []
-        )
+        tracked_clients = self.coordinator.settings.client_records
         for client in tracked_clients:
             if client.get("pubkey_prefix", "").startswith(pubkey_prefix):
                 return {

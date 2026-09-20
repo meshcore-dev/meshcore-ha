@@ -98,32 +98,47 @@ _LEGACY_LARGE_MESH = "large_mesh_mode"
 
 
 class _FakeEntry:
-    """Minimal ConfigEntry stand-in carrying mutable version + data."""
+    """Minimal ConfigEntry stand-in carrying mutable version, data and options."""
 
-    def __init__(self, version, data):
+    def __init__(self, version, data, options=None):
         self.version = version
         self.data = dict(data)
+        self.options = dict(options or {})
+        self.unique_id = None
+        self.entry_id = "entry-one"
 
 
 class _FakeConfigEntries:
     """Mirror of hass.config_entries.async_update_entry's mutate-in-place effect."""
 
-    def async_update_entry(self, entry, data=None, version=None, **_kwargs):
+    def __init__(self, entries=()):
+        self._entries = list(entries)
+
+    def async_entries(self, _domain):
+        return list(self._entries)
+
+    def async_update_entry(
+        self, entry, data=None, options=None, version=None, unique_id=None, **_kwargs
+    ):
         if data is not None:
             entry.data = data
+        if options is not None:
+            entry.options = options
         if version is not None:
             entry.version = version
+        if unique_id is not None:
+            entry.unique_id = unique_id
 
 
 class _FakeHass:
-    def __init__(self):
-        self.config_entries = _FakeConfigEntries()
+    def __init__(self, entries=()):
+        self.config_entries = _FakeConfigEntries(entries)
 
 
-async def _run(version, data):
+async def _run(version, data, options=None, others=()):
     """Run the real async_migrate_entry against a fake entry; return (ok, entry)."""
-    hass = _FakeHass()
-    entry = _FakeEntry(version, data)
+    entry = _FakeEntry(version, data, options)
+    hass = _FakeHass((entry, *others))
     ok = await async_migrate_entry(hass, entry)
     return ok, entry
 
@@ -160,7 +175,7 @@ def test_accessor_defaults_to_full_when_absent():
 async def test_migrate_disable_maps_to_off():
     ok, entry = await _run(2, {_LEGACY_DISABLE: True})
     assert ok is True
-    assert entry.version == 3
+    assert entry.version == 4
     assert entry.data[CONF_MODE] == MODE_OFF
     assert _LEGACY_DISABLE not in entry.data
     assert _LEGACY_LARGE_MESH not in entry.data
@@ -170,7 +185,7 @@ async def test_migrate_disable_maps_to_off():
 async def test_migrate_large_mesh_maps_to_data_only():
     ok, entry = await _run(2, {_LEGACY_LARGE_MESH: True})
     assert ok is True
-    assert entry.version == 3
+    assert entry.version == 4
     assert entry.data[CONF_MODE] == MODE_DATA_ONLY
     assert _LEGACY_LARGE_MESH not in entry.data
 
@@ -179,7 +194,7 @@ async def test_migrate_large_mesh_maps_to_data_only():
 async def test_migrate_neither_maps_to_full():
     ok, entry = await _run(2, {})
     assert ok is True
-    assert entry.version == 3
+    assert entry.version == 4
     assert entry.data[CONF_MODE] == MODE_FULL
 
 
@@ -217,7 +232,7 @@ async def test_migrate_v1_chains_to_v3():
     """
     ok, entry = await _run(1, {})
     assert ok is True
-    assert entry.version == 3
+    assert entry.version == 4
     assert entry.data[CONF_MODE] == MODE_FULL
     assert _LEGACY_DISABLE not in entry.data
     assert _LEGACY_LARGE_MESH not in entry.data
@@ -228,14 +243,79 @@ async def test_migrate_v1_with_large_mesh_chains_to_data_only():
     """A v1 entry that already carried large_mesh_mode=True lands on data_only at v3."""
     ok, entry = await _run(1, {_LEGACY_LARGE_MESH: True})
     assert ok is True
-    assert entry.version == 3
+    assert entry.version == 4
     assert entry.data[CONF_MODE] == MODE_DATA_ONLY
     assert _LEGACY_LARGE_MESH not in entry.data
 
 
 @pytest.mark.asyncio
 async def test_migrate_rejects_downgrade_from_future_version():
-    ok, entry = await _run(4, {})
+    ok, entry = await _run(5, {})
     assert ok is False
-    assert entry.version == 4
+    assert entry.version == 5
     assert CONF_MODE not in entry.data
+
+
+# --- Change 3: v3->v4 settings move into entry options ------------------------
+
+@pytest.mark.asyncio
+async def test_migrate_copies_settings_into_options_and_keeps_data():
+    """Settings land in options; the data copies stay for a downgrade."""
+    ok, entry = await _run(
+        3,
+        {
+            "tcp_host": "10.0.0.5",
+            "pubkey": "AABBCCDDEEFF00112233445566778899AABBCCDDEEFF001122334455667788AA",
+            CONF_MODE: MODE_DATA_ONLY,
+            "self_telemetry_enabled": True,
+            "repeater_subscriptions": [{"name": "R", "pubkey_prefix": "AABBCCDDEEFF"}],
+            "tracked_clients": [{"name": "C", "pubkey_prefix": "BBBBBB"}],
+        },
+    )
+
+    assert ok is True
+    assert entry.version == 4
+    assert entry.options[CONF_MODE] == MODE_DATA_ONLY
+    assert entry.options["self_telemetry_enabled"] is True
+    assert entry.data[CONF_MODE] == MODE_DATA_ONLY
+    assert entry.data["tcp_host"] == "10.0.0.5"
+    assert "tcp_host" not in entry.options
+
+
+@pytest.mark.asyncio
+async def test_migrate_normalises_prefixes_and_claims_the_pubkey():
+    """Stored prefixes are lower-cased and the radio key identifies the entry."""
+    pubkey = "AA" * 32
+    ok, entry = await _run(
+        3,
+        {
+            "pubkey": pubkey,
+            "repeater_subscriptions": [{"name": "R", "pubkey_prefix": "AABBCCDDEEFF"}],
+            "tracked_clients": [{"name": "C", "pubkey_prefix": "BBBBBB"}],
+        },
+    )
+
+    assert ok is True
+    assert entry.options["repeater_subscriptions"][0]["pubkey_prefix"] == "aabbccddeeff"
+    assert entry.options["tracked_clients"][0]["pubkey_prefix"] == "bbbbbb"
+    assert entry.data["repeater_subscriptions"][0]["pubkey_prefix"] == "aabbccddeeff"
+    assert entry.unique_id == pubkey.lower()
+
+
+@pytest.mark.asyncio
+async def test_migrate_keeps_explicit_options_and_leaves_a_taken_key_unclaimed():
+    """An existing options value wins, and a duplicate radio stays unclaimed."""
+    pubkey = "cc" * 32
+    owner = _FakeEntry(4, {"pubkey": pubkey})
+    owner.entry_id = "entry-two"
+    owner.unique_id = pubkey
+    ok, entry = await _run(
+        3,
+        {"pubkey": pubkey, "stale_contact_days": 30},
+        options={"stale_contact_days": 5},
+        others=(owner,),
+    )
+
+    assert ok is True
+    assert entry.options["stale_contact_days"] == 5
+    assert entry.unique_id is None

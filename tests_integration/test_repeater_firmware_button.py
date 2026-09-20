@@ -13,6 +13,7 @@ from custom_components.meshcore.button import (
     MeshCoreRepeaterFirmwareRefreshButton,
     async_setup_entry,
 )
+from custom_components.meshcore.config import Settings
 from custom_components.meshcore.const import CONF_REPEATER_SUBSCRIPTIONS, DOMAIN
 
 PREFIX_ONE = "aabbccddeeff"
@@ -123,6 +124,7 @@ async def _setup_buttons(hass, session):
 
     coordinator = MagicMock()
     coordinator.config_entry = entry
+    coordinator.settings = Settings.from_entry(entry)
     coordinator.api = session
     coordinator.pubkey = "hubpubkey"
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
@@ -154,8 +156,8 @@ async def test_setup_targets_each_repeater_on_its_hub(hass):
 
 
 @pytest.mark.asyncio
-async def test_press_updates_config_entry_and_repeater_device(hass):
-    """Persist a successful reply only to the selected repeater and device."""
+async def test_press_updates_runtime_and_repeater_device(hass):
+    """Record a successful reply on the coordinator and its device only."""
     version = "MeshCore 1.14.2 (Build: Sep 18 2026)"
     session = _session(PREFIX_ONE, event=_event(PREFIX_ONE, version))
     entry, buttons = await _setup_buttons(hass, session)
@@ -173,11 +175,16 @@ async def test_press_updates_config_entry_and_repeater_device(hass):
         sw_version="2.0.0",
     )
 
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator.set_repeater_firmware = MagicMock()
+
     await buttons[0].async_press()
 
-    repeaters = entry.data[CONF_REPEATER_SUBSCRIPTIONS]
-    assert repeaters[0]["firmware_version"] == version
-    assert repeaters[1]["firmware_version"] == "2.0.0"
+    coordinator.set_repeater_firmware.assert_called_once_with(PREFIX_ONE, version)
+    # The version never reaches the entry, so pressing the button never reloads.
+    assert entry.data[CONF_REPEATER_SUBSCRIPTIONS][0] == _repeater(
+        "One", PREFIX_ONE, "1.0.0"
+    )
     assert registry.async_get(target.id).sw_version == version
     assert registry.async_get(other.id).sw_version == "2.0.0"
 
@@ -204,5 +211,4 @@ async def test_press_failure_preserves_previous_versions(hass, failure):
     with pytest.raises(HomeAssistantError):
         await buttons[0].async_press()
 
-    assert entry.data[CONF_REPEATER_SUBSCRIPTIONS][0]["firmware_version"] == "1.0.0"
     assert registry.async_get(target.id).sw_version == "1.0.0"

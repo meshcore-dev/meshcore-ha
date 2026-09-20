@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import copy
 import logging
 import re
 
@@ -13,7 +12,8 @@ from homeassistant.helpers import device_registry as dr
 
 from meshcore.events import EventType
 
-from .const import CONF_REPEATER_SUBSCRIPTIONS, DOMAIN
+from .config import Settings
+from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 # CommonCLI formats `ver` as "<firmware> (Build: <date>)".
@@ -102,14 +102,19 @@ def async_save_repeater_firmware_version(
     pubkey_prefix: str,
     version: str,
 ) -> bool:
-    """Save a repeater version in config and its device-registry entry."""
-    new_data = copy.deepcopy(dict(config_entry.data))
-    repeaters = new_data.get(CONF_REPEATER_SUBSCRIPTIONS, [])
-    repeater = next(
-        (item for item in repeaters if item.get("pubkey_prefix") == pubkey_prefix),
-        None,
-    )
-    if repeater is None:
+    """Record a repeater version in runtime state and its device registry entry.
+
+    The version is an observation of the mesh, so it is never written into the
+    config entry: doing that used to reload the whole entry and reset the
+    traffic budget and every node's schedule.
+    """
+    coordinator = hass.data.get(DOMAIN, {}).get(config_entry.entry_id)
+    if coordinator is None:
+        return False
+    if not any(
+        repeater.pubkey_prefix == pubkey_prefix
+        for repeater in Settings.from_entry(config_entry).repeaters
+    ):
         return False
 
     device_registry = dr.async_get(hass)
@@ -120,9 +125,8 @@ def async_save_repeater_firmware_version(
             "repeater device-registry entry was not found"
         )
 
-    repeater["firmware_version"] = version
+    coordinator.set_repeater_firmware(pubkey_prefix, version)
     device_registry.async_update_device(device.id, sw_version=version)
-    hass.config_entries.async_update_entry(config_entry, data=new_data)
 
     return True
 
@@ -136,10 +140,11 @@ async def async_refresh_repeater_firmware(
     timeout: float = 15,
 ) -> str:
     """Query and persist one configured repeater's firmware version."""
-    if not any(
-        repeater.get("pubkey_prefix") == pubkey_prefix
-        for repeater in config_entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, [])
-    ):
+    configured = Settings.from_entry(config_entry).repeaters
+    repeater = next(
+        (item for item in configured if item.pubkey_prefix == pubkey_prefix), None
+    )
+    if repeater is None:
         raise RepeaterFirmwareRefreshError("repeater is no longer configured")
 
     refresh_key = (config_entry.entry_id, pubkey_prefix)
@@ -148,15 +153,10 @@ async def async_refresh_repeater_firmware(
 
     _ACTIVE_REFRESHES.add(refresh_key)
     try:
-        repeater = next(
-            repeater
-            for repeater in config_entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, [])
-            if repeater.get("pubkey_prefix") == pubkey_prefix
-        )
         version = await async_query_repeater_firmware(
             session,
             pubkey_prefix,
-            password=repeater.get("password", ""),
+            password=repeater.password,
             timeout=timeout,
         )
         if not async_save_repeater_firmware_version(

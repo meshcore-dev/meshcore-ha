@@ -159,7 +159,7 @@ async def test_options_flow_round_trips_the_policy(
         result["flow_id"], {**defaults, CONF_TRAFFIC_POLICY: POLICY_GOVERNED}
     )
     await hass.async_block_till_done()
-    assert entry.data[CONF_TRAFFIC_POLICY] == POLICY_GOVERNED
+    assert entry.options[CONF_TRAFFIC_POLICY] == POLICY_GOVERNED
 
 
 async def test_legacy_never_meters_service_calls(

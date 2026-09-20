@@ -119,9 +119,11 @@ CONTACT_DISCOVERY_MODES: Final = (MODE_FULL, MODE_DATA_ONLY, MODE_OFF)
 
 
 def get_contact_discovery_mode(config_entry) -> str:
-    """Return the contact-discovery mode from entry data (default full)."""
-    return config_entry.data.get(
-        CONF_CONTACT_DISCOVERY_MODE, DEFAULT_CONTACT_DISCOVERY_MODE
+    """Return the contact-discovery mode, options before data (default full)."""
+    from .config import get_conf
+
+    return get_conf(
+        config_entry, CONF_CONTACT_DISCOVERY_MODE, DEFAULT_CONTACT_DISCOVERY_MODE
     )
 
 

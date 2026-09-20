@@ -28,14 +28,7 @@ from meshcore.events import Event
 
 from .const import (
     CLI_CONSOLE_MAX_LINES,
-    CONF_CLI_CONSOLE_ENABLED,
-    CONF_LIMIT_DISCOVERED_CONTACTS,
-    CONF_MAX_DISCOVERED_CONTACTS,
     CONF_REPEATER_NEIGHBORS_ENABLED,
-    CONF_REPEATER_SUBSCRIPTIONS,
-    CONF_SELF_DIAGNOSTICS_ENABLED,
-    CONF_TRACKED_CLIENTS,
-    DEFAULT_MAX_DISCOVERED_CONTACTS,
     DOMAIN,
     ENTITY_DOMAIN_SENSOR,
     NEIGHBOR_STALE_THRESHOLD,
@@ -494,6 +487,76 @@ REPEATER_SENSORS = [
 ]
 
 
+def build_neighbor_count_sensors(coordinator, repeater: dict) -> list[SensorEntity]:
+    """Build a repeater's neighbour counter, or nothing when the toggle is off.
+
+    Split out so turning neighbours on for a tracked repeater creates the same
+    sensor a fresh setup would have created.
+    """
+    if not repeater.get(CONF_REPEATER_NEIGHBORS_ENABLED, False):
+        return []
+    try:
+        return [
+            MeshCoreNeighborCountSensor(
+                coordinator,
+                repeater.get("pubkey_prefix", ""),
+                repeater.get("name", "Unknown"),
+            )
+        ]
+    except Exception as ex:
+        _LOGGER.error(f"Error creating neighbor count sensor for repeater: {ex}")
+        return []
+
+
+def build_node_sensors(
+    coordinator, node_config: dict, node_type: str
+) -> list[SensorEntity]:
+    """Build one tracked node's static sensors, in the order setup builds them.
+
+    Setup and a live tracked-node add both come through here, so a node added
+    to a loaded entry gets the entity ids a fresh setup would have given it.
+    """
+    entities: list[SensorEntity] = []
+
+    if node_type == "repeater":
+        for description in REPEATER_SENSORS:
+            try:
+                entities.append(
+                    MeshCoreRepeaterSensor(coordinator, description, node_config)
+                )
+            except Exception as ex:
+                _LOGGER.error(f"Error creating repeater sensor {description.key}: {ex}")
+
+    for path_description in PATH_SENSORS:
+        try:
+            entities.append(
+                MeshCorePathSensor(coordinator, path_description, node_config, node_type)
+            )
+        except Exception as ex:
+            _LOGGER.error(
+                f"Error creating path sensor {path_description.key} "
+                f"for {node_type}: {ex}"
+            )
+
+    for reliability_description in RELIABILITY_SENSORS:
+        try:
+            entities.append(
+                MeshCoreReliabilitySensor(
+                    coordinator, reliability_description, node_config, node_type
+                )
+            )
+        except Exception as ex:
+            _LOGGER.error(
+                f"Error creating reliability sensor {reliability_description.key} "
+                f"for {node_type}: {ex}"
+            )
+
+    if node_type == "repeater":
+        entities.extend(build_neighbor_count_sensors(coordinator, node_config))
+
+    return entities
+
+
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
@@ -511,7 +574,7 @@ async def async_setup_entry(
     # Create self-diagnostic sensors only when opted in (default off). These
     # subscribe to the STATS_CORE/RADIO/PACKETS events emitted by the local
     # get_stats_* polling added to the coordinator.
-    if entry.data.get(CONF_SELF_DIAGNOSTICS_ENABLED, False):
+    if coordinator.settings.self_diagnostics_enabled:
         for description in SELF_DIAGNOSTIC_SENSORS:
             entities.append(MeshCoreSensor(coordinator, description))
 
@@ -524,7 +587,7 @@ async def async_setup_entry(
     # Add the CLI console transcript sensor only when opted in (default off).
     # execute_command / execute_command_ui with record_to_console record
     # command/response pairs into this entity so the output is visible in the UI.
-    if entry.data.get(CONF_CLI_CONSOLE_ENABLED, False):
+    if coordinator.settings.cli_console_enabled:
         entities.append(MeshCoreCLIConsoleSensor(coordinator))
 
     # Store the async_add_entities function for later use
@@ -539,7 +602,7 @@ async def async_setup_entry(
     device_registry = async_get_device_registry(hass)
 
     # Add repeater stat sensors if any repeaters are configured
-    repeater_subscriptions = entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, [])
+    repeater_subscriptions = coordinator.settings.repeater_records
 
     # Create a set of device IDs for active repeaters - using pubkey_prefix for more stable IDs
     active_repeater_device_ids = set()
@@ -563,93 +626,15 @@ async def async_setup_entry(
                     _LOGGER.info(f"Removing device {device.name} ({device_id}) as it's no longer configured")
                     device_registry.async_remove_device(device.id)
 
-    if repeater_subscriptions:
-        for repeater in repeater_subscriptions:
-            _LOGGER.info(f"Creating sensors for repeater: {repeater.get("name")} ({repeater.get("pubkey_prefix")})")
-
-            # Create repeater sensors for other stats (not status which is now a binary sensor)
-            for description in REPEATER_SENSORS:
-                try:
-                    # Create a sensor for this repeater stat with public key
-                    sensor = MeshCoreRepeaterSensor(
-                        coordinator,
-                        description,
-                        repeater
-                    )
-                    entities.append(sensor)
-                except Exception as ex:
-                    _LOGGER.error(f"Error creating repeater sensor {description.key}: {ex}")
-
-            # Add path tracking sensors for this repeater
-            for path_description in PATH_SENSORS:
-                try:
-                    sensor = MeshCorePathSensor(
-                        coordinator,
-                        path_description,
-                        repeater,
-                        "repeater"
-                    )
-                    entities.append(sensor)
-                except Exception as ex:
-                    _LOGGER.error(f"Error creating path sensor {path_description.key} for repeater: {ex}")
-
-            # Add reliability tracking sensors for this repeater
-            for reliability_description in RELIABILITY_SENSORS:
-                try:
-                    sensor = MeshCoreReliabilitySensor(
-                        coordinator,
-                        reliability_description,
-                        repeater,
-                        "repeater"
-                    )
-                    entities.append(sensor)
-                except Exception as ex:
-                    _LOGGER.error(f"Error creating reliability sensor {reliability_description.key} for repeater: {ex}")
-
-            # Add neighbor count sensor when neighbor tracking is enabled
-            if repeater.get(CONF_REPEATER_NEIGHBORS_ENABLED, False):
-                try:
-                    entities.append(
-                        MeshCoreNeighborCountSensor(
-                            coordinator,
-                            repeater.get("pubkey_prefix", ""),
-                            repeater.get("name", "Unknown"),
-                        )
-                    )
-                except Exception as ex:
-                    _LOGGER.error(f"Error creating neighbor count sensor for repeater: {ex}")
+    for repeater in repeater_subscriptions:
+        _LOGGER.info(f"Creating sensors for repeater: {repeater.get("name")} ({repeater.get("pubkey_prefix")})")
+        entities.extend(build_node_sensors(coordinator, repeater, "repeater"))
 
     # Add path sensors for tracked clients
-    client_subscriptions = entry.data.get(CONF_TRACKED_CLIENTS, [])
-    if client_subscriptions:
-        for client in client_subscriptions:
-            _LOGGER.info(f"Creating path sensors for client: {client.get('name')} ({client.get('pubkey_prefix')})")
-
-            # Add path tracking sensors for this client
-            for path_description in PATH_SENSORS:
-                try:
-                    sensor = MeshCorePathSensor(
-                        coordinator,
-                        path_description,
-                        client,
-                        "client"
-                    )
-                    entities.append(sensor)
-                except Exception as ex:
-                    _LOGGER.error(f"Error creating path sensor {path_description.key} for client: {ex}")
-
-            # Add reliability tracking sensors for this client
-            for reliability_description in RELIABILITY_SENSORS:
-                try:
-                    sensor = MeshCoreReliabilitySensor(
-                        coordinator,
-                        reliability_description,
-                        client,
-                        "client"
-                    )
-                    entities.append(sensor)
-                except Exception as ex:
-                    _LOGGER.error(f"Error creating reliability sensor {reliability_description.key} for client: {ex}")
+    client_subscriptions = coordinator.settings.client_records
+    for client in client_subscriptions:
+        _LOGGER.info(f"Creating path sensors for client: {client.get('name')} ({client.get('pubkey_prefix')})")
+        entities.extend(build_node_sensors(coordinator, client, "client"))
 
     # Add message delivery status sensor (tracks repeater count for channel msgs, ACK for direct msgs)
     delivery_sensor = LastMessageDeliverySensor(coordinator)
@@ -1676,7 +1661,7 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
             "name": device_name,
             "manufacturer": "MeshCore",
             "model": "Mesh Repeater",
-            "sw_version": repeater.get("firmware_version"),
+            "sw_version": coordinator.repeater_firmware(self.public_key),
             "via_device": (DOMAIN, coordinator.config_entry.entry_id),  # Link to the main device
         }
 
@@ -2350,10 +2335,8 @@ class MeshCoreDiscoveredSummarySensor(CoordinatorEntity, SensorEntity):
 
         # Capacity headroom: only meaningful when the discovered-contact limit
         # is enabled; otherwise the set is unbounded by count.
-        if self.coordinator.config_entry.data.get(CONF_LIMIT_DISCOVERED_CONTACTS, False):
-            max_contacts = self.coordinator.config_entry.data.get(
-                CONF_MAX_DISCOVERED_CONTACTS, DEFAULT_MAX_DISCOVERED_CONTACTS
-            )
+        if self.coordinator.settings.limit_discovered_contacts:
+            max_contacts = self.coordinator.settings.max_discovered_contacts
             capacity: Any = max_contacts
             capacity_used_pct: Any = (
                 round(100.0 * total / max_contacts, 1) if max_contacts else None

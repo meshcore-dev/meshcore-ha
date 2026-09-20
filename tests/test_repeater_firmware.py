@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.support.modules import load_module
 from tests.support.session import StubSession
 
 
@@ -18,10 +19,9 @@ class _EventType:
 
 
 sys.modules["meshcore.events"].EventType = _EventType
-sys.modules[
-    "custom_components.meshcore.const"
-].CONF_REPEATER_SUBSCRIPTIONS = "repeater_subscriptions"
-sys.modules["custom_components.meshcore.const"].DOMAIN = "meshcore"
+# The helper reads records through the real settings codec, so load both for real.
+load_module("const")
+load_module("config")
 
 _SPEC = importlib.util.spec_from_file_location(
     "custom_components.meshcore.repeater_firmware",
@@ -105,6 +105,7 @@ def _session(events, *, send_type=_EventType.MSG_SENT):
 def _entry(entry_id, prefix="aabbccddeeff", version="1.0.0"):
     return SimpleNamespace(
         entry_id=entry_id,
+        options={},
         data={
             "repeater_subscriptions": [
                 {
@@ -118,14 +119,17 @@ def _entry(entry_id, prefix="aabbccddeeff", version="1.0.0"):
     )
 
 
+def _coordinator(hass, entry):
+    """The coordinator the helper records a version on."""
+    return hass.data["meshcore"][entry.entry_id]
+
+
 def _hass_for(entry, device):
+    """Fake hass whose runtime holds one coordinator for the supplied entry."""
     hass = MagicMock()
-
-    def update_entry(updated_entry, *, data):
-        assert updated_entry is entry
-        updated_entry.data = data
-
-    hass.config_entries.async_update_entry.side_effect = update_entry
+    coordinator = MagicMock()
+    coordinator.set_repeater_firmware = MagicMock()
+    hass.data = {"meshcore": {entry.entry_id: coordinator}}
     registry = MagicMock()
     registry.async_get_device.return_value = device
     _MODULE.dr.async_get.return_value = registry
@@ -160,7 +164,11 @@ async def test_refresh_updates_config_and_repeater_device() -> None:
     )
 
     assert version == "1.14.2 (Build: 2026-09-18)"
-    assert entry.data["repeater_subscriptions"][0]["firmware_version"] == version
+    # The version is runtime state, never a config-entry write (which reloads).
+    _coordinator(hass, entry).set_repeater_firmware.assert_called_once_with(
+        "aabbccddeeff", version
+    )
+    hass.config_entries.async_update_entry.assert_not_called()
     registry.async_get_device.assert_called_once_with(
         identifiers={("meshcore", "hub-one_repeater_aabbccddeeff")}
     )
@@ -294,8 +302,8 @@ async def test_refresh_targets_only_supplied_hub_entry() -> None:
         "aabbccddeeff",
     )
 
-    assert target.data["repeater_subscriptions"][0]["firmware_version"] == (
-        "1.14.2 (Build: 2026-09-18)"
+    _coordinator(hass, target).set_repeater_firmware.assert_called_once_with(
+        "aabbccddeeff", "1.14.2 (Build: 2026-09-18)"
     )
     assert other.data["repeater_subscriptions"][0]["firmware_version"] == "9.9.9"
     registry.async_get_device.assert_called_once_with(

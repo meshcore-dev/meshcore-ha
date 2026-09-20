@@ -1,5 +1,9 @@
 {
   "config": {
+    "abort": {
+      "already_configured": "Device is already configured",
+      "reconfigure_successful": "Re-configuration was successful"
+    },
     "step": {
       "global_settings": {
         "data": {
@@ -15,10 +19,12 @@
     "step": {
       "global_settings": {
         "data": {
-          "consume_incoming_messages": "Забирать входящие сообщения из очереди"
+          "consume_incoming_messages": "Забирать входящие сообщения из очереди",
+          "messages_interval": "Message Poll Interval (seconds)"
         },
         "data_description": {
-          "consume_incoming_messages": "По умолчанию включено. Выключите, чтобы сообщения каналов и личные сообщения из очереди получал другой клиент, например телефон по BLE. Home Assistant продолжит опрашивать статус и телеметрию репитеров и отправлять команды. Сообщения, доставленные устройством, могут по-прежнему отображаться в Home Assistant: настройка управляет чтением очереди, а не отображением. Текстовые ответы на команды также могут остаться в очереди для другого клиента."
+          "consume_incoming_messages": "По умолчанию включено. Выключите, чтобы сообщения каналов и личные сообщения из очереди получал другой клиент, например телефон по BLE. Home Assistant продолжит опрашивать статус и телеметрию репитеров и отправлять команды. Сообщения, доставленные устройством, могут по-прежнему отображаться в Home Assistant: настройка управляет чтением очереди, а не отображением. Текстовые ответы на команды также могут остаться в очереди для другого клиента.",
+          "messages_interval": "How often the integration polls the companion radio for queued messages and runs its scheduling tick. Local USB/BLE/TCP traffic only, no mesh airtime. Lower values make chat feel faster at the cost of more companion chatter."
         }
       }
     }

@@ -7,7 +7,6 @@ from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.util import dt as dt_util
 
 from .const import (
-    CONF_ADAPTIVE_POLL_WAIT,
     DEFAULT_DEVICE_NAME,
     DOMAIN,
     ENTITY_DOMAIN_BINARY_SENSOR,
@@ -156,7 +155,7 @@ async def handle_channel_message(event, coordinator) -> None:
         #   soon as data arrives. A background task then collects
         #   late-arriving repeater RX_LOGs and delivers them via
         #   progressive meshcore_delivery_update events.
-        adaptive = coordinator.config_entry.data.get(CONF_ADAPTIVE_POLL_WAIT, False)
+        adaptive = coordinator.settings.adaptive_poll_wait
         hash_key = None
         try:
             timestamp = payload.get("sender_timestamp")
