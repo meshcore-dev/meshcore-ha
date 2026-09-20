@@ -9,6 +9,7 @@ _MOCKS = [
     "homeassistant.components.http",
     "homeassistant.config_entries",
     "homeassistant.const",
+    "homeassistant.exceptions",
     "homeassistant.core",
     "homeassistant.helpers",
     "homeassistant.helpers.config_validation",
@@ -31,11 +32,19 @@ _MOCKS = [
     "custom_components.meshcore.utils",
     "custom_components.meshcore.mqtt_uploader",
     "custom_components.meshcore.binary_sensor",
+    "custom_components.meshcore.traffic",
 ]
 
 for _mod in _MOCKS:
     if _mod not in sys.modules:
         sys.modules[_mod] = MagicMock()
+
+
+# Production code catches this, so it must be a real exception class rather
+# than the MagicMock attribute the stub would otherwise hand out.
+sys.modules["homeassistant.exceptions"].HomeAssistantError = type(
+    "HomeAssistantError", (Exception,), {}
+)
 
 
 def _async_register_admin_service(

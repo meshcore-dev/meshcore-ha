@@ -37,6 +37,7 @@ def _coordinator(contacts=None):
     return SimpleNamespace(
         api=SimpleNamespace(connected=True, mesh_core=mesh_core, session=stub_session()),
         name="test",
+        require_mesh_budget=lambda *args, **kwargs: None,
     )
 
 

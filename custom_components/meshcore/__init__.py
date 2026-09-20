@@ -558,6 +558,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # sensor.py can recreate neighbor sensor entities from the stored data.
         await coordinator.async_load_neighbor_data()
 
+        # Restore node schedules so a restart does not re-poll the whole mesh
+        # (governed policy only; legacy has never persisted schedule state).
+        await coordinator.async_load_traffic_state()
+
         # Set up all platforms for this device
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 

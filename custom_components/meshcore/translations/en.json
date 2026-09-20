@@ -305,7 +305,8 @@
           "stale_neighbor_days": "Stale Neighbor Threshold (days)",
           "consume_incoming_messages": "Retrieve queued incoming messages",
           "adaptive_poll_wait": "Adaptive Channel Message Delivery",
-          "flood_scopes": "Flood Scope Allowlist"
+          "flood_scopes": "Flood Scope Allowlist",
+          "traffic_policy": "Mesh Traffic Policy"
         },
         "data_description": {
           "self_diagnostics_enabled": "Creates roughly 15 local diagnostic sensors for the companion node (uptime, TX queue length, noise floor, last RSSI/SNR, TX/RX airtime, and packet counters). Off by default. Adds no mesh traffic — these are local queries to the attached radio, not mesh requests. The interval controls how often the sensors refresh (60–3600 seconds).",
@@ -317,7 +318,8 @@
           "stale_neighbor_days": "Number of days without hearing a neighbor before it is automatically removed (1–365).",
           "consume_incoming_messages": "Enabled by default. Turn off when another client, such as a phone over BLE, should retrieve queued channel and direct messages. Home Assistant keeps polling repeater status and telemetry and can still send commands. Messages delivered by the device may still appear in Home Assistant; this setting controls queue retrieval, not message visibility. Text replies to commands may also remain queued for the other client.",
           "adaptive_poll_wait": "When enabled, incoming channel messages fire as soon as RX_LOG data arrives (typically ~50ms) instead of always waiting the full 500ms. Late-arriving repeater data is delivered progressively. Disable if bots or automations depend on having all paths in the initial event.",
-          "flood_scopes": "Comma-separated list of region scope names to match against incoming TC_FLOOD messages (e.g. pl-mz, pl-waw). When a match is found, rx_log_data will include a flood_scope field with the matched name. Leave empty to disable scope matching."
+          "flood_scopes": "Comma-separated list of region scope names to match against incoming TC_FLOOD messages (e.g. pl-mz, pl-waw). When a match is found, rx_log_data will include a flood_scope field with the matched name. Leave empty to disable scope matching.",
+          "traffic_policy": "Legacy (default) keeps the schedule the integration has always used: a 20-request burst budget refilling one request every two minutes, one token per request whatever it costs the mesh, a budget refusal counted as a node failure, and auto-disable that only ever reaches repeaters. Governed sizes the budget to the number of nodes you track, charges flood-routed traffic more than direct traffic, keeps credit in reserve so your own service calls still get through, defers a poll instead of blaming the node when credit runs out, and auto-disables silent clients too. Change it only if your mesh is congested; saving reloads the integration."
         },
         "description": "Configure global integration settings",
         "title": "Global Settings"
@@ -681,7 +683,18 @@
       }
     }
   },
+  "exceptions": {
+    "traffic_deferred": {
+      "message": "Mesh traffic budget exhausted; try again in {seconds} seconds"
+    }
+  },
   "selector": {
+    "traffic_policy": {
+      "options": {
+        "legacy": "Legacy (unchanged)",
+        "governed": "Governed (traffic-aware)"
+      }
+    },
     "contact_discovery_mode": {
       "options": {
         "full": "Entity per contact",

@@ -58,6 +58,7 @@ from .const import (
     CONF_TCP_HOST,
     CONF_TCP_PORT,
     CONF_TRACKED_CLIENTS,
+    CONF_TRAFFIC_POLICY,
     CONF_USB_PATH,
     CONNECTION_TIMEOUT,
     CONNECTION_TYPE_BLE,
@@ -80,6 +81,7 @@ from .const import (
     get_contact_discovery_mode,
 )
 from .meshcore_api import MeshCoreAPI
+from .traffic import COST_LOGIN_STATUS, TRAFFIC_POLICIES, resolve_policy
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -138,6 +140,21 @@ def _contact_discovery_mode_selector() -> SelectSelector:
             options=list(CONTACT_DISCOVERY_MODES),
             mode=SelectSelectorMode.DROPDOWN,
             translation_key="contact_discovery_mode",
+        )
+    )
+
+
+def _traffic_policy_selector() -> SelectSelector:
+    """Build the translation-keyed select for the mesh traffic policy.
+
+    Labels come from the selector translation key; the stored value is the
+    machine string ("legacy" / "governed").
+    """
+    return SelectSelector(
+        SelectSelectorConfig(
+            options=list(TRAFFIC_POLICIES),
+            mode=SelectSelectorMode.DROPDOWN,
+            translation_key="traffic_policy",
         )
     )
 
@@ -718,7 +735,13 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             errors["base"] = "Contact not found"
             return self._show_add_repeater_form(repeater_dict, errors, user_input)
             
-        # Try to login
+        wait = coordinator.check_interactive_budget(
+            COST_LOGIN_STATUS, has_path=contact.get("out_path_len", -1) > -1
+        )
+        if wait:
+            errors["base"] = f"Mesh traffic budget exhausted. Try again in {int(wait)} seconds."
+            return self._show_add_repeater_form(repeater_dict, errors, user_input)
+
         result = await coordinator.api.session.login(contact, password)
         if not result:
             _LOGGER.error("Login to repeater failed or timed out")
@@ -928,6 +951,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             new_data[CONF_FLOOD_SCOPES] = user_input.get(CONF_FLOOD_SCOPES, "")
             new_data[CONF_AUTO_CLEANUP_STALE_NEIGHBORS] = user_input[CONF_AUTO_CLEANUP_STALE_NEIGHBORS]
             new_data[CONF_STALE_NEIGHBOR_DAYS] = user_input[CONF_STALE_NEIGHBOR_DAYS]
+            new_data[CONF_TRAFFIC_POLICY] = user_input[CONF_TRAFFIC_POLICY]
             self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
 
             if new_data[CONF_LIMIT_DISCOVERED_CONTACTS]:
@@ -954,6 +978,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         current_auto_cleanup_neighbors = self.config_entry.data.get(CONF_AUTO_CLEANUP_STALE_NEIGHBORS, False)
         current_stale_neighbor_days = self.config_entry.data.get(CONF_STALE_NEIGHBOR_DAYS, DEFAULT_STALE_NEIGHBOR_DAYS)
         current_flood_scopes = self.config_entry.data.get(CONF_FLOOD_SCOPES, "")
+        current_traffic_policy = resolve_policy(self.config_entry)
 
         return self.async_show_form(
             step_id="global_settings",
@@ -974,6 +999,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_FLOOD_SCOPES, default=current_flood_scopes): str,
                 vol.Optional(CONF_AUTO_CLEANUP_STALE_NEIGHBORS, default=current_auto_cleanup_neighbors): cv.boolean,
                 vol.Optional(CONF_STALE_NEIGHBOR_DAYS, default=current_stale_neighbor_days): vol.All(cv.positive_int, vol.Range(min=1, max=365)),
+                vol.Optional(CONF_TRAFFIC_POLICY, default=current_traffic_policy): _traffic_policy_selector(),
             }),
         )
 

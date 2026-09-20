@@ -24,16 +24,21 @@ class TokenBucket:
         self.capacity = capacity
         self.tokens = capacity
         self.refill_rate = refill_rate_seconds
-        self.last_refill = time.time()
+        self.last_refill = time.monotonic()
 
     def _refill(self) -> None:
-        """Refill tokens based on elapsed time since last refill."""
-        now = time.time()
-        elapsed = now - self.last_refill
+        """Refill tokens based on elapsed time since last refill.
+
+        Runs on the monotonic clock so a system time correction cannot hand out
+        a bucket's worth of credit or freeze refills. The part of the elapsed
+        time that did not buy a whole token is carried forward rather than
+        discarded, so repeated checks cannot starve the bucket.
+        """
+        elapsed = time.monotonic() - self.last_refill
         tokens_to_add = int(elapsed / self.refill_rate)
         if tokens_to_add > 0:
             self.tokens = min(self.capacity, self.tokens + tokens_to_add)
-            self.last_refill = now
+            self.last_refill += tokens_to_add * self.refill_rate
 
     def get_tokens(self) -> int:
         """Get current token count (with refill applied).

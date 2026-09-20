@@ -11,9 +11,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tests.support.modules import load_module
 from tests.support.session import stub_session
 
 BASE = Path(__file__).resolve().parents[1] / "custom_components" / "meshcore"
+load_module("const")
+load_module("rate_limiter")
+TRAFFIC = load_module("traffic")
 
 
 def coordinator_class():
@@ -38,6 +42,9 @@ def coordinator_class():
         EventType=SimpleNamespace(
             NO_MORE_MSGS="empty", ERROR="error", TELEMETRY_RESPONSE="telemetry"
         ),
+        auto_disable_applies=TRAFFIC.auto_disable_applies,
+        NODE_CLIENT=TRAFFIC.NODE_CLIENT,
+        NODE_REPEATER=TRAFFIC.NODE_REPEATER,
     )
     exec(
         compile(
@@ -53,8 +60,13 @@ def coordinator_class():
 def make_coordinator(enabled):
     coord = coordinator_class()()
     coord.config_entry = SimpleNamespace(
-        data={} if enabled is None else {"consume_incoming_messages": enabled}
+        data={} if enabled is None else {"consume_incoming_messages": enabled},
+        async_create_background_task=lambda _hass, target, name, eager_start=True: (
+            asyncio.create_task(target, name=name)
+        ),
     )
+    coord.hass = MagicMock()
+    coord._traffic_policy = TRAFFIC.POLICY_LEGACY
     coord._message_lock = asyncio.Lock()
     commands = SimpleNamespace(
         get_msg=AsyncMock(return_value=SimpleNamespace(type="empty")),

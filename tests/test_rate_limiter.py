@@ -47,14 +47,14 @@ def test_try_consume_multiple():
 def test_refill_adds_tokens_over_elapsed_time():
     tb = TokenBucket(5, 60)
     tb.tokens = 0
-    tb.last_refill = time.time() - 120  # two refill periods elapsed
+    tb.last_refill = time.monotonic() - 120  # two refill periods elapsed
     assert tb.get_tokens() == 2
 
 
 def test_refill_caps_at_capacity():
     tb = TokenBucket(5, 60)
     tb.tokens = 0
-    tb.last_refill = time.time() - 6000  # far more than capacity
+    tb.last_refill = time.monotonic() - 6000  # far more than capacity
     assert tb.get_tokens() == 5
 
 

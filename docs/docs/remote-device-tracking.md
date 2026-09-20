@@ -165,6 +165,28 @@ If you want to re-enable before the next integration reload:
 - Conserves rate limiter tokens for active devices
 - Auto-recovery on integration reload means no manual intervention needed when devices come back online
 
+## Mesh Traffic Policy
+
+**Settings → Devices & Services → MeshCore → Configure → Global Settings → Mesh Traffic Policy**
+
+The policy decides how much airtime the integration may spend and how it reacts
+when it runs out. The default, **Legacy**, is exactly the behaviour described
+above and in the rest of this page; nothing about it has changed.
+
+| | Legacy (default) | Governed |
+|---|---|---|
+| Budget | 20 requests, refilling one every 2 minutes | 12 + 2 per tracked node (20-48), refilling 6 per node per hour (24-96/h) |
+| Request cost | 1 per mesh request | 1 direct, 2 login/status, 8 flood or unknown route, 1 per neighbour page |
+| Budget exhausted | counted as a node failure, node backs off | the poll is deferred to when credit returns; no failure recorded |
+| Service calls | never metered | metered, with 6 credits reserved so your own commands still get through |
+| Backoff | fits five retries inside the refresh interval | doubles the interval up to 24 h, with +/-10% jitter |
+| Auto-disable | repeaters only, status polling only | repeaters and clients, status and telemetry |
+| Node schedules | in memory, reset on restart | persisted, restored on restart |
+
+Under Governed a refused service call raises an error naming the seconds to wait
+rather than sending. Switch only if your mesh is congested; saving the setting
+reloads the integration.
+
 ## Data Collection
 
 ### Repeater Statistics

@@ -206,6 +206,12 @@ CONNECTION_TIMEOUT: Final = 10  # seconds
 RATE_LIMITER_CAPACITY: Final = 20
 RATE_LIMITER_REFILL_RATE_SECONDS: Final = 120
 
+# Mesh traffic policy. "legacy" keeps every scheduling and rate-limiting number
+# the integration has always used; "governed" applies the cost-weighted budget
+# and the node schedule described in traffic.py.
+CONF_TRAFFIC_POLICY: Final = "traffic_policy"
+DEFAULT_TRAFFIC_POLICY: Final = "legacy"
+
 # RX_LOG correlation cache settings
 RX_LOG_CACHE_MAX_SIZE: Final = 200
 RX_LOG_CACHE_TTL_SECONDS: Final = 20.0

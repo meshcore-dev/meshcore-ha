@@ -13,6 +13,7 @@ from typing import Any
 from cachetools import TTLCache
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -50,28 +51,42 @@ from .const import (
     DEFAULT_STALE_CONTACT_DAYS,
     DEFAULT_STALE_NEIGHBOR_DAYS,
     DOMAIN,
-    MAX_FAILURES_BEFORE_PATH_RESET,
     MAX_RANDOM_DELAY,
-    MAX_REPEATER_FAILURES_BEFORE_LOGIN,
     MODE_FULL,
     MODE_OFF,
     NEIGHBOR_PUBKEY_PREFIX_LENGTH,
-    RATE_LIMITER_CAPACITY,
-    RATE_LIMITER_REFILL_RATE_SECONDS,
-    REPEATER_BACKOFF_BASE,
     RX_LOG_CACHE_MAX_SIZE,
     RX_LOG_CACHE_TTL_SECONDS,
     SEEN_WINDOW_SECS,
     get_contact_discovery_mode,
 )
 from .meshcore_api import MeshCoreAPI
-from .rate_limiter import TokenBucket
+from .traffic import (
+    COST_DIRECT,
+    COST_LOGIN_STATUS,
+    COST_NEIGHBOUR_PAGE,
+    NODE_CLIENT,
+    NODE_REPEATER,
+    POLICY_GOVERNED,
+    MeshBudget,
+    TrafficPolicy,
+    auto_disable_applies,
+    backoff_delay,
+    denial_counts_as_failure,
+    request_cost,
+    resolve_policy,
+    should_login,
+    should_reset_path,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
 # Seconds of message silence before the safety-net poll fires.
 # Normal message delivery is event-driven via MESSAGES_WAITING; this is a fallback.
 MSG_SAFETY_NET_INTERVAL: int = 60
+
+# Debounce for the governed node-schedule store.
+TRAFFIC_SAVE_DELAY: int = 30
 
 
 def _log_get_msg_error(action: str, payload: Any) -> None:
@@ -196,12 +211,6 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         # Keys can be channel indices (int) or public key prefixes (str)
         self.message_timestamps = {}
 
-        # Rate limiter for mesh requests
-        self._rate_limiter = TokenBucket(
-            capacity=RATE_LIMITER_CAPACITY,
-            refill_rate_seconds=RATE_LIMITER_REFILL_RATE_SECONDS
-        )
-
         # Repeater subscription tracking
         self._tracked_repeaters = self.config_entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, [])
         self._repeater_stats = {}
@@ -214,8 +223,17 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         
         # Tracked clients tracking (no login needed, uses ACLs)
         self._tracked_clients = self.config_entry.data.get(CONF_TRACKED_CLIENTS, [])
-        
-        
+
+        # Mesh traffic policy: the budget every mesh request crosses, plus the
+        # governed-only store that lets node schedules survive a restart.
+        self._traffic_policy: TrafficPolicy = resolve_policy(config_entry)
+        self._rate_limiter = MeshBudget(self._traffic_policy, self._tracked_node_count())
+        self._traffic_store: Store[dict[str, Any]] | None = (
+            Store(hass, 1, f"{DOMAIN}.traffic_{config_entry.entry_id}")
+            if self._traffic_policy == POLICY_GOVERNED
+            else None
+        )
+
         # Initialize tracking sets for entities
         self.tracked_contacts = set()
         self.tracked_diagnostic_binary_contacts = set()
@@ -823,6 +841,101 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         # Default fallback - use a reasonable timeout
         return DEFAULT_CLIENT_UPDATE_INTERVAL
     
+    def _tracked_node_count(self) -> int:
+        """Number of nodes the mesh budget is sized for."""
+        return len(self._tracked_repeaters) + len(self._tracked_clients)
+
+    @property
+    def traffic_policy(self) -> TrafficPolicy:
+        """Return the traffic policy this entry runs under."""
+        return self._traffic_policy
+
+    def check_interactive_budget(self, base_cost: int, *, has_path: bool = True) -> float:
+        """Charge a user-driven mesh send; seconds to wait when it is refused.
+
+        Frozen under legacy, where service calls have never touched the budget.
+        """
+        if self._traffic_policy != POLICY_GOVERNED:
+            return 0.0
+        cost = request_cost(self._traffic_policy, base_cost, has_path=has_path)
+        if self._rate_limiter.try_consume(cost, interactive=True):
+            return 0.0
+        return self._rate_limiter.next_eligible(cost, interactive=True)
+
+    def require_mesh_budget(self, base_cost: int, *, has_path: bool = True) -> None:
+        """Charge an interactive mesh send, refusing the call when credit is short."""
+        wait = self.check_interactive_budget(base_cost, has_path=has_path)
+        if not wait:
+            return
+        seconds = max(1, int(wait))
+        raise HomeAssistantError(
+            f"Mesh traffic budget exhausted; try again in {seconds} seconds",
+            translation_domain=DOMAIN,
+            translation_key="traffic_deferred",
+            translation_placeholders={"seconds": str(seconds)},
+        )
+
+    def _path_reset_disabled(self, node_config: dict) -> bool:
+        """Whether this node's path-reset toggle is switched off."""
+        return bool(
+            node_config.get(
+                CONF_REPEATER_DISABLE_PATH_RESET,
+                node_config.get(CONF_CLIENT_DISABLE_PATH_RESET, False),
+            )
+        )
+
+    def _charge_neighbour_page(self, _page: int) -> bool:
+        """Pay for one more neighbour page; legacy paid for the scan up front."""
+        if self._traffic_policy != POLICY_GOVERNED:
+            return True
+        return self._rate_limiter.try_consume(COST_NEIGHBOUR_PAGE)
+
+    def _traffic_snapshot(self) -> dict[str, Any]:
+        """Per-node schedule state worth carrying across a restart."""
+        prefixes = (
+            set(self._next_repeater_update_times)
+            | set(self._next_telemetry_update_times)
+            | set(self._auto_disabled_devices)
+        )
+        return {
+            prefix: {
+                "next_due": {
+                    "status": self._next_repeater_update_times.get(prefix, 0),
+                    "telemetry": self._next_telemetry_update_times.get(prefix, 0),
+                },
+                "failures": {
+                    "status": self._repeater_consecutive_failures.get(prefix, 0),
+                    "telemetry": self._telemetry_consecutive_failures.get(prefix, 0),
+                },
+                "auto_disabled": prefix in self._auto_disabled_devices,
+            }
+            for prefix in prefixes
+        }
+
+    def _save_traffic_state(self) -> None:
+        """Queue a debounced save of the node schedules; legacy keeps none."""
+        if self._traffic_store is not None:
+            self._traffic_store.async_delay_save(self._traffic_snapshot, TRAFFIC_SAVE_DELAY)
+
+    async def async_load_traffic_state(self) -> None:
+        """Restore the node schedules saved before the last restart."""
+        if self._traffic_store is None:
+            return
+        try:
+            stored = await self._traffic_store.async_load()
+        except Exception as ex:
+            self.logger.warning("Could not load stored node schedules: %s", ex)
+            return
+        for prefix, state in (stored or {}).items():
+            next_due = state.get("next_due", {})
+            failures = state.get("failures", {})
+            self._next_repeater_update_times[prefix] = next_due.get("status", 0)
+            self._next_telemetry_update_times[prefix] = next_due.get("telemetry", 0)
+            self._repeater_consecutive_failures[prefix] = failures.get("status", 0)
+            self._telemetry_consecutive_failures[prefix] = failures.get("telemetry", 0)
+            if state.get("auto_disabled"):
+                self._auto_disabled_devices.add(prefix)
+
     @property
     def max_channels(self) -> int:
         """Get the maximum number of channels supported by the device."""
@@ -917,15 +1030,13 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         return self._channel_info.get(channel_idx, {})
     
     async def _reset_node_path(self, contact, node_config: dict) -> bool:
-        """Reset routing path for a node and return success status."""
+        """Reset routing path for a node and return success status.
+
+        Callers decide whether a reset is due (see traffic.should_reset_path,
+        which owns the failure threshold and the per-node toggle).
+        """
         node_name = node_config.get("name", "unknown")
-        
-        # Check disable_path_reset flag
-        disable_path_reset = node_config.get(CONF_REPEATER_DISABLE_PATH_RESET, node_config.get(CONF_CLIENT_DISABLE_PATH_RESET, False))
-        if disable_path_reset:
-            self.logger.debug(f"Path reset disabled for {node_name}, skipping")
-            return False
-            
+
         try:
             result = await self.api.session.exchange(
                 self.api.mesh_core.commands.reset_path, contact
@@ -961,6 +1072,8 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self._stale_neighbor_days = config_entry.data.get(
             CONF_STALE_NEIGHBOR_DAYS, DEFAULT_STALE_NEIGHBOR_DAYS
         )
+        self._traffic_policy = resolve_policy(config_entry)
+        self._rate_limiter.reconfigure(self._traffic_policy, self._tracked_node_count())
         _LOGGER.debug(f"Updated telemetry settings - Enabled: {self._self_telemetry_enabled}, Interval: {self._self_telemetry_interval}, Tracked clients: {len(self._tracked_clients)}")
 
     def _current_time(self) -> int:
@@ -990,14 +1103,16 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         storage for survival across restarts.
         """
         try:
-            # Check rate limiter before making mesh request
-            if not self._rate_limiter.try_consume(1):
+            # Legacy pays one token for the whole scan; governed pays per page.
+            if not self._rate_limiter.try_consume(COST_NEIGHBOUR_PAGE):
                 self.logger.debug(f"Rate limited: skipping neighbor fetch for {repeater_name}")
                 return
 
             self.logger.debug(f"Fetching neighbors for repeater {repeater_name} ({pubkey_prefix})")
             result = await self.api.session.fetch_neighbours(
-                contact, pubkey_prefix_length=NEIGHBOR_PUBKEY_PREFIX_LENGTH
+                contact,
+                pubkey_prefix_length=NEIGHBOR_PUBKEY_PREFIX_LENGTH,
+                page_cb=self._charge_neighbour_page,
             )
 
             if not result or "neighbours" not in result:
@@ -1214,9 +1329,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         # Phase 3: Persist and refresh once after all removals
         if removed_count > 0:
             await self._save_neighbor_data()
-
-            updated_data = dict(self.data) if self.data else {}
-            self.async_set_updated_data(updated_data)
+            self.async_update_listeners()
 
         _LOGGER.info(
             "Stale neighbor cleanup: removed %d neighbors older than %d days",
@@ -1326,22 +1439,26 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 
             # Get the current failure count
             failure_count = self._repeater_consecutive_failures.get(pubkey_prefix, 0)
+            has_path = contact.get("out_path_len", -1) > -1
+            cost = request_cost(self._traffic_policy, COST_LOGIN_STATUS, has_path=has_path)
 
-            # Check if we need to login (only after failures and not too recently)
-            needs_failure_recovery = failure_count >= MAX_REPEATER_FAILURES_BEFORE_LOGIN
-            last_login_time = self._repeater_login_times.get(pubkey_prefix, 0)
-            time_since_login = self._current_time() - last_login_time
-            login_cooldown = 3600  # 1 hour in seconds
-
-            if needs_failure_recovery and time_since_login >= login_cooldown:
+            if should_login(
+                self._traffic_policy,
+                failure_count,
+                self._repeater_login_times.get(pubkey_prefix, 0),
+                self._current_time(),
+            ):
                 self.logger.info(f"Attempting login to repeater {repeater_name} after {failure_count} failures")
 
-                # Check rate limiter before making mesh request
-                if not self._rate_limiter.try_consume(1):
+                # Check the mesh budget before making the request
+                if not self._rate_limiter.try_consume(cost):
                     self.logger.debug(f"Rate limited: skipping login to {repeater_name}")
-                    self._increment_failure(pubkey_prefix)
                     update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
-                    self._apply_repeater_backoff(pubkey_prefix, failure_count + 1, update_interval)
+                    if denial_counts_as_failure(self._traffic_policy):
+                        self._increment_failure(pubkey_prefix)
+                        self._apply_repeater_backoff(pubkey_prefix, failure_count + 1, update_interval)
+                    else:
+                        self._defer_node(pubkey_prefix, cost, "repeater")
                     return
 
                 try:
@@ -1370,9 +1487,12 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             # Request status from the repeater
             self.logger.debug(f"Sending status request to repeater: {repeater_name} ({pubkey_prefix})")
 
-            # Check rate limiter before making mesh request
-            if not self._rate_limiter.try_consume(1):
+            # Check the mesh budget before making the request
+            if not self._rate_limiter.try_consume(cost):
                 self.logger.debug(f"Rate limited: skipping status request to {repeater_name}")
+                if not denial_counts_as_failure(self._traffic_policy):
+                    self._defer_node(pubkey_prefix, cost, "repeater")
+                    return
                 new_failure_count = failure_count + 1
                 self._repeater_consecutive_failures[pubkey_prefix] = new_failure_count
                 self._increment_failure(pubkey_prefix)
@@ -1393,8 +1513,12 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 self._repeater_consecutive_failures[pubkey_prefix] = new_failure_count
                 self._increment_failure(pubkey_prefix)
 
-                # Reset path after configured failures if there's an established path
-                if new_failure_count >= MAX_FAILURES_BEFORE_PATH_RESET and contact and contact.get("out_path_len", -1) > -1:
+                if should_reset_path(
+                    self._traffic_policy,
+                    new_failure_count,
+                    has_path,
+                    self._path_reset_disabled(repeater_config),
+                ):
                     await self._reset_node_path(contact, repeater_config)
 
                 update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
@@ -1417,7 +1541,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     await self._fetch_repeater_neighbors(contact, repeater_name, pubkey_prefix)
 
                 # Trigger state updates for any entities listening for this repeater
-                self.async_set_updated_data(self.data)
+                self.async_update_listeners()
 
                 # Schedule next update based on configured interval
                 update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
@@ -1436,37 +1560,42 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             # Remove this task from active tasks
             if pubkey_prefix in self._active_repeater_tasks:
                 self._active_repeater_tasks.pop(pubkey_prefix)
+            self._save_traffic_state()
             await asyncio.sleep(1)  # Small delay to avoid tight loops
 
-    def _apply_backoff(self, pubkey_prefix: str, failure_count: int, update_interval: int, update_type: str = "repeater") -> None:
-        """Apply exponential backoff delay for failed updates.
-        
-        Uses dynamic base interval to ensure max 5 retries within the refresh window.
-        Resets failure count after MAX_RETRY_ATTEMPTS to start fresh.
-        
-        Args:
-            pubkey_prefix: The node's public key prefix
-            failure_count: Number of consecutive failures
-            update_interval: The configured update interval to cap the backoff at
-            update_type: Type of update ("repeater" or "telemetry")
-        """
-        # Calculate base interval to fit 5 retries within refresh window
-        # Sum of geometric series: base * (2^5 - 1) / (2 - 1) = base * 31
-        # We want this to be roughly half the refresh interval for safety
-        base_interval = max(1, update_interval // (31 * 2))
-        
-        backoff_delay = min(base_interval * (REPEATER_BACKOFF_BASE ** failure_count), update_interval)
-        next_update_time = self._current_time() + backoff_delay
-        
+    def _defer_node(self, pubkey_prefix: str, cost: int, update_type: str) -> None:
+        """Push a node's next attempt to the moment the budget can pay for it."""
+        wait = int(self._rate_limiter.next_eligible(cost))
+        next_update_time = self._current_time() + wait
         if update_type == "telemetry":
             self._next_telemetry_update_times[pubkey_prefix] = next_update_time
         else:
             self._next_repeater_update_times[pubkey_prefix] = next_update_time
-        
+        self.logger.debug(
+            f"Deferred {update_type} {pubkey_prefix} for {wait}s: mesh budget exhausted"
+        )
+
+    def _apply_backoff(self, pubkey_prefix: str, failure_count: int, update_interval: int, update_type: str = "repeater") -> None:
+        """Apply the policy's backoff delay for a failed update.
+
+        Args:
+            pubkey_prefix: The node's public key prefix
+            failure_count: Number of consecutive failures
+            update_interval: The configured update interval the backoff is sized from
+            update_type: Type of update ("repeater" or "telemetry")
+        """
+        delay = backoff_delay(self._traffic_policy, failure_count, update_interval)
+        next_update_time = self._current_time() + delay
+
+        if update_type == "telemetry":
+            self._next_telemetry_update_times[pubkey_prefix] = next_update_time
+        else:
+            self._next_repeater_update_times[pubkey_prefix] = next_update_time
+
         self.logger.debug(f"Applied backoff for {update_type} {pubkey_prefix}: "
                          f"failure_count={failure_count}, "
-                         f"base_interval={base_interval}s, "
-                         f"delay={backoff_delay}s, "
+                         f"policy={self._traffic_policy}, "
+                         f"delay={delay}s, "
                          f"interval_cap={update_interval}s")
 
     def _apply_repeater_backoff(self, pubkey_prefix: str, failure_count: int, update_interval: int) -> None:
@@ -1494,18 +1623,23 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         
         # Get current failure count
         failure_count = self._telemetry_consecutive_failures.get(pubkey_prefix, 0)
+        has_path = bool(contact) and contact.get("out_path_len", -1) > -1
+        cost = request_cost(self._traffic_policy, COST_DIRECT, has_path=has_path)
 
         # add a random delay to avoid all updating at the same time
         # 0-30 seconds random delay
         random_delay = random.uniform(0, MAX_RANDOM_DELAY)
         await asyncio.sleep(random_delay)
-        
+
         try:
             self.logger.debug(f"Sending telemetry request to node: {node_name} ({pubkey_prefix})")
 
-            # Check rate limiter before making mesh request
-            if not self._rate_limiter.try_consume(1):
+            # Check the mesh budget before making the request
+            if not self._rate_limiter.try_consume(cost):
                 self.logger.debug(f"Rate limited: skipping telemetry request to {node_name}")
+                if not denial_counts_as_failure(self._traffic_policy):
+                    self._defer_node(pubkey_prefix, cost, "telemetry")
+                    return
                 new_failure_count = failure_count + 1
                 self._telemetry_consecutive_failures[pubkey_prefix] = new_failure_count
                 self._increment_failure(pubkey_prefix)
@@ -1529,29 +1663,38 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 new_failure_count = failure_count + 1
                 self._telemetry_consecutive_failures[pubkey_prefix] = new_failure_count
                 self._increment_failure(pubkey_prefix)
-                
-                # Reset path after configured failures if there's an established path
-                if new_failure_count >= MAX_FAILURES_BEFORE_PATH_RESET and contact and contact.get("out_path_len", -1) > -1:
+
+                if should_reset_path(
+                    self._traffic_policy,
+                    new_failure_count,
+                    has_path,
+                    self._path_reset_disabled(node_config),
+                ):
                     await self._reset_node_path(contact, node_config)
-                
+
                 self._apply_backoff(pubkey_prefix, new_failure_count, update_interval, "telemetry")
-                
+
         except Exception as ex:
             self.logger.warning(f"Exception requesting telemetry from node {node_name}: {ex}")
             # Increment failure count and apply backoff
             new_failure_count = failure_count + 1
             self._telemetry_consecutive_failures[pubkey_prefix] = new_failure_count
             self._increment_failure(pubkey_prefix)
-            
-            # Reset path after configured failures if there's an established path
-            if new_failure_count >= MAX_FAILURES_BEFORE_PATH_RESET and contact and contact.get("out_path_len", -1) > -1:
+
+            if should_reset_path(
+                self._traffic_policy,
+                new_failure_count,
+                has_path,
+                self._path_reset_disabled(node_config),
+            ):
                 await self._reset_node_path(contact, node_config)
-            
+
             self._apply_backoff(pubkey_prefix, new_failure_count, update_interval, "telemetry")
         finally:
             # Remove this task from active telemetry tasks
             if pubkey_prefix in self._active_telemetry_tasks:
                 self._active_telemetry_tasks.pop(pubkey_prefix)
+            self._save_traffic_state()
             await asyncio.sleep(1)  # Small delay to avoid tight loops
 
     @property
@@ -1812,6 +1955,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 )
                 # Add to auto-disabled set (will reset on restart)
                 self._auto_disabled_devices.add(pubkey_prefix)
+                self._save_traffic_state()
                 continue
 
             # Clean c completed or failed tasks
@@ -1832,13 +1976,15 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             next_update_time = self._next_repeater_update_times.get(pubkey_prefix, 0)
             if current_time >= next_update_time:
                 _LOGGER.debug(f"Starting repeater update task for {repeater_name}")
-                
-                # Create and start a new task for this repeater
-                update_task = asyncio.create_task(self._update_repeater(repeater_config))
-                self._active_repeater_tasks[pubkey_prefix] = update_task
-                
-                # Set a name for the task for better debugging
-                update_task.set_name(f"update_repeater_{repeater_name}")
+
+                self._active_repeater_tasks[pubkey_prefix] = (
+                    self.config_entry.async_create_background_task(
+                        self.hass,
+                        self._update_repeater(repeater_config),
+                        f"update_repeater_{repeater_name}",
+                        eager_start=False,
+                    )
+                )
 
         # Check and update telemetry for nodes that have it enabled
         _LOGGER.debug("Checking telemetry for tracked repeaters: %s", self._next_telemetry_update_times)
@@ -1855,7 +2001,14 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
 
             pubkey_prefix = repeater_config.get("pubkey_prefix")
             repeater_name = repeater_config.get("name")
-            
+
+            # Legacy keeps polling telemetry from a node the status loop gave up on
+            if (
+                auto_disable_applies(self._traffic_policy, NODE_REPEATER, telemetry=True)
+                and pubkey_prefix in self._auto_disabled_devices
+            ):
+                continue
+
             # Clean up completed telemetry tasks
             if pubkey_prefix in self._active_telemetry_tasks:
                 task = self._active_telemetry_tasks[pubkey_prefix]
@@ -1876,11 +2029,14 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 if contact:
                     _LOGGER.debug(f"Starting telemetry update task for {repeater_name}")
 
-                    telemetry_task = asyncio.create_task(
-                        self._update_node_telemetry(contact, repeater_config)
+                    self._active_telemetry_tasks[pubkey_prefix] = (
+                        self.config_entry.async_create_background_task(
+                            self.hass,
+                            self._update_node_telemetry(contact, repeater_config),
+                            f"telemetry_{repeater_name}",
+                            eager_start=False,
+                        )
                     )
-                    self._active_telemetry_tasks[pubkey_prefix] = telemetry_task
-                    telemetry_task.set_name(f"telemetry_{repeater_name}")
                 else:
                     _LOGGER.warning(f"Could not find contact for telemetry request: {pubkey_prefix}")
         
@@ -1896,7 +2052,22 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             # Check if device is disabled (either in config or auto-disabled)
             if client_config.get(CONF_DEVICE_DISABLED, False) or pubkey_prefix in self._auto_disabled_devices:
                 continue
-            
+
+            # Legacy never auto-disables a client: it checks the set but never adds to it
+            if auto_disable_applies(self._traffic_policy, NODE_CLIENT, telemetry=True):
+                last_success_time = self._last_successful_request.get(
+                    pubkey_prefix, self._coordinator_start_time
+                )
+                hours_since_success = (current_time - last_success_time) / 3600
+                if hours_since_success >= AUTO_DISABLE_HOURS:
+                    _LOGGER.warning(
+                        f"Client {client_name} has had no successful requests in {hours_since_success:.1f} hours. "
+                        f"Automatically disabling to reduce network traffic. This will reset on restart."
+                    )
+                    self._auto_disabled_devices.add(pubkey_prefix)
+                    self._save_traffic_state()
+                    continue
+
             if pubkey_prefix in self._active_telemetry_tasks:
                 task = self._active_telemetry_tasks[pubkey_prefix]
                 if task.done():
@@ -1913,11 +2084,14 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 if contact:
                     _LOGGER.debug(f"Starting telemetry update task for client {client_name}")
 
-                    telemetry_task = asyncio.create_task(
-                        self._update_node_telemetry(contact, client_config)
+                    self._active_telemetry_tasks[pubkey_prefix] = (
+                        self.config_entry.async_create_background_task(
+                            self.hass,
+                            self._update_node_telemetry(contact, client_config),
+                            f"client_telemetry_{client_name}",
+                            eager_start=False,
+                        )
                     )
-                    self._active_telemetry_tasks[pubkey_prefix] = telemetry_task
-                    telemetry_task.set_name(f"client_telemetry_{client_name}")
                 else:
                     _LOGGER.warning(f"Could not find contact for client telemetry request: {pubkey_prefix}")
 

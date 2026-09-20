@@ -13,6 +13,7 @@ from typing import Any, cast
 import voluptuous as vol
 from homeassistant.const import MAJOR_VERSION, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import Context, HomeAssistant, ServiceCall, SupportsResponse
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.service import async_register_admin_service
@@ -52,6 +53,7 @@ from .const import (
     SERVICE_TRACE,
     get_contact_discovery_mode,
 )
+from .traffic import COST_DIRECT, COST_FLOOD
 from .utils import extract_pubkey_from_selection
 
 _LOGGER = logging.getLogger(__name__)
@@ -74,6 +76,32 @@ _SELF_INFO_COMMANDS = frozenset({
     "set_manual_add_contacts",
     "import_private_key",
 })
+
+
+# SDK command names that wait on a mesh round-trip rather than a local reply.
+# They hold the mesh lease, and the ones that wait for a remote frame run
+# outside the exchange lock so a minutes-long request cannot stall the message
+# drain or any other local command.
+_MESH_LEASE_COMMANDS = frozenset({
+    "send_advert",
+    "send_login",
+    "send_path_discovery",
+    "send_statusreq",
+    "send_telemetry_req",
+    "send_trace",
+})
+_REMOTE_WAIT_COMMANDS = frozenset({
+    "fetch_all_neighbours",
+    "send_msg_with_retry",
+})
+# Mesh-bound commands that reach the whole mesh rather than one node.
+_FLOOD_COMMANDS = frozenset({"send_advert", "send_path_discovery"})
+
+
+def _mesh_routing(command_name: str) -> tuple[bool, bool]:
+    """Return whether a command needs the mesh lease and waits on a remote reply."""
+    waits_remote = command_name.endswith("_sync") or command_name in _REMOTE_WAIT_COMMANDS
+    return waits_remote or command_name in _MESH_LEASE_COMMANDS, waits_remote
 
 
 # Schema for send_message service with either node_id or pubkey_prefix required
@@ -353,8 +381,11 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                         if not contact:
                             _LOGGER.error(f"Contact with pubkey prefix '{pubkey_prefix}' not found")
                             continue
+
+                    coordinator.require_mesh_budget(
+                        COST_DIRECT, has_path=contact.get("out_path_len", -1) > -1
+                    )
                     
-                    # Send the message using the new API
                     result = await api.session.exchange(
                         api.mesh_core.commands.send_msg, contact, message
                     )
@@ -432,6 +463,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                             _wait_for_ack_and_notify(),
                             name=f"{DOMAIN}_ack_{send_id}",
                         )
+                except HomeAssistantError:
+                    raise
                 except Exception as ex:
                     _LOGGER.error(
                         "Error sending message to %s: %s", target_identifier, ex
@@ -465,6 +498,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     _LOGGER.debug(
                         "Sending message to channel %s: %s", channel_idx, message
                     )
+
+                    coordinator.require_mesh_budget(COST_FLOOD)
 
                     # Set flood scope before sending if requested, then always reset.
                     async with api.session.transaction():
@@ -533,6 +568,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                         }
                         # Fire event for outgoing message to update message-related entities
                         hass.bus.async_fire(f"{DOMAIN}_message_sent", outgoing_msg)
+                except HomeAssistantError:
+                    raise
                 except Exception as ex:
                     _LOGGER.error(
                         "Error sending message to channel %s: %s", channel_idx, ex
@@ -878,9 +915,20 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                         return {"error": "Incoming message consumption is disabled"}
 
                     _LOGGER.debug("Executing %s args=%s kwargs=%s", command_name, prepared_args, prepared_kwargs)
-                    result = await api.session.exchange(
-                        partial(command_method, *prepared_args, **prepared_kwargs)
-                    )
+                    needs_lease, waits_remote = _mesh_routing(command_name)
+                    call_command = partial(command_method, *prepared_args, **prepared_kwargs)
+                    if needs_lease:
+                        coordinator.require_mesh_budget(
+                            COST_FLOOD if command_name in _FLOOD_COMMANDS else COST_DIRECT
+                        )
+                        async with api.session._mesh_lease:
+                            result = await (
+                                call_command()
+                                if waits_remote
+                                else api.session.exchange(call_command)
+                            )
+                    else:
+                        result = await api.session.exchange(call_command)
 
                     # Refresh SELF_INFO after commands that modify config values
                     # so HA sensors immediately reflect the new state.
@@ -907,7 +955,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                             coordinator._channel_info[channel_idx] = channel_info_result.payload
                             _LOGGER.info(f"Updated channel {channel_idx} info: {channel_info_result.payload}")
                             # Trigger coordinator update to refresh select entities
-                            coordinator.async_set_updated_data(coordinator.data)
+                            coordinator.async_update_listeners()
 
                     # Mark contacts as dirty after add_contact or remove_contact so next ensure_contacts() will sync
                     if command_name == "add_contact" and result.type != EventType.ERROR:
@@ -1083,6 +1131,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     _LOGGER.info("Command result: %s", result)
                     return {"result": result}
 
+                except HomeAssistantError:
+                    raise
                 except Exception as ex:
                     _LOGGER.error("Error executing command %s: %s", command_name, ex)
 
@@ -1792,6 +1842,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             completes reliably in production meshes.
           * Every failure mode returns a structured ``{"trace": null,
             "error": "..."}`` dict so automations never see an exception.
+            The one exception is the governed traffic policy refusing the
+            send, which raises like every other metered service call.
         """
         entry_id = call.data.get(ATTR_ENTRY_ID)
         pubkey_prefix = call.data[ATTR_PUBKEY_PREFIX]
@@ -1833,6 +1885,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         tag = random.randint(0, 0xFFFFFFFF)
 
         out_path_len = contact.get("out_path_len", -1)
+        coordinator.require_mesh_budget(COST_DIRECT, has_path=out_path_len > -1)
         out_path_hash_mode = contact.get("out_path_hash_mode", 0)
         out_path_hex = contact.get("out_path", "") or ""
 
