@@ -26,7 +26,7 @@ from custom_components.meshcore.logbook import (
     handle_contact_message,
     handle_outgoing_message,
 )
-from custom_components.meshcore.meshcore_api import MeshCoreAPI
+from custom_components.meshcore.radio import RadioSession
 from custom_components.meshcore.services import async_setup_services
 from custom_components.meshcore.utils import create_message_correlation_key
 from tests.support.fake_radio import FakeRadio
@@ -102,9 +102,9 @@ async def runtime(hass: HomeAssistant) -> AsyncIterator[SimpleNamespace]:
     radio = FakeRadio()
     await radio.start()
     radio.contacts = {c["public_key"]: c for c in fixture["contacts"]}
-    api = MeshCoreAPI(hass=hass, connection_type="tcp", tcp_host="fixture.invalid")
-    api.session._mesh_core = radio
-    api.session._connected = True
+    api = RadioSession(hass=hass, connection_type="tcp", tcp_host="fixture.invalid")
+    api._mesh_core = radio
+    api._connected = True
     coordinator = MeshCoreDataUpdateCoordinator(
         hass,
         logging.getLogger(__name__),
@@ -369,7 +369,7 @@ async def test_raw_event_contracts(
     hass.data["meshcore_static_path_registered"] = True
     coordinator = runtime.coordinator
     with (
-        patch("custom_components.meshcore.MeshCoreAPI", return_value=runtime.api),
+        patch("custom_components.meshcore.RadioSession", return_value=runtime.api),
         patch.object(runtime.api, "connect", return_value=True),
         patch("custom_components.meshcore.MeshCoreDataUpdateCoordinator", return_value=coordinator),
         patch.object(coordinator._store, "async_load", return_value={}),

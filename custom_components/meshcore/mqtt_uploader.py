@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
-import inspect
 import json
 import re
 import shlex
@@ -635,15 +634,10 @@ class MeshCoreMqttUploader:
         if not self.api:
             self.logger.debug("[%s] No API instance available for private key export", broker.name)
             return None
-        try:
-            mesh_core = self.api.mesh_core
-        except Exception as ex:
-            self.logger.debug("[%s] MeshCore instance not ready for private key export: %s", broker.name, ex)
-            return None
 
         try:
             self.logger.info("[%s] Attempting to fetch private key from device (export_private_key)", broker.name)
-            result = await self.api.session.exchange(mesh_core.commands.export_private_key)
+            result = await self.api.exchange("export_private_key")
         except Exception as ex:
             self.logger.warning("[%s] Private key export command failed: %s", broker.name, ex)
             return None
@@ -883,18 +877,15 @@ class MeshCoreMqttUploader:
                 return {}
         return {}
 
-    async def _async_call_command_variants(
-        self, commands: Any, method_names: list[str]
-    ) -> dict[str, Any]:
+    async def _async_call_command_variants(self, method_names: list[str]) -> dict[str, Any]:
         """Try method-name variants and return first dict payload."""
+        if self.api is None:
+            return {}
         for name in method_names:
-            command = getattr(commands, name, None)
-            if not callable(command):
+            if self.api.command_parameters(name) is None:
                 continue
             try:
-                result = command()
-                if inspect.isawaitable(result):
-                    result = await result
+                result = await self.api.exchange(name)
                 payload = getattr(result, "payload", result)
                 parsed = self._parse_stats_payload(payload)
                 if parsed:
@@ -920,22 +911,11 @@ class MeshCoreMqttUploader:
             self._update_status_cache_from_event("self_info", cached_self_info)
 
         # Query device info immediately so model/firmware are available on first status publish.
-        try:
-            mesh_core = self.api.mesh_core
-            commands = getattr(mesh_core, "commands", None)
-        except Exception:
-            commands = None
-        if commands is None:
-            return
-
         for method_name in ["send_device_query", "device_query", "get_device_info"]:
-            command = getattr(commands, method_name, None)
-            if not callable(command):
+            if self.api.command_parameters(method_name) is None:
                 continue
             try:
-                result = command()
-                if inspect.isawaitable(result):
-                    result = await asyncio.wait_for(result, timeout=5)
+                result = await self.api.exchange(method_name, deadline=5)
                 payload = getattr(result, "payload", result)
                 if isinstance(payload, dict) and payload:
                     self._update_status_cache_from_event("device_info", payload)
@@ -954,25 +934,14 @@ class MeshCoreMqttUploader:
         if self.api is None:
             self._device_stats.update(stats)
             return
-        try:
-            mesh_core = self.api.mesh_core
-            commands = getattr(mesh_core, "commands", None)
-        except Exception:
-            commands = None
-        if commands is None:
-            self._device_stats.update(stats)
-            return
 
         core = await self._async_call_command_variants(
-            commands,
             ["stats_core", "get_stats_core", "send_stats_core", "statscore"],
         )
         radio = await self._async_call_command_variants(
-            commands,
             ["stats_radio", "get_stats_radio", "send_stats_radio", "statsradio"],
         )
         packets = await self._async_call_command_variants(
-            commands,
             ["stats_packets", "get_stats_packets", "send_stats_packets", "statspackets"],
         )
 

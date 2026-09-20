@@ -18,7 +18,7 @@ import importlib.util
 import os
 from unittest.mock import AsyncMock, MagicMock
 
-from tests.support.session import passthrough_exchange
+from tests.support.session import StubSession
 
 # Load services.py directly (same pattern as test_services_parsing.py) so the
 # relative imports resolve against the mocked sys.modules entries in conftest.
@@ -51,10 +51,13 @@ def _make_coordinator(contact):
     result = MagicMock()
     result.type = "SUCCESS"            # != EventType.ERROR (a distinct mock)
     result.payload = {}                # no expected_ack -> ACK wait is skipped
-    coordinator.api.connected = True
-    coordinator.api.mesh_core.get_contact_by_key_prefix.return_value = contact
-    coordinator.api.mesh_core.commands.send_msg = AsyncMock(return_value=result)
-    coordinator.api.session.exchange = passthrough_exchange
+    commands = MagicMock()
+    commands.send_msg = AsyncMock(return_value=result)
+    coordinator.api = StubSession(
+        commands,
+        connected=True,
+        contact_by_prefix=MagicMock(return_value=contact),
+    )
     return coordinator
 
 

@@ -28,7 +28,7 @@ _MOCKS = [
     "custom_components.meshcore",
     "custom_components.meshcore.const",
     "custom_components.meshcore.coordinator",
-    "custom_components.meshcore.meshcore_api",
+    "custom_components.meshcore.radio",
     "custom_components.meshcore.utils",
     "custom_components.meshcore.mqtt_uploader",
     "custom_components.meshcore.binary_sensor",

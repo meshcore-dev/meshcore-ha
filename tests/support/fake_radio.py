@@ -28,7 +28,8 @@ class FakeRadio:
         self.commands = self
         self.script: dict[tuple, Any] = {}
         self.calls: list[tuple] = []
-        self.contacts: dict[str, dict] = {}
+        self._contacts: dict[str, dict] = {}
+        self._contacts_dirty = False
         self.transport_closed = False
         self.connection_manager = SimpleNamespace(
             connection=SimpleNamespace(disconnect=self.close_transport)
@@ -83,6 +84,21 @@ class FakeRadio:
         """Start the real dispatcher on the running loop."""
         await self.dispatcher.start()
         self.connected = True
+
+    @property
+    def contacts(self) -> dict[str, dict]:
+        """Mirror the SDK's contact-table property over the same store."""
+        return self._contacts
+
+    @contacts.setter
+    def contacts(self, table: dict[str, dict]) -> None:
+        """Install a contact table the way a CONTACTS frame fills one."""
+        self._contacts = table
+
+    @property
+    def contacts_dirty(self) -> bool:
+        """Mirror the SDK flag that decides whether a resync is due."""
+        return self._contacts_dirty
 
     def get_contact_by_key_prefix(self, prefix: str) -> dict | None:
         """Resolve a contact using the SDK's public lookup surface."""

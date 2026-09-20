@@ -28,7 +28,6 @@ from custom_components.meshcore import (
 from custom_components.meshcore import radio as radio_module
 from custom_components.meshcore.const import DOMAIN
 from custom_components.meshcore.coordinator import MeshCoreDataUpdateCoordinator
-from custom_components.meshcore.meshcore_api import MeshCoreAPI
 from custom_components.meshcore.radio import RadioSession
 from tests.support.fake_radio import FakeRadio
 
@@ -220,7 +219,6 @@ async def test_failed_validation_leaves_no_open_handle(hass: HomeAssistant) -> N
         assert await session.start() is False
 
     assert radio.transport_closed
-    assert session.mesh_core is None
     assert session.connected is False
     radio.assert_no_leaked_tasks()
 
@@ -250,7 +248,7 @@ async def runtime(hass: HomeAssistant) -> AsyncIterator[SimpleNamespace]:
     entry = MockConfigEntry(domain=DOMAIN, entry_id="session", data=ENTRY_DATA)
     entry.add_to_hass(hass)
     radio = await _fresh_radio()
-    api = MeshCoreAPI(hass=hass, connection_type="tcp", tcp_host="fixture.invalid")
+    api = RadioSession(hass=hass, connection_type="tcp", tcp_host="fixture.invalid")
     coordinator = MeshCoreDataUpdateCoordinator(
         hass, logging.getLogger(__name__), DOMAIN, timedelta(seconds=5), api, entry
     )
@@ -267,7 +265,7 @@ def _setup_patches(runtime: SimpleNamespace, hass: HomeAssistant) -> list:
     """Patch stack that keeps entry setup on the fake radio and off storage."""
     coordinator = runtime.coordinator
     return [
-        patch("custom_components.meshcore.MeshCoreAPI", return_value=runtime.api),
+        patch("custom_components.meshcore.RadioSession", return_value=runtime.api),
         patch("custom_components.meshcore.radio.MeshCore.create_tcp", return_value=runtime.radio),
         patch(
             "custom_components.meshcore.MeshCoreDataUpdateCoordinator",
@@ -323,7 +321,7 @@ async def test_refused_platform_unload_keeps_the_entry_working(
     """A platform that refuses unload leaves the runtime live and forwarding."""
     assert await _setup(runtime, hass, return_value=None)
     seen: list[Event] = []
-    runtime.api.session.subscribe(EventType.BATTERY, seen.append)
+    runtime.api.subscribe(EventType.BATTERY, seen.append)
 
     with patch.object(hass.config_entries, "async_unload_platforms", return_value=False):
         assert await async_unload_entry(hass, runtime.entry) is False

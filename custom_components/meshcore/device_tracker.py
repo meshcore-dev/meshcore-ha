@@ -41,7 +41,7 @@ class DeviceTrackerManager:
         
     def setup_gps_listener(self) -> Callable[[], None]:
         """Subscribe to telemetry for GPS discovery; returns the remover."""
-        unsubscribe = self.coordinator.api.session.subscribe(
+        unsubscribe = self.coordinator.api.subscribe(
             EventType.TELEMETRY_RESPONSE, self._handle_gps_telemetry_event
         )
         _LOGGER.debug("GPS device tracker manager initialized")

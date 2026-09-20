@@ -118,7 +118,7 @@ def _self_telemetry_gate():
         calls = [
             n
             for n in ast.walk(node)
-            if isinstance(n, ast.Attribute) and n.attr == "get_self_telemetry"
+            if isinstance(n, ast.Constant) and n.value == "get_self_telemetry"
         ]
         if calls:
             return node

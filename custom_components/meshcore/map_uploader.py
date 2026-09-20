@@ -134,8 +134,7 @@ class MeshCoreMapUploader:
         if not self.api:
             return False
         try:
-            mesh_core = self.api.mesh_core
-            result = await self.api.session.exchange(mesh_core.commands.export_private_key)
+            result = await self.api.exchange("export_private_key")
         except Exception as ex:
             self.logger.debug("Private key export failed: %s", ex)
             return False

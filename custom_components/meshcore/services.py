@@ -1,13 +1,11 @@
 """Services for the MeshCore integration."""
 import ast
-import inspect
 import logging
 import random
 import re
 import shlex
 import time
 import uuid
-from functools import partial
 from typing import Any, cast
 
 import voluptuous as vol
@@ -268,12 +266,12 @@ def _resolve_contact(arg: str, command_name: str, api: Any, coordinator: Any) ->
     if len(arg) < 6:
         _LOGGER.error("Invalid pubkey prefix length: %s", arg)
         return None
-    if not api or not api.mesh_core:
+    if not api or not api.connected:
         _LOGGER.error("Device not connected - cannot resolve contact")
         return None
-    contact = api.mesh_core.get_contact_by_key_prefix(arg)
+    contact = api.contact_by_prefix(arg)
     if not contact:
-        contact = api.mesh_core.get_contact_by_name(arg)
+        contact = api.contact_by_name(arg)
     if not contact and command_name == "add_contact":
         for dc in coordinator._discovered_contacts.values():
             if dc.get("public_key", "").startswith(arg) or dc.get("adv_name") == arg:
@@ -298,7 +296,7 @@ def _contact_error(arg: str, command_name: str, api: Any) -> dict:
             "contact's public key, or its exact name"
         )
         reason = "pubkey_prefix_too_short"
-    elif not api or not api.mesh_core:
+    elif not api or not api.connected:
         detail = "device not connected"
         reason = "not_connected"
     else:
@@ -371,13 +369,13 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     contact_name = None
                     if node_id is not None:
                         # Find contact by name
-                        contact = api.mesh_core.get_contact_by_name(node_id)
+                        contact = api.contact_by_name(node_id)
                         if not contact:
                             _LOGGER.error(f"Contact with name '{node_id}' not found")
                             continue
                     else:
                         # Find contact by pubkey prefix
-                        contact = api.mesh_core.get_contact_by_key_prefix(pubkey_prefix)
+                        contact = api.contact_by_prefix(pubkey_prefix)
                         if not contact:
                             _LOGGER.error(f"Contact with pubkey prefix '{pubkey_prefix}' not found")
                             continue
@@ -386,9 +384,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                         COST_DIRECT, has_path=contact.get("out_path_len", -1) > -1
                     )
                     
-                    result = await api.session.exchange(
-                        api.mesh_core.commands.send_msg, contact, message
-                    )
+                    result = await api.exchange("send_msg", contact, message)
 
                     if result.type == EventType.ERROR:
                         _LOGGER.warning(
@@ -432,7 +428,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                                         "Waiting for ACK (code=%s, timeout=%.1fs) for message to %s",
                                         ack_code[:8], ack_timeout, display_name
                                     )
-                                    ack_event = await api.session.wait_for(
+                                    ack_event = await api.wait_for(
                                         EventType.ACK,
                                         {"code": ack_code},
                                         ack_timeout,
@@ -502,12 +498,10 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     coordinator.require_mesh_budget(COST_FLOOD)
 
                     # Set flood scope before sending if requested, then always reset.
-                    async with api.session.transaction():
+                    async with api.transaction():
                         if scope is not None:
                             _LOGGER.debug("Setting flood scope to: %s", scope)
-                            scope_result = await api.session.exchange(
-                                api.mesh_core.commands.set_flood_scope, scope
-                            )
+                            scope_result = await api.exchange("set_flood_scope", scope)
                             if scope_result.type == EventType.ERROR:
                                 _LOGGER.warning(
                                     "Failed to set flood scope %s: %s", scope, scope_result.payload
@@ -518,8 +512,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                         fallback_timestamp = int(time.time())
 
                         try:
-                            result = await api.session.exchange(
-                                api.mesh_core.commands.send_chan_msg,
+                            result = await api.exchange(
+                                "send_chan_msg",
                                 channel_idx,
                                 message,
                                 timestamp=fallback_timestamp,
@@ -527,9 +521,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                         finally:
                             if scope is not None:
                                 _LOGGER.debug("Resetting flood scope after send")
-                                await api.session.exchange(
-                                    api.mesh_core.commands.set_flood_scope, None
-                                )
+                                await api.exchange("set_flood_scope", None)
 
                     if result.type == EventType.ERROR:
                         _LOGGER.warning(
@@ -733,10 +725,10 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             api = coordinator.api
             if api and api.connected:
                 try:
-                    # Get the command method from the commands object
-                    command_method = getattr(api.mesh_core.commands, command_name, None)
-                    
-                    if not command_method:
+                    # Resolve the command by name through the session's gate
+                    sig_params = api.command_parameters(command_name)
+
+                    if sig_params is None:
                         _LOGGER.error("Command not found: %s", command_name)
                         continue
                     
@@ -853,7 +845,6 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                             else:
                                 prepared_args.append(val)
                         if kw_literals:
-                            sig_params = list(inspect.signature(command_method).parameters.keys())
                             for kw_name, kw_val in kw_literals.items():
                                 if kw_name not in sig_params:
                                     _LOGGER.error("Unknown keyword '%s' for command '%s'", kw_name, command_name)
@@ -916,28 +907,22 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
                     _LOGGER.debug("Executing %s args=%s kwargs=%s", command_name, prepared_args, prepared_kwargs)
                     needs_lease, waits_remote = _mesh_routing(command_name)
-                    call_command = partial(command_method, *prepared_args, **prepared_kwargs)
+                    run = api.invoke if waits_remote else api.exchange
                     if needs_lease:
                         coordinator.require_mesh_budget(
                             COST_FLOOD if command_name in _FLOOD_COMMANDS else COST_DIRECT
                         )
-                        async with api.session._mesh_lease:
-                            result = await (
-                                call_command()
-                                if waits_remote
-                                else api.session.exchange(call_command)
-                            )
+                        async with api.mesh_lease():
+                            result = await run(command_name, *prepared_args, **prepared_kwargs)
                     else:
-                        result = await api.session.exchange(call_command)
+                        result = await run(command_name, *prepared_args, **prepared_kwargs)
 
                     # Refresh SELF_INFO after commands that modify config values
                     # so HA sensors immediately reflect the new state.
                     if command_name in _SELF_INFO_COMMANDS and result.type != EventType.ERROR:
                         try:
-                            appstart_result = await api.session.exchange(
-                                api.mesh_core.commands.send_appstart
-                            )
-                            api._cache_self_info_event(appstart_result)
+                            appstart_result = await api.exchange("send_appstart")
+                            api.cache_self_info_event(appstart_result)
                         except Exception as ex:
                             _LOGGER.warning(
                                 "Failed to refresh SELF_INFO after %s: %s",
@@ -948,9 +933,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     if command_name == "set_channel" and result.type != EventType.ERROR:
                         channel_idx = prepared_args[0]
                         # Fetch updated channel info
-                        channel_info_result = await api.session.exchange(
-                            api.mesh_core.commands.get_channel, channel_idx
-                        )
+                        channel_info_result = await api.exchange("get_channel", channel_idx)
                         if channel_info_result.type != EventType.ERROR:
                             coordinator._channel_info[channel_idx] = channel_info_result.payload
                             _LOGGER.info(f"Updated channel {channel_idx} info: {channel_info_result.payload}")
@@ -959,7 +942,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
                     # Mark contacts as dirty after add_contact or remove_contact so next ensure_contacts() will sync
                     if command_name == "add_contact" and result.type != EventType.ERROR:
-                        api.mesh_core._contacts_dirty = True
+                        api.mark_contacts_dirty()
                         # Also add to coordinator and trigger immediate update
                         contact_to_add = prepared_args[0]
                         if contact_to_add and isinstance(contact_to_add, dict):
@@ -988,15 +971,14 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
                                 coordinator._publish_contacts()
                     elif command_name == "remove_contact" and result.type != EventType.ERROR:
-                        api.mesh_core._contacts_dirty = True
+                        api.mark_contacts_dirty()
                         # Also remove from SDK's internal contacts dict and coordinator
                         contact_to_remove = prepared_args[0]
                         if contact_to_remove and isinstance(contact_to_remove, dict):
                             pubkey = contact_to_remove.get("public_key")
                             if pubkey:
-                                # Remove from SDK
-                                if pubkey in api.mesh_core._contacts:
-                                    del api.mesh_core._contacts[pubkey]
+                                # Remove from the node's cached contact table
+                                api.forget_contact(pubkey)
 
                                 # Remove from coordinator and trigger immediate update
                                 prefix = pubkey[:12]
@@ -1780,7 +1762,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             return {"trace": None, "error": "no_coordinator"}
 
         api = coordinator.api
-        if not api or not api.connected or not api.mesh_core:
+        if not api or not api.connected:
             return {"trace": None, "error": "not_connected"}
 
         # Prefer coordinator.get_contact_by_prefix (searches added +
@@ -1807,7 +1789,6 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         if not public_key:
             return {"trace": None, "error": "contact_missing_pubkey"}
 
-        mesh_core = api.mesh_core
         tag = random.randint(0, 0xFFFFFFFF)
 
         out_path_len = contact.get("out_path_len", -1)
@@ -1830,7 +1811,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             # floor is kept: two-hop flood round-trips routinely run 5-12s
             # under real LoRa conditions.
             try:
-                send_result, path_event = await api.session.path_discovery(
+                send_result, path_event = await api.path_discovery(
                     contact,
                     identity=pubkey_prefix,
                     min_timeout=15.0,
@@ -1919,8 +1900,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         # ── Send trace and await TRACE_DATA with our tag ──
         start_time = time.monotonic()
         try:
-            send_result = await api.session.exchange(
-                mesh_core.commands.send_trace, 0, tag, flags, trace_path_bytes
+            send_result = await api.exchange(
+                "send_trace", 0, tag, flags, trace_path_bytes
             )
         except Exception as ex:
             _LOGGER.error("trace: send_trace raised: %s", ex)
@@ -1945,7 +1926,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         effective_timeout = min(max(requested_timeout_s, fw_suggested_s, 5.0), 60.0)
 
         try:
-            trace_event = await api.session.wait_for(
+            trace_event = await api.wait_for(
                 EventType.TRACE_DATA,
                 {"tag": tag},
                 effective_timeout,

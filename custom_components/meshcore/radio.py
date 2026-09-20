@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import logging
 import random
 import time
-from collections.abc import AsyncIterator, Callable, Coroutine
+from collections.abc import AsyncIterator, Callable, Coroutine, Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, Final
 
 from homeassistant.core import HomeAssistant
@@ -91,14 +93,14 @@ class RadioSession(MeshCommands):
         self._mesh_lease = asyncio.Semaphore(1)
 
     @property
-    def mesh_core(self) -> MeshCore | None:
-        """Return the live SDK instance, or None whenever the link is down."""
-        return self._mesh_core if self._connected else None
-
-    @property
     def connected(self) -> bool:
         """Return whether the link is up and validated."""
         return self._connected
+
+    @property
+    def node_name(self) -> str:
+        """Return the latest known node name from SELF_INFO."""
+        return str(self.self_info.get("name", "") or "").strip()
 
     async def start(self) -> bool:
         """Open, validate and announce the link. False means nothing is open."""
@@ -106,6 +108,14 @@ class RadioSession(MeshCommands):
         if not await self._open():
             return False
         return await self._on_connected()
+
+    async def connect(self) -> bool:
+        """Open the link under the name the integration's setup path uses."""
+        return await self.start()
+
+    async def disconnect(self) -> None:
+        """Release the link under the name the integration's teardown uses."""
+        await self.close()
 
     async def close(self, deadline: float = CLOSE_DEADLINE) -> None:
         """Stop recovery and release the link; safe to call more than once."""
@@ -176,17 +186,57 @@ class RadioSession(MeshCommands):
 
     async def exchange(
         self,
-        fn: Callable[..., Any],
+        command: str | Callable[..., Any],
         /,
         *args: Any,
-        timeout: float | None = None,
+        deadline: float | None = None,
         **kwargs: Any,
     ) -> Any:
-        """Run one immediate SDK command as the link's only speaker."""
+        """Run one immediate SDK command as the link's only speaker.
+
+        ``command`` is an SDK command name, resolved on the live instance once
+        the link is owned, or a callable the session itself already holds.
+        ``deadline`` bounds the await here; every other keyword reaches the
+        command, which is why it is not called ``timeout``.
+        """
         if self._exchange_owner is asyncio.current_task():
-            return await self._command(fn, args, kwargs, timeout)
+            return await self._command(command, args, kwargs, deadline)
         async with self._exchange_lock:
-            return await self._command(fn, args, kwargs, timeout)
+            return await self._command(command, args, kwargs, deadline)
+
+    async def invoke(
+        self,
+        name: str,
+        /,
+        *args: Any,
+        deadline: float | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Run one named command without the exchange lock.
+
+        For the few SDK helpers that wait on a mesh round-trip: they hold the
+        mesh lease instead, so a minutes-long request cannot stall local work.
+        """
+        return await self._command(name, args, kwargs, deadline)
+
+    @contextlib.asynccontextmanager
+    async def mesh_lease(self) -> AsyncIterator[None]:
+        """Hold the radio's single firmware pending-flag slot."""
+        async with self._mesh_lease:
+            yield
+
+    def command_parameters(self, name: str) -> list[str] | None:
+        """Return a command's parameter names, or None when there is no such command."""
+        try:
+            command = self._resolve(name)
+        except (AttributeError, RadioUnavailable):
+            return None
+        if not callable(command):
+            return None
+        try:
+            return list(inspect.signature(command).parameters)
+        except (TypeError, ValueError):
+            return []
 
     @contextlib.asynccontextmanager
     async def transaction(self) -> AsyncIterator[None]:
@@ -223,27 +273,76 @@ class RadioSession(MeshCommands):
         finally:
             unsubscribe()
 
+    @property
+    def contacts(self) -> Mapping[str, dict[str, Any]]:
+        """Return a read-only view of the node's contact table."""
+        mesh_core = self._live()
+        return MappingProxyType(getattr(mesh_core, "contacts", None) or {})
+
+    def contact_by_prefix(self, prefix: str) -> dict[str, Any] | None:
+        """Resolve a contact by public-key prefix; None when the link is down."""
+        mesh_core = self._live()
+        return mesh_core.get_contact_by_key_prefix(prefix) if mesh_core is not None else None
+
+    def contact_by_name(self, name: str) -> dict[str, Any] | None:
+        """Resolve a contact by advertised name; None when the link is down."""
+        mesh_core = self._live()
+        return mesh_core.get_contact_by_name(name) if mesh_core is not None else None
+
+    async def ensure_contacts(self, follow: bool = True) -> bool:
+        """Resync the contact table when the node reports it stale."""
+        mesh_core = self._live()
+        if mesh_core is None:
+            raise RadioUnavailable("MeshCore device is not connected")
+        return bool(await self.exchange(mesh_core.ensure_contacts, follow=follow))
+
+    def mark_contacts_dirty(self) -> None:
+        """Make the next contact sync fetch the table again."""
+        mesh_core = self._live()
+        if mesh_core is not None:
+            mesh_core._contacts_dirty = True
+
+    def forget_contact(self, public_key: str) -> bool:
+        """Drop one contact from the cached table; True when it was there."""
+        mesh_core = self._live()
+        contacts = getattr(mesh_core, "_contacts", None)
+        if not isinstance(contacts, dict) or public_key not in contacts:
+            return False
+        del contacts[public_key]
+        return True
+
+    def _live(self) -> MeshCore | None:
+        """Return the SDK instance while the link is up, else None."""
+        return self._mesh_core if self._connected else None
+
     def _commands(self) -> Any:
         """Return the live SDK command surface, or refuse when the link is down."""
-        mesh_core = self.mesh_core
+        mesh_core = self._live()
         if mesh_core is None:
             raise RadioUnavailable("MeshCore device is not connected")
         return mesh_core.commands
 
+    def _resolve(self, name: str) -> Any:
+        """Look one command up by name, refusing private SDK attributes."""
+        if name.startswith("_"):
+            raise AttributeError(f"unknown command: {name}")
+        return getattr(self._commands(), name)
+
     async def _command(
         self,
-        fn: Callable[..., Any],
+        command: str | Callable[..., Any],
         args: tuple[Any, ...],
         kwargs: dict[str, Any],
-        timeout: float | None,
+        deadline: float | None,
     ) -> Any:
         """Await one SDK command, turning link failures into RadioUnavailable."""
         mesh_core = self._mesh_core
         if mesh_core is None or not self._connected:
             raise RadioUnavailable("MeshCore device is not connected")
+        fn = self._resolve(command) if isinstance(command, str) else command
         try:
             call = fn(*args, **kwargs)
-            result = await (call if timeout is None else asyncio.wait_for(call, timeout))
+            result = await (call if deadline is None else asyncio.wait_for(call, deadline))
         except LINK_ERRORS as ex:
             self._link_lost(f"command failed: {ex}")
             raise RadioUnavailable(str(ex)) from ex

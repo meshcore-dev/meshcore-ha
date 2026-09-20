@@ -48,8 +48,8 @@ from .const import (
 )
 from .coordinator import MeshCoreDataUpdateCoordinator
 from .map_uploader import MeshCoreMapUploader
-from .meshcore_api import MeshCoreAPI
 from .mqtt_uploader import MeshCoreMqttUploader
+from .radio import RadioSession
 from .services import async_setup_services, async_unload_services
 from .utils import (
     create_message_correlation_key,
@@ -372,7 +372,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         api_kwargs["tcp_port"] = entry.data[CONF_TCP_PORT]
     
     # Initialize API
-    api = MeshCoreAPI(**api_kwargs)
+    api = RadioSession(**api_kwargs)
 
     # Try to connect with retries for initial setup
     max_retries = 3
@@ -497,14 +497,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 _LOGGER.info(f"Evicted {evict_count} discovered contacts on startup (limit: {max_contacts})")
 
         # Load contacts from device on initialization
-        if connected and api.mesh_core:
+        if connected:
             try:
                 _LOGGER.info("Loading contacts from device on initialization...")
-                await api.mesh_core.ensure_contacts(follow=False)
+                await api.ensure_contacts(follow=False)
 
                 # Index contacts by 12-char prefix
                 coordinator._contacts = {}
-                for contact in api.mesh_core.contacts.values():
+                for contact in api.contacts.values():
                     public_key = contact.get("public_key")
                     if public_key:
                         prefix = public_key[:12]
@@ -518,7 +518,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Load channel info eagerly so RX_LOG decryption works before the first
         # coordinator update fires (avoids empty _channel_info causing pending_cache_keys=[]).
-        if connected and api.mesh_core:
+        if connected:
             try:
                 _LOGGER.info("Loading channel info on startup for RX_LOG correlation...")
                 await coordinator.fetch_all_channel_info()
@@ -705,7 +705,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 })
         
         # Add the all-events listener
-        session = coordinator.api.session
+        session = coordinator.api
         _LOGGER.info("Setting up all-events subscriber for MeshCore")
         entry.async_on_unload(session.subscribe(None, forward_all_events))
 
@@ -812,13 +812,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Entities stop receiving radio pushes before teardown, but a platform may
     # still refuse the unload, so nothing is destroyed until that result is known.
     if coordinator is not None:
-        coordinator.api.session.pause_forwarding()
+        coordinator.api.pause_forwarding()
 
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
     if not unload_ok:
         if coordinator is not None:
-            coordinator.api.session.resume_forwarding()
+            coordinator.api.resume_forwarding()
         return False
 
     if coordinator is not None:

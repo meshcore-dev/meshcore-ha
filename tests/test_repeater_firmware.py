@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from tests.support.session import passthrough_exchange
+from tests.support.session import StubSession
 
 
 class _EventType:
@@ -40,15 +40,21 @@ class _Session:
 
     def __init__(self, events):
         self.events = events
-        self.mesh_core = None
+        self.connected = True
+        self.commands = None
+        self.contact = None
         self.listener_registered = False
         self.filters = None
         self.callback = None
         self.logins = []
 
-    async def exchange(self, fn, /, *args, timeout=None, **kwargs):
-        """Run one command with no gate, the way RadioSession.exchange would."""
-        return await fn(*args, **kwargs)
+    async def exchange(self, command, /, *args, deadline=None, **kwargs):
+        """Resolve a command name the way RadioSession.exchange would."""
+        return await getattr(self.commands, command)(*args, **kwargs)
+
+    def contact_by_prefix(self, prefix):
+        """Resolve the one contact this scripted radio knows about."""
+        return self.contact
 
     async def login(self, contact, password):
         """Record the login the refresh performs before asking for a version."""
@@ -91,10 +97,8 @@ def _session(events, *, send_type=_EventType.MSG_SENT):
         session.dispatch_events()
         return SimpleNamespace(type=send_type, payload={})
 
-    session.mesh_core = SimpleNamespace(
-        commands=SimpleNamespace(send_cmd=send_cmd),
-        get_contact_by_key_prefix=lambda prefix: contact,
-    )
+    session.commands = SimpleNamespace(send_cmd=send_cmd)
+    session.contact = contact
     return session
 
 
@@ -232,15 +236,11 @@ async def test_cancellation_removes_response_listener() -> None:
         send_started.set()
         await asyncio.Future()
 
-    session = SimpleNamespace(
+    session = StubSession(
+        SimpleNamespace(send_cmd=send_cmd),
+        connected=True,
         subscribe=lambda *a, **kw: listener_removed.set,
-        exchange=passthrough_exchange,
-        mesh_core=SimpleNamespace(
-            commands=SimpleNamespace(send_cmd=send_cmd),
-            get_contact_by_key_prefix=lambda prefix: {
-                "public_key": "aabbccddeeff" + "0" * 52
-            },
-        ),
+        contact_by_prefix=lambda prefix: {"public_key": "aabbccddeeff" + "0" * 52},
     )
     task = asyncio.create_task(query(session, "aabbccddeeff"))
     await send_started.wait()
@@ -265,16 +265,12 @@ async def test_concurrent_refresh_for_same_repeater_is_rejected() -> None:
         send_started.set()
         await asyncio.Future()
 
-    session = SimpleNamespace(
+    session = StubSession(
+        SimpleNamespace(send_cmd=send_cmd),
+        connected=True,
         subscribe=lambda *a, **kw: (lambda: None),
-        exchange=passthrough_exchange,
         login=login,
-        mesh_core=SimpleNamespace(
-            commands=SimpleNamespace(send_cmd=send_cmd),
-            get_contact_by_key_prefix=lambda prefix: {
-                "public_key": "aabbccddeeff" + "0" * 52
-            },
-        ),
+        contact_by_prefix=lambda prefix: {"public_key": "aabbccddeeff" + "0" * 52},
     )
     first = asyncio.create_task(refresh(hass, entry, session, "aabbccddeeff"))
     await send_started.wait()

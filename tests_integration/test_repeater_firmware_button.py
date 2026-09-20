@@ -24,15 +24,21 @@ class _Session:
 
     def __init__(self, event=None, login=None):
         self.event = event
-        self.mesh_core = None
+        self.connected = True
+        self.commands = None
+        self.contacts = {}
         self.listener_registered = False
         self.callback = None
         self.filters = None
         self._login = login
 
-    async def exchange(self, fn, /, *args, timeout=None, **kwargs):
-        """Run one command with no gate, the way RadioSession.exchange would."""
-        return await fn(*args, **kwargs)
+    async def exchange(self, command, /, *args, deadline=None, **kwargs):
+        """Resolve a command name the way RadioSession.exchange would."""
+        return await getattr(self.commands, command)(*args, **kwargs)
+
+    def contact_by_prefix(self, prefix):
+        """Resolve a contact by public-key prefix, as the session does."""
+        return self.contacts.get(prefix)
 
     async def login(self, contact, password):
         """Answer the login the firmware refresh performs first."""
@@ -89,12 +95,8 @@ def _session(prefix: str, *, event=None, send_error=False, login_timeout=False):
             session.dispatch_reply()
         return result
 
-    session.mesh_core = SimpleNamespace(
-        commands=SimpleNamespace(send_cmd=send_cmd),
-        get_contact_by_key_prefix=lambda requested: (
-            contact if requested == prefix else None
-        ),
-    )
+    session.commands = SimpleNamespace(send_cmd=send_cmd)
+    session.contacts = {prefix: contact}
     return session
 
 
@@ -121,8 +123,7 @@ async def _setup_buttons(hass, session):
 
     coordinator = MagicMock()
     coordinator.config_entry = entry
-    coordinator.api.connected = True
-    coordinator.api.session = session
+    coordinator.api = session
     coordinator.pubkey = "hubpubkey"
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 

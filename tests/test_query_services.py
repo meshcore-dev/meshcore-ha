@@ -83,9 +83,12 @@ class _FakeSession:
     session's filtered wait reports exactly as it reports a timeout.
     """
 
-    def __init__(self, events, mesh_core=None):
+    def __init__(self, events, commands=None, contacts=None, **attributes):
         self.events = events
-        self.mesh_core = mesh_core
+        self.commands = commands
+        self.contacts = contacts or {}
+        self.connected = True
+        self.__dict__.update(attributes)
 
     def subscribe(self, event_type, handler, *, attribute_filters=None):
         """Resolve the caller's waiter straight away and return its remover."""
@@ -93,9 +96,22 @@ class _FakeSession:
             handler(self.events[event_type])
         return lambda: None
 
-    async def exchange(self, fn, /, *args, timeout=None, **kwargs):
-        """Run one command with no gate, the way RadioSession.exchange would."""
+    async def exchange(self, command, /, *args, deadline=None, **kwargs):
+        """Resolve a command name the way RadioSession.exchange would."""
+        fn = getattr(self.commands, command) if isinstance(command, str) else command
         return await fn(*args, **kwargs)
+
+    def contact_by_prefix(self, prefix):
+        """Resolve a contact by public-key prefix, as the session does."""
+        return next(
+            (c for key, c in self.contacts.items() if key.startswith(prefix)), None
+        )
+
+    def contact_by_name(self, name):
+        """Resolve a contact by advertised name, as the session does."""
+        return next(
+            (c for c in self.contacts.values() if c.get("adv_name") == name), None
+        )
 
     def transaction(self):
         """Stand in for the exchange-lock transaction, which owns no state here."""
@@ -110,7 +126,7 @@ class _FakeSession:
     ):
         """Send the discovery frame and pair it with the scripted response."""
         destination = bytes.fromhex(str(contact.get("public_key") or ""))[:32]
-        sent = await self.mesh_core.commands.send(
+        sent = await self.commands.send(
             b"\x34\x00" + destination, [_ET.MSG_SENT, _ET.ERROR]
         )
         return sent, self.events.get(_ET.PATH_RESPONSE)
@@ -132,11 +148,6 @@ def _build_coordinator(
 ):
     """Build a MagicMock coordinator matching the new ws_trace-aligned service logic."""
     coord = MagicMock()
-    coord.api = MagicMock()
-    coord.api.connected = connected
-    coord.api.self_info = (
-        self_info if self_info is not None else {"suggested_timeout": 1000}
-    )
     coord.max_channels = max_channels
     coord._channel_info = channel_info or {}
 
@@ -158,34 +169,25 @@ def _build_coordinator(
         return None
     coord.get_contact_by_prefix = MagicMock(side_effect=_by_prefix)
 
-    mesh_core = MagicMock()
-    mesh_core.contacts = contacts_dict or {}
-
-    # Legacy _resolve_contact fallbacks (not normally hit when
-    # coordinator.get_contact_by_prefix resolves first).
-    def _by_sdk_prefix(prefix):
-        return _by_prefix(prefix)
-    def _by_name(name):
-        for c in all_list:
-            if c.get("adv_name") == name:
-                return c
-        return None
-    mesh_core.get_contact_by_key_prefix = MagicMock(side_effect=_by_sdk_prefix)
-    mesh_core.get_contact_by_name = MagicMock(side_effect=_by_name)
-
-    mesh_core.commands = MagicMock()
-    mesh_core.commands.send_trace = AsyncMock(return_value=trace_send_event)
+    commands = MagicMock()
+    commands.send_trace = AsyncMock(return_value=trace_send_event)
 
     # commands.send is used for PATH_REQ (flood contacts).
     if path_send_exc is not None:
-        mesh_core.commands.send = AsyncMock(side_effect=path_send_exc)
+        commands.send = AsyncMock(side_effect=path_send_exc)
     else:
-        mesh_core.commands.send = AsyncMock(return_value=path_send_event)
+        commands.send = AsyncMock(return_value=path_send_event)
 
-    coord.api.mesh_core = mesh_core
-    coord.api.session = _FakeSession(
+    # The session's own contact lookups are the _resolve_contact fallback
+    # (not normally hit when coordinator.get_contact_by_prefix resolves first).
+    coord.api = _FakeSession(
         {_ET.PATH_RESPONSE: path_response_event, _ET.TRACE_DATA: trace_event},
-        mesh_core=mesh_core,
+        commands=commands,
+        contacts=contacts_dict or {},
+        connected=connected,
+        self_info=(
+            self_info if self_info is not None else {"suggested_timeout": 1000}
+        ),
     )
 
     coord._discovered_contacts = {}
@@ -452,11 +454,11 @@ async def test_trace_happy_path_returns_structured_response(monkeypatch):
     assert isinstance(t["round_trip_ms"], int)
 
     # send_trace(0, tag, flags=0, bytes.fromhex("aabbabbbaa"))
-    sent_call = coord.api.mesh_core.commands.send_trace.call_args
+    sent_call = coord.api.commands.send_trace.call_args
     assert sent_call.args == (0, 42, 0, bytes.fromhex("aabbabbbaa"))
 
     # No path discovery on a non-flood contact.
-    coord.api.mesh_core.commands.send.assert_not_called()
+    coord.api.commands.send.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -512,12 +514,12 @@ async def test_trace_flood_contact_runs_path_discovery_then_traces(monkeypatch):
     assert response["trace"]["final_snr"] == -3.5
 
     # PATH_REQ was sent as b"\x34\x00" + pubkey bytes, awaiting MSG_SENT/ERROR.
-    path_call = coord.api.mesh_core.commands.send.call_args
+    path_call = coord.api.commands.send.call_args
     assert path_call.args[0] == b"\x34\x00" + bytes.fromhex(pubkey)
     assert path_call.args[1] == [_ET.MSG_SENT, _ET.ERROR]
 
     # send_trace used the discovered path, truncated to 1-byte hashes.
-    sent_call = coord.api.mesh_core.commands.send_trace.call_args
+    sent_call = coord.api.commands.send_trace.call_args
     assert sent_call.args == (0, 99, 0, bytes.fromhex("aabbabbbaa"))
 
 
@@ -547,7 +549,7 @@ async def test_trace_path_discovery_timeout_returns_structured_error():
 
     response = await handler(_call({ATTR_PUBKEY_PREFIX: "abcdef"}))
     assert response == {"trace": None, "error": "path_discovery_timeout"}
-    coord.api.mesh_core.commands.send_trace.assert_not_called()
+    coord.api.commands.send_trace.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -579,7 +581,7 @@ async def test_trace_path_discovery_rejected_surfaces_reason():
     assert response["trace"] is None
     assert response["error"] == "path_discovery_rejected"
     assert response["reason"] == "ERR_CODE_NOT_FOUND"
-    coord.api.mesh_core.commands.send_trace.assert_not_called()
+    coord.api.commands.send_trace.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -606,7 +608,7 @@ async def test_trace_path_discovery_send_returns_none_is_failed():
     response = await handler(_call({ATTR_PUBKEY_PREFIX: "abcdef"}))
     assert response["trace"] is None
     assert response["error"] == "path_discovery_failed"
-    coord.api.mesh_core.commands.send_trace.assert_not_called()
+    coord.api.commands.send_trace.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -632,7 +634,7 @@ async def test_trace_path_discovery_send_raises_is_failed():
 
     response = await handler(_call({ATTR_PUBKEY_PREFIX: "abcdef"}))
     assert response == {"trace": None, "error": "path_discovery_failed"}
-    coord.api.mesh_core.commands.send_trace.assert_not_called()
+    coord.api.commands.send_trace.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -666,7 +668,7 @@ async def test_trace_path_discovery_malformed_response():
     assert response["trace"] is None
     assert response["error"] == "path_discovery_failed"
     assert response.get("reason") == "malformed_path_response"
-    coord.api.mesh_core.commands.send_trace.assert_not_called()
+    coord.api.commands.send_trace.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -689,8 +691,8 @@ async def test_trace_contact_not_on_device_short_circuits():
 
     response = await handler(_call({ATTR_PUBKEY_PREFIX: "abcdef"}))
     assert response == {"trace": None, "error": "contact_not_on_device"}
-    coord.api.mesh_core.commands.send.assert_not_called()
-    coord.api.mesh_core.commands.send_trace.assert_not_called()
+    coord.api.commands.send.assert_not_called()
+    coord.api.commands.send_trace.assert_not_called()
 
 
 @pytest.mark.asyncio

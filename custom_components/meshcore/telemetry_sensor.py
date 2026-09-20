@@ -181,7 +181,7 @@ class TelemetrySensorManager:
 
     def setup_telemetry_listener(self) -> Callable[[], None]:
         """Subscribe to telemetry response events; returns the remover."""
-        unsubscribe = self.coordinator.api.session.subscribe(
+        unsubscribe = self.coordinator.api.subscribe(
             EventType.TELEMETRY_RESPONSE, self._handle_telemetry_event
         )
         _LOGGER.debug("Telemetry sensor manager initialized")

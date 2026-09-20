@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from tests.support.session import passthrough_exchange
+from tests.support.session import StubSession
 
 
 # ─── Module loading ────────────────────────────────────────────────────
@@ -67,26 +67,18 @@ class _Event:
 def _build_coordinator(command_name, return_value, contact=None):
     """Coordinator with a single mocked SDK command and optional contact lookup."""
     coord = MagicMock()
-    coord.api = MagicMock()
-    coord.api.connected = True
-    coord.api.self_info = {"suggested_timeout": 1000}
+    commands = MagicMock()
+    setattr(commands, command_name, AsyncMock(return_value=return_value))
 
-    mesh_core = MagicMock()
-    mesh_core.commands = MagicMock()
-    setattr(
-        mesh_core.commands,
-        command_name,
-        AsyncMock(return_value=return_value),
+    # Contact lookup for "contact"-typed params. _resolve_contact tries the
+    # prefix lookup first; returning the contact short-circuits the rest.
+    coord.api = StubSession(
+        commands,
+        connected=True,
+        self_info={"suggested_timeout": 1000},
+        contact_by_prefix=MagicMock(return_value=contact),
+        contact_by_name=MagicMock(return_value=None),
     )
-
-    # Contact lookup for "contact"-typed params. _resolve_contact tries
-    # mesh_core.get_contact_by_key_prefix first; returning the contact short-
-    # circuits the rest.
-    mesh_core.get_contact_by_key_prefix = MagicMock(return_value=contact)
-    mesh_core.get_contact_by_name = MagicMock(return_value=None)
-
-    coord.api.mesh_core = mesh_core
-    coord.api.session.exchange = passthrough_exchange
     coord._discovered_contacts = {}
     return coord
 
@@ -273,13 +265,13 @@ async def test_queue_commands_blocked_when_consumption_disabled(command):
     command_name = "send" if command.startswith("send") else "get_msg"
     coord = _build_coordinator(command_name, _Event("ok", {}))
     if command_name == "send":
-        coord.api.mesh_core.commands.send.__signature__ = inspect.Signature([
+        coord.api.commands.send.__signature__ = inspect.Signature([
             inspect.Parameter("data", inspect.Parameter.POSITIONAL_OR_KEYWORD),
         ])
     coord.consume_incoming_messages = False
     handler = await _get_execute_handler(coord)
     assert await handler(_call(command)) == {"error": "Incoming message consumption is disabled"}
-    getattr(coord.api.mesh_core.commands, command_name).assert_not_awaited()
+    getattr(coord.api.commands, command_name).assert_not_awaited()
 
 
 @pytest.mark.parametrize("command_name,command", [
@@ -292,7 +284,7 @@ async def test_non_queue_commands_work_when_consumption_disabled(command_name, c
     coord.consume_incoming_messages = False
     handler = await _get_execute_handler(coord)
     assert await handler(_call(command)) == {"sent": True}
-    getattr(coord.api.mesh_core.commands, command_name).assert_awaited_once()
+    getattr(coord.api.commands, command_name).assert_awaited_once()
 
 
 async def test_get_msg_still_available_when_enabled():
@@ -300,4 +292,4 @@ async def test_get_msg_still_available_when_enabled():
     coord.consume_incoming_messages = True
     handler = await _get_execute_handler(coord)
     await handler(_call("get_msg"))
-    coord.api.mesh_core.commands.get_msg.assert_awaited_once()
+    coord.api.commands.get_msg.assert_awaited_once()

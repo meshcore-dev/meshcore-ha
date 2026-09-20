@@ -28,7 +28,7 @@ from custom_components.meshcore import coordinator as coordinator_module
 from custom_components.meshcore import rate_limiter as rate_limiter_module
 from custom_components.meshcore.const import DOMAIN
 from custom_components.meshcore.coordinator import MeshCoreDataUpdateCoordinator
-from custom_components.meshcore.meshcore_api import MeshCoreAPI
+from custom_components.meshcore.radio import RadioSession
 from tests.support.fake_radio import FakeRadio
 
 START: Final = 1_700_000_000
@@ -181,9 +181,9 @@ async def mesh(
         REPEATER_CONTACT["public_key"]: dict(REPEATER_CONTACT),
         CLIENT_CONTACT["public_key"]: dict(CLIENT_CONTACT),
     }
-    api = MeshCoreAPI(hass=hass, connection_type="tcp", tcp_host="fixture.invalid")
-    api.session._mesh_core = radio
-    api.session._connected = True
+    api = RadioSession(hass=hass, connection_type="tcp", tcp_host="fixture.invalid")
+    api._mesh_core = radio
+    api._connected = True
 
     coordinator = MeshCoreDataUpdateCoordinator(
         hass, logging.getLogger(__name__), DOMAIN, timedelta(seconds=5), api, entry

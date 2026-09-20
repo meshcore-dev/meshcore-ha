@@ -81,9 +81,9 @@ async def handle_channel_message(event, coordinator) -> None:
                 message_text = parts[1].strip()
 
                 # Use the provided coordinator for contact lookup
-                if coordinator and hasattr(coordinator, "api") and coordinator.api.mesh_core:
+                if coordinator and hasattr(coordinator, "api") and coordinator.api.connected:
                     # Try to find contact by name to get public key
-                    contact = coordinator.api.mesh_core.get_contact_by_name(sender_name)
+                    contact = coordinator.api.contact_by_name(sender_name)
                     if contact and isinstance(contact, dict):
                         sender_pubkey = contact.get("public_key", "")[:12]
 
@@ -301,9 +301,9 @@ def handle_contact_message(event, coordinator) -> None:
 
         # Look up contact name from pubkey_prefix using MeshCore API
         contact_name = "Unknown"
-        if hasattr(coordinator, "api") and coordinator.api.mesh_core:
+        if hasattr(coordinator, "api") and coordinator.api.connected:
             # Try to find contact by public key prefix
-            contact = coordinator.api.mesh_core.get_contact_by_key_prefix(pubkey_prefix)
+            contact = coordinator.api.contact_by_prefix(pubkey_prefix)
             if contact and isinstance(contact, dict):
                 contact_name = contact.get("adv_name", "Unknown")
 

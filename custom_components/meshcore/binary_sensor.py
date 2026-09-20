@@ -103,7 +103,7 @@ def create_contact_sensor(coordinator, contact: dict):
 
 @callback
 def handle_contacts_update(event, coordinator, async_add_entities):
-    """Process contacts update from mesh_core."""
+    """Process contacts update from the radio session."""
     if not event or not hasattr(event, "payload") or not event.payload:
         return
 
@@ -148,8 +148,8 @@ def handle_contact_message(event, coordinator, async_add_entities):
         
     _LOGGER.debug(f"Received contact message event: {event}")
     
-    # Skip if we don't have meshcore
-    if not coordinator.api.mesh_core:
+    # Skip if we don't have a live link
+    if not coordinator.api.connected:
         return
     
     # Extract pubkey_prefix from the event payload
@@ -159,7 +159,7 @@ def handle_contact_message(event, coordinator, async_add_entities):
     # Add contact to logbook
     if pubkey_prefix not in coordinator.tracked_contacts:
         # Get contact information from MeshCore
-        contact = coordinator.api.mesh_core.get_contact_by_key_prefix(pubkey_prefix)
+        contact = coordinator.api.contact_by_prefix(pubkey_prefix)
         if not contact:
             return
             
@@ -189,8 +189,8 @@ async def handle_channel_message(event, coordinator, async_add_entities):
 
     _LOGGER.debug(f"Received channel message event: {event}")
 
-    # Skip if we don't have meshcore
-    if not coordinator.api.mesh_core:
+    # Skip if we don't have a live link
+    if not coordinator.api.connected:
         return
 
     # Extract channel_idx from the event payload
@@ -251,7 +251,7 @@ async def async_setup_entry(
         await handle_channel_message(event, coordinator, async_add_entities)
     
     # Subscribe through the session so the handlers survive a reconnect
-    session = coordinator.api.session
+    session = coordinator.api
     for event_type, handler in (
         (EventType.CONTACTS, contacts_event_handler),
         (EventType.NEW_CONTACT, contacts_event_handler),
@@ -871,5 +871,5 @@ class MeshCoreSelfDiagnosticBinarySensor(CoordinatorEntity, BinarySensorEntity):
                 self.async_write_ha_state()
 
         self.async_on_remove(
-            self.coordinator.api.session.subscribe(EventType.STATS_CORE, update_flag)
+            self.coordinator.api.subscribe(EventType.STATS_CORE, update_flag)
         )

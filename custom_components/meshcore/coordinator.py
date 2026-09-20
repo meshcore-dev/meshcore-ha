@@ -60,7 +60,7 @@ from .const import (
     SEEN_WINDOW_SECS,
     get_contact_discovery_mode,
 )
-from .meshcore_api import MeshCoreAPI
+from .radio import RadioSession
 from .traffic import (
     COST_DIRECT,
     COST_LOGIN_STATUS,
@@ -149,7 +149,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         logger: logging.Logger,
         name: str,
         update_interval: timedelta,
-        api: MeshCoreAPI,
+        api: RadioSession,
         config_entry: ConfigEntry,
     ) -> None:
         """Initialize."""
@@ -270,7 +270,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
 
         # CHANNEL_INFO listener handle; registered once, kept across reconnects
         self._channel_info_unsub: Callable[[], None] | None = None
-        api.session.add_connect_hook(self._on_radio_connected)
+        api.add_connect_hook(self._on_radio_connected)
 
         # RX_LOG correlation hash -> list of RX_LOG payloads, TTL-evicted. The
         # send path reserves its key here so the incoming handler does not
@@ -455,8 +455,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         """
         # A trustworthy contact picture needs a live link; reconcile on the
         # next connected setup instead.
-        mesh_core = getattr(self.api, "mesh_core", None)
-        if not getattr(self.api, "connected", False) or mesh_core is None:
+        if not getattr(self.api, "connected", False):
             _LOGGER.debug(
                 "Contact-mode reconcile skipped: device not connected"
             )
@@ -464,7 +463,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
 
         mode = get_contact_discovery_mode(self.config_entry)
 
-        sdk_contacts = getattr(mesh_core, "contacts", None) or {}
+        sdk_contacts = self.api.contacts
         added_pubkeys = {
             c.get("public_key")
             for c in list(self._contacts.values()) + list(sdk_contacts.values())
@@ -842,7 +841,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             except Exception as ex:
                 self.logger.error(f"Error handling CHANNEL_INFO event: {ex}")
 
-        self._channel_info_unsub = self.api.session.subscribe(
+        self._channel_info_unsub = self.api.subscribe(
             EventType.CHANNEL_INFO, handle_channel_info
         )
         self.logger.debug("Registered CHANNEL_INFO event listener")
@@ -852,8 +851,8 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self.logger.info(f"Fetching channel info for {self._max_channels} channels...")
         for channel_idx in range(self._max_channels):
             try:
-                channel_info_result = await self.api.session.exchange(
-                    self.api.mesh_core.commands.get_channel, channel_idx
+                channel_info_result = await self.api.exchange(
+                    "get_channel", channel_idx
                 )
                 if channel_info_result and channel_info_result.type == EventType.CHANNEL_INFO:
                     self._channel_info[channel_idx] = channel_info_result.payload
@@ -870,9 +869,9 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         if channel_idx not in self._channel_info:
             self.logger.debug(f"Channel {channel_idx} info not cached, attempting to fetch")
             try:
-                if self.api.mesh_core:
-                    channel_info_result = await self.api.session.exchange(
-                        self.api.mesh_core.commands.get_channel, channel_idx
+                if self.api.connected:
+                    channel_info_result = await self.api.exchange(
+                        "get_channel", channel_idx
                     )
                     if channel_info_result and channel_info_result.payload:
                         self._channel_info[channel_idx] = channel_info_result.payload
@@ -895,9 +894,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         node_name = node_config.get("name", "unknown")
 
         try:
-            result = await self.api.session.exchange(
-                self.api.mesh_core.commands.reset_path, contact
-            )
+            result = await self.api.exchange("reset_path", contact)
             if result and result.type != EventType.ERROR:
                 self.logger.info(f"Successfully reset path for {node_name}")
                 return True
@@ -964,7 +961,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 return
 
             self.logger.debug(f"Fetching neighbors for repeater {repeater_name} ({pubkey_prefix})")
-            result = await self.api.session.fetch_neighbours(
+            result = await self.api.fetch_neighbours(
                 contact,
                 pubkey_prefix_length=NEIGHBOR_PUBKEY_PREFIX_LENGTH,
                 page_cb=self._charge_neighbour_page,
@@ -1245,7 +1242,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL
         )
         try:
-            contact = self.api.mesh_core.get_contact_by_key_prefix(pubkey_prefix)
+            contact = self.api.contact_by_prefix(pubkey_prefix)
             if not contact:
                 # A contact we cannot find was never asked, so it never failed.
                 self.logger.warning(f"Could not find repeater contact with pubkey_prefix: {pubkey_prefix}")
@@ -1275,7 +1272,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     return
 
                 try:
-                    login_result = await self.api.session.login(
+                    login_result = await self.api.login(
                         contact,
                         repeater_config.get(CONF_REPEATER_PASSWORD, "")
                     )
@@ -1309,7 +1306,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     self._defer_node(pubkey_prefix, cost, "repeater")
                 return
 
-            status_event = await self.api.session.req_status(contact)
+            status_event = await self.api.req_status(contact)
             result = status_event.payload if status_event else None
             _LOGGER.debug(f"Status response received: {result}")
 
@@ -1445,7 +1442,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     self._defer_node(pubkey_prefix, cost, "telemetry")
                 return
 
-            telemetry_event = await self.api.session.req_telemetry(contact)
+            telemetry_event = await self.api.req_telemetry(contact)
             telemetry_result = telemetry_event.payload.get("lpp") if telemetry_event else None
 
             if telemetry_result:
@@ -1488,7 +1485,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         async with self._message_lock:
             try:
                 while self.consume_incoming_messages:
-                    result = await self.api.session.exchange(self.api.mesh_core.commands.get_msg)
+                    result = await self.api.exchange("get_msg")
                     if result.type == EventType.NO_MORE_MSGS:
                         break
                     elif result.type == EventType.ERROR:
@@ -1524,14 +1521,12 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         if not self.api.connected:
             raise UpdateFailed("Device not connected")
 
-        await self.api.session.exchange(self.api.mesh_core.commands.get_bat)
+        await self.api.exchange("get_bat")
 
         if not self._manual_mode_initialized:
             try:
                 self.logger.info("Setting manual contact mode...")
-                result = await self.api.session.exchange(
-                    self.api.mesh_core.commands.set_manual_add_contacts, True
-                )
+                result = await self.api.exchange("set_manual_add_contacts", True)
                 if result and result.type != EventType.ERROR:
                     self.logger.info("Manual contact mode enabled")
                     self._manual_mode_initialized = True
@@ -1547,9 +1542,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         if not self._device_info_initialized:
             try:
                 self.logger.info("Fetching device info...")
-                device_query_result = await self.api.session.exchange(
-                    self.api.mesh_core.commands.send_device_query
-                )
+                device_query_result = await self.api.exchange("send_device_query")
                 if device_query_result.type is EventType.DEVICE_INFO:
                     self._firmware_version = device_query_result.payload.get("ver")
                     self._hardware_model = device_query_result.payload.get("model")
@@ -1570,11 +1563,11 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         
         # The SDK owns the dirty flag that decides whether this resyncs
         try:
-            contacts_changed = await self.api.mesh_core.ensure_contacts(follow=True)
+            contacts_changed = await self.api.ensure_contacts(follow=True)
             if contacts_changed:
                 self.logger.info("Contacts synced from node")
                 self._contacts = {}
-                for contact in self.api.mesh_core.contacts.values():
+                for contact in self.api.contacts.values():
                     public_key = contact.get("public_key")
                     if public_key:
                         prefix = public_key[:12]
@@ -1607,9 +1600,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 # a 300 s setting collapsed to the coordinator tick.
                 self._last_self_telemetry_update = current_time
                 try:
-                    telemetry_result = await self.api.session.exchange(
-                        self.api.mesh_core.commands.get_self_telemetry
-                    )
+                    telemetry_result = await self.api.exchange("get_self_telemetry")
                     if telemetry_result.type == EventType.TELEMETRY_RESPONSE:
                         self.logger.debug(f"Self telemetry received: {telemetry_result.payload}")
                         self._self_telemetry_error_reported = False
@@ -1630,11 +1621,9 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             if current_time - self._last_self_diagnostics_update >= self._self_diagnostics_interval:
                 self.logger.debug(f"Getting self diagnostics (interval: {self._self_diagnostics_interval}s)")
                 try:
-                    await self.api.session.exchange(self.api.mesh_core.commands.get_stats_core)
-                    await self.api.session.exchange(self.api.mesh_core.commands.get_stats_radio)
-                    await self.api.session.exchange(
-                        self.api.mesh_core.commands.get_stats_packets
-                    )
+                    await self.api.exchange("get_stats_core")
+                    await self.api.exchange("get_stats_radio")
+                    await self.api.exchange("get_stats_packets")
                     self._last_self_diagnostics_update = current_time
                 except Exception as ex:
                     self.logger.debug(f"Exception getting self diagnostics: {ex}")
@@ -1654,9 +1643,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             async with self._message_lock:
                 try:
                     while self.consume_incoming_messages:
-                        result = await self.api.session.exchange(
-                            self.api.mesh_core.commands.get_msg
-                        )
+                        result = await self.api.exchange("get_msg")
                         if result.type == EventType.NO_MORE_MSGS:
                             _LOGGER.debug("No messages in device queue")
                             break
@@ -1766,7 +1753,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
 
                 contact = None
                 if key != "status":
-                    contact = self.api.mesh_core.get_contact_by_key_prefix(pubkey_prefix)
+                    contact = self.api.contact_by_prefix(pubkey_prefix)
                     if not contact:
                         _LOGGER.warning(no_contact_msg, pubkey_prefix)
                         continue

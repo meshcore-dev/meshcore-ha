@@ -27,15 +27,15 @@ def _coordinator(contacts=None):
         send_chan_msg=AsyncMock(return_value=Event(EventType.OK, {})),
         send_msg=AsyncMock(return_value=Event(EventType.ERROR, {"reason": "test"})),
     )
-    mesh_core = SimpleNamespace(
-        commands=commands,
-        get_contact_by_key_prefix=MagicMock(
-            side_effect=lambda prefix: (contacts or {}).get(prefix)
-        ),
-        get_contact_by_name=MagicMock(return_value=None),
-    )
     return SimpleNamespace(
-        api=SimpleNamespace(connected=True, mesh_core=mesh_core, session=stub_session()),
+        api=stub_session(
+            commands,
+            connected=True,
+            contact_by_prefix=MagicMock(
+                side_effect=lambda prefix: (contacts or {}).get(prefix)
+            ),
+            contact_by_name=MagicMock(return_value=None),
+        ),
         name="test",
         require_mesh_budget=lambda *args, **kwargs: None,
     )
@@ -115,10 +115,10 @@ async def test_ui_channel_uses_selected_hub_and_renamed_helpers(hass: HomeAssist
         blocking=True,
     )
 
-    hub_b.api.mesh_core.commands.send_chan_msg.assert_awaited_once()
-    args = hub_b.api.mesh_core.commands.send_chan_msg.await_args
+    hub_b.api.commands.send_chan_msg.assert_awaited_once()
+    args = hub_b.api.commands.send_chan_msg.await_args
     assert args.args[:2] == (3, "from hub b")
-    hub_a.api.mesh_core.commands.send_chan_msg.assert_not_awaited()
+    hub_a.api.commands.send_chan_msg.assert_not_awaited()
     await hass.async_block_till_done()
     # The clear call must target the renamed helper, not a global entity ID.
     assert clear_calls == [{"entity_id": message_entity_id, "value": ""}]
@@ -152,8 +152,8 @@ async def test_ui_contact_and_direct_service_dispatch_to_requested_radios(
         {ATTR_ENTRY_ID: "hub_a"},
         blocking=True,
     )
-    hub_a.api.mesh_core.commands.send_msg.assert_awaited_once_with(contact_a, "direct alpha")
-    hub_b.api.mesh_core.commands.send_msg.assert_not_awaited()
+    hub_a.api.commands.send_msg.assert_awaited_once_with(contact_a, "direct alpha")
+    hub_b.api.commands.send_msg.assert_not_awaited()
 
     await hass.services.async_call(
         DOMAIN,
@@ -161,12 +161,12 @@ async def test_ui_contact_and_direct_service_dispatch_to_requested_radios(
         {ATTR_ENTRY_ID: "hub_b", ATTR_CHANNEL_IDX: 7, ATTR_MESSAGE: "direct service"},
         blocking=True,
     )
-    hub_b.api.mesh_core.commands.send_chan_msg.assert_awaited_once()
-    assert hub_b.api.mesh_core.commands.send_chan_msg.await_args.args[:2] == (
+    hub_b.api.commands.send_chan_msg.assert_awaited_once()
+    assert hub_b.api.commands.send_chan_msg.await_args.args[:2] == (
         7,
         "direct service",
     )
-    hub_a.api.mesh_core.commands.send_chan_msg.assert_not_awaited()
+    hub_a.api.commands.send_chan_msg.assert_not_awaited()
 
 
 async def test_execute_ui_uses_selected_entry_command_helper(hass: HomeAssistant):
@@ -194,8 +194,8 @@ async def test_execute_ui_uses_selected_entry_command_helper(hass: HomeAssistant
     )
 
     assert response == {"level": 50}
-    hub_b.api.mesh_core.commands.get_bat.assert_awaited_once()
-    hub_a.api.mesh_core.commands.get_bat.assert_not_awaited()
+    hub_b.api.commands.get_bat.assert_awaited_once()
+    hub_a.api.commands.get_bat.assert_not_awaited()
 
 
 async def test_ui_service_rejects_ambiguous_or_unknown_entry(hass: HomeAssistant):
@@ -223,8 +223,8 @@ async def test_ui_service_rejects_ambiguous_or_unknown_entry(hass: HomeAssistant
     assert ambiguous["error"] == "ambiguous_config_entry"
     assert ambiguous["entry_ids"] == ["hub_a", "hub_b"]
     assert unknown["error"] == "config_entry_not_found"
-    hub_a.api.mesh_core.commands.send_chan_msg.assert_not_awaited()
-    hub_b.api.mesh_core.commands.send_chan_msg.assert_not_awaited()
+    hub_a.api.commands.send_chan_msg.assert_not_awaited()
+    hub_b.api.commands.send_chan_msg.assert_not_awaited()
 
 
 async def test_ui_service_reports_missing_entry_owned_helper(hass: HomeAssistant):
@@ -276,5 +276,5 @@ async def test_ui_services_reject_unavailable_or_unknown_input(hass: HomeAssista
     assert message_response["helper"] == "message"
     assert command_response["error"] == "helper_state_unavailable"
     assert command_response["helper"] == "command"
-    hub.api.mesh_core.commands.send_chan_msg.assert_not_awaited()
-    hub.api.mesh_core.commands.get_bat.assert_not_awaited()
+    hub.api.commands.send_chan_msg.assert_not_awaited()
+    hub.api.commands.get_bat.assert_not_awaited()

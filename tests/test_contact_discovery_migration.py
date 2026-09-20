@@ -46,7 +46,7 @@ _STUBS = (
     "homeassistant.helpers.issue_registry",
     "homeassistant.helpers.device_registry",
     f"{_PKG}.coordinator",
-    f"{_PKG}.meshcore_api",
+    f"{_PKG}.radio",
     f"{_PKG}.map_uploader",
     f"{_PKG}.mqtt_uploader",
     f"{_PKG}.services",

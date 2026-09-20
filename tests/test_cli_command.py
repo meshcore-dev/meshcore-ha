@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from tests.support.session import passthrough_exchange
+from tests.support.session import StubSession
 
 
 class _ET:
@@ -70,19 +70,11 @@ def _build_coordinator(command_name, return_value, connected=True):
     """Coordinator with a single mocked SDK command. record_cli_console is a
     plain MagicMock so calls can be asserted."""
     coord = MagicMock()
-    coord.api = MagicMock()
-    coord.api.connected = connected
-    coord.api.self_info = {"suggested_timeout": 1000}
-
-    mesh_core = MagicMock()
-    mesh_core.commands = MagicMock()
-    setattr(
-        mesh_core.commands,
-        command_name,
-        AsyncMock(return_value=return_value),
+    commands = MagicMock()
+    setattr(commands, command_name, AsyncMock(return_value=return_value))
+    coord.api = StubSession(
+        commands, connected=connected, self_info={"suggested_timeout": 1000}
     )
-    coord.api.mesh_core = mesh_core
-    coord.api.session.exchange = passthrough_exchange
     coord._discovered_contacts = {}
     return coord
 

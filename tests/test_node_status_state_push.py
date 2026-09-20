@@ -97,9 +97,8 @@ class _FakeSensor:
         self.write_calls = 0
         self.hass = object()
         self.session = _FakeSession()
-        self.coordinator = types.SimpleNamespace(
-            api=types.SimpleNamespace(connected=connected, session=self.session)
-        )
+        self.session.connected = connected
+        self.coordinator = types.SimpleNamespace(api=self.session)
         self.entity_description = types.SimpleNamespace(key="node_status")
 
     def async_on_remove(self, unsubscribe):

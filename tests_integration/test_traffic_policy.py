@@ -32,7 +32,7 @@ from custom_components.meshcore.const import (
     SERVICE_SEND_MESSAGE,
 )
 from custom_components.meshcore.coordinator import MeshCoreDataUpdateCoordinator
-from custom_components.meshcore.meshcore_api import MeshCoreAPI
+from custom_components.meshcore.radio import RadioSession
 from custom_components.meshcore.services import async_setup_services
 from custom_components.meshcore.traffic import POLICY_GOVERNED, POLICY_LEGACY
 from tests.support.fake_radio import FakeRadio
@@ -69,9 +69,9 @@ async def _build(hass: HomeAssistant, policy: str) -> SimpleNamespace:
     radio = FakeRadio()
     await radio.start()
     radio.contacts = {CONTACT["public_key"]: dict(CONTACT)}
-    api = MeshCoreAPI(hass=hass, connection_type="tcp", tcp_host="fixture.invalid")
-    api.session._mesh_core = radio
-    api.session._connected = True
+    api = RadioSession(hass=hass, connection_type="tcp", tcp_host="fixture.invalid")
+    api._mesh_core = radio
+    api._connected = True
 
     coordinator = MeshCoreDataUpdateCoordinator(
         hass, logging.getLogger(__name__), DOMAIN, timedelta(seconds=5), api, entry
@@ -234,7 +234,7 @@ async def test_mesh_round_trip_does_not_block_a_local_command(
         await asyncio.sleep(0)
 
     battery = await asyncio.wait_for(
-        legacy.api.session.exchange(radio.commands.get_bat), 1
+        legacy.api.exchange("get_bat"), 1
     )
     assert battery.payload["level"] == 90
 

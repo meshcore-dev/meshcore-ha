@@ -121,8 +121,9 @@ class TestResolveContact:
 
     def _make_api(self, by_prefix=None, by_name=None):
         api = MagicMock()
-        api.mesh_core.get_contact_by_key_prefix.return_value = by_prefix
-        api.mesh_core.get_contact_by_name.return_value = by_name
+        api.connected = True
+        api.contact_by_prefix.return_value = by_prefix
+        api.contact_by_name.return_value = by_name
         return api
 
     def _make_coordinator(self, discovered=None):

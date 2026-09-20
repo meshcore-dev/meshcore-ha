@@ -350,5 +350,4 @@ async def test_a_hanging_create_gives_up_at_the_timeout(hass: HomeAssistant) -> 
         session = RadioSession(hass, "tcp", tcp_host="fixture.invalid")
         assert await session.start() is False
 
-    assert session.mesh_core is None
     assert session.connected is False

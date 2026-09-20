@@ -33,11 +33,10 @@ async def async_query_repeater_firmware(
     timeout: float = 15,
 ) -> str:
     """Query one repeater's firmware version."""
-    meshcore = session.mesh_core
-    if meshcore is None:
+    if not session.connected:
         raise RepeaterFirmwareRefreshError("MeshCore device is not connected")
 
-    contact = meshcore.get_contact_by_key_prefix(pubkey_prefix)
+    contact = session.contact_by_prefix(pubkey_prefix)
     if not contact:
         raise RepeaterFirmwareRefreshError("repeater contact was not found")
 
@@ -72,9 +71,7 @@ async def async_query_repeater_firmware(
     )
     try:
         try:
-            send_result = await session.exchange(
-                meshcore.commands.send_cmd, contact, "ver"
-            )
+            send_result = await session.exchange("send_cmd", contact, "ver")
         except Exception as ex:
             raise RepeaterFirmwareRefreshError("failed to send version command") from ex
 

@@ -75,12 +75,8 @@ def make_coordinator(enabled):
             return_value=SimpleNamespace(type="telemetry", payload={})
         ),
     )
-    coord.api = SimpleNamespace(
-        connected=True,
-        session=stub_session(),
-        mesh_core=SimpleNamespace(
-            commands=commands, ensure_contacts=AsyncMock(return_value=False)
-        ),
+    coord.api = stub_session(
+        commands, connected=True, ensure_contacts=AsyncMock(return_value=False)
     )
     coord.data = {"contacts": []}
     coord.logger = logging.getLogger(__name__)
@@ -107,7 +103,7 @@ def make_coordinator(enabled):
 async def test_notification_flush(enabled):
     coord = make_coordinator(enabled)
     await coord.async_flush_messages()
-    assert coord.api.mesh_core.commands.get_msg.await_count == (enabled is not False)
+    assert coord.api.commands.get_msg.await_count == (enabled is not False)
 
 
 @pytest.mark.parametrize("enabled", [None, True, False])
@@ -116,10 +112,10 @@ async def test_startup_and_safety_poll_keep_other_updates(enabled, initial_done)
     coord = make_coordinator(enabled)
     coord._initial_drain_done = initial_done
     result = await coord._async_update_data()
-    assert coord.api.mesh_core.commands.get_msg.await_count == (enabled is not False)
-    coord.api.mesh_core.commands.get_bat.assert_awaited_once()
-    coord.api.mesh_core.ensure_contacts.assert_awaited_once_with(follow=True)
-    coord.api.mesh_core.commands.get_self_telemetry.assert_awaited_once()
+    assert coord.api.commands.get_msg.await_count == (enabled is not False)
+    coord.api.commands.get_bat.assert_awaited_once()
+    coord.api.ensure_contacts.assert_awaited_once_with(follow=True)
+    coord.api.commands.get_self_telemetry.assert_awaited_once()
     assert result["contacts"] == [{"public_key": "test"}]
 
 
@@ -130,9 +126,9 @@ async def test_disable_during_flush_stops_next_fetch():
         coord.config_entry.data["consume_incoming_messages"] = False
         return SimpleNamespace(type="message")
 
-    coord.api.mesh_core.commands.get_msg.side_effect = receive_one
+    coord.api.commands.get_msg.side_effect = receive_one
     await coord.async_flush_messages()
-    coord.api.mesh_core.commands.get_msg.assert_awaited_once()
+    coord.api.commands.get_msg.assert_awaited_once()
 
 
 @pytest.mark.parametrize("enabled", [False, True])
@@ -169,9 +165,7 @@ async def test_repeater_polling_and_telemetry_continue_when_disabled():
     coord._coordinator_start_time = 1000
     coord._active_repeater_tasks = {}
     coord._active_telemetry_tasks = {}
-    coord.api.mesh_core.get_contact_by_key_prefix = MagicMock(
-        return_value={"public_key": "abcdef"}
-    )
+    coord.api.contacts = {"abcdef": {"public_key": "abcdef"}}
     coord._update_repeater = AsyncMock()
     coord._update_node_telemetry = AsyncMock()
     await coord._async_update_data()
@@ -180,4 +174,4 @@ async def test_repeater_polling_and_telemetry_continue_when_disabled():
     )
     coord._update_repeater.assert_awaited_once_with(repeater)
     coord._update_node_telemetry.assert_awaited_once()
-    coord.api.mesh_core.commands.get_msg.assert_not_awaited()
+    coord.api.commands.get_msg.assert_not_awaited()

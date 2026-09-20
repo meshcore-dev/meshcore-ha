@@ -1046,7 +1046,7 @@ class MeshCoreSensor(CoordinatorEntity, SensorEntity):
     async def async_added_to_hass(self):
         """Register event handlers when entity is added to hass."""
         await super().async_added_to_hass()
-        session = self.coordinator.api.session
+        session = self.coordinator.api
         key = self.entity_description.key
 
         if key == "node_status":
@@ -1320,7 +1320,7 @@ class MeshCoreCompanionPrefixSensor(CoordinatorEntity, SensorEntity):
                 self.async_write_ha_state()
 
         self.async_on_remove(
-            self.coordinator.api.session.subscribe(
+            self.coordinator.api.subscribe(
                 EventType.SELF_INFO, update_from_self_info
             )
         )
@@ -1587,19 +1587,15 @@ class MeshCorePathSensor(CoordinatorEntity, SensorEntity):
             _LOGGER.warning(f"No pubkey_prefix available for node {self.node_name}, can't track path")
             return
 
-        session = self.coordinator.api.session
+        session = self.coordinator.api
 
         def handle_contacts_event(event: Event):
             """Handle CONTACTS event to update path information."""
             if event.type != EventType.CONTACTS:
                 return
 
-            mesh_core = self.coordinator.api.mesh_core
-            if mesh_core is None:
-                return
-
-            # Find our contact using the helper method
-            contact = mesh_core.get_contact_by_key_prefix(self.pubkey_prefix)
+            # Find our contact through the session's contact view
+            contact = session.contact_by_prefix(self.pubkey_prefix)
             if contact:
                 # Update the sensor based on the description key
                 if self.entity_description.key == "out_path":
@@ -1687,7 +1683,7 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
 
         try:
             self.async_on_remove(
-                self.coordinator.api.session.subscribe(
+                self.coordinator.api.subscribe(
                     EventType.STATUS_RESPONSE,
                     self._handle_stats_event,
                     attribute_filters={"pubkey_prefix": self.public_key[:12]},

@@ -11,7 +11,7 @@ from homeassistant.helpers import entity_registry as er
 from custom_components.meshcore.button import MeshCoreCLIRunButton
 from custom_components.meshcore.const import DOMAIN
 from custom_components.meshcore.services import async_setup_services
-from tests.support.session import passthrough_exchange
+from tests.support.session import StubSession
 
 
 @pytest.fixture
@@ -24,10 +24,9 @@ async def command_services(hass):
     commands.export_private_key = AsyncMock(return_value={"private_key": "secret"})
 
     coordinator = MagicMock()
-    coordinator.api.connected = True
-    coordinator.api.mesh_core.commands = commands
-    coordinator.api.session.exchange = passthrough_exchange
-    coordinator.api.self_info = {"suggested_timeout": 1000}
+    coordinator.api = StubSession(
+        commands, connected=True, self_info={"suggested_timeout": 1000}
+    )
     coordinator._discovered_contacts = {}
     coordinator.pubkey = "abcdef123456"
     coordinator.config_entry.entry_id = "entry1"
@@ -66,7 +65,7 @@ async def test_execute_command_requires_admin(hass, command_services):
             context=context,
         )
 
-    command_services.api.mesh_core.commands.export_private_key.assert_not_awaited()
+    command_services.api.commands.export_private_key.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -82,7 +81,7 @@ async def test_execute_command_rejects_unknown_user(hass, command_services):
             context=Context(user_id="deleted-user"),
         )
 
-    command_services.api.mesh_core.commands.export_private_key.assert_not_awaited()
+    command_services.api.commands.export_private_key.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -100,7 +99,7 @@ async def test_execute_command_allows_admin(hass, command_services):
     )
 
     assert response == {"private_key": "secret"}
-    command_services.api.mesh_core.commands.export_private_key.assert_awaited_once()
+    command_services.api.commands.export_private_key.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -120,7 +119,7 @@ async def test_execute_command_ui_preserves_non_admin_context(hass, command_serv
             context=context,
         )
 
-    command_services.api.mesh_core.commands.export_private_key.assert_not_awaited()
+    command_services.api.commands.export_private_key.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -139,7 +138,7 @@ async def test_execute_command_ui_dispatches_with_admin_context(hass, command_se
     )
 
     assert response == {"private_key": "secret"}
-    command_services.api.mesh_core.commands.export_private_key.assert_awaited_once()
+    command_services.api.commands.export_private_key.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -154,7 +153,7 @@ async def test_cli_run_button_rejects_non_admin(hass, command_services):
     with pytest.raises(Unauthorized):
         await button.async_press()
 
-    command_services.api.mesh_core.commands.export_private_key.assert_not_awaited()
+    command_services.api.commands.export_private_key.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -168,7 +167,7 @@ async def test_cli_run_button_allows_admin(hass, command_services):
 
     await button.async_press()
 
-    command_services.api.mesh_core.commands.export_private_key.assert_awaited_once()
+    command_services.api.commands.export_private_key.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -185,7 +184,7 @@ async def test_execute_command_allows_internal_call_without_user(
     )
 
     assert response == {"private_key": "secret"}
-    command_services.api.mesh_core.commands.export_private_key.assert_awaited_once()
+    command_services.api.commands.export_private_key.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -204,4 +203,4 @@ async def test_execute_command_ui_allows_internal_call_without_user(
     )
 
     assert response == {"private_key": "secret"}
-    command_services.api.mesh_core.commands.export_private_key.assert_awaited_once()
+    command_services.api.commands.export_private_key.assert_awaited_once()

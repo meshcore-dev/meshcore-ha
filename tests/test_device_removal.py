@@ -17,7 +17,7 @@ import pytest
 # Mocks that conftest does not provide but __init__.py imports at module load.
 for _name in ("homeassistant.exceptions",
               "custom_components.meshcore.coordinator",
-              "custom_components.meshcore.meshcore_api",
+              "custom_components.meshcore.radio",
               "custom_components.meshcore.map_uploader",
               "custom_components.meshcore.mqtt_uploader",
               "custom_components.meshcore.services"):

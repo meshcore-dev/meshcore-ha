@@ -151,7 +151,7 @@ class MeshCoreRepeaterFirmwareRefreshButton(CoordinatorEntity, ButtonEntity):
             await async_refresh_repeater_firmware(
                 self.hass,
                 self.coordinator.config_entry,
-                self.coordinator.api.session,
+                self.coordinator.api,
                 self.pubkey_prefix,
             )
         except RepeaterFirmwareRefreshError as ex:

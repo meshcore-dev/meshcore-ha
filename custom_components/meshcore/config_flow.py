@@ -80,7 +80,7 @@ from .const import (
     NodeType,
     get_contact_discovery_mode,
 )
-from .meshcore_api import MeshCoreAPI
+from .radio import RadioSession
 from .traffic import COST_LOGIN_STATUS, TRAFFIC_POLICIES, resolve_policy
 
 _LOGGER = logging.getLogger(__name__)
@@ -159,19 +159,19 @@ def _traffic_policy_selector() -> SelectSelector:
     )
 
 
-async def validate_common(api: MeshCoreAPI) -> dict[str, Any]:
+async def validate_common(api: RadioSession) -> dict[str, Any]:
     """Validate the user input allows us to connect to the USB device."""
     try: 
         # Try to connect with timeout
         connect_success = await asyncio.wait_for(api.connect(), timeout=CONNECTION_TIMEOUT)
         
         # Check if connection was successful
-        if not connect_success or not api.mesh_core:
+        if not connect_success or not api.connected:
             _LOGGER.error("Failed to connect to device - connect() returned False")
             raise CannotConnect("Device connection failed")
 
         # Get node info to verify communication
-        node_info = await api.session.exchange(api.mesh_core.commands.send_appstart)
+        node_info = await api.exchange("send_appstart")
         
         # Validate we got meaningful info back
         if node_info.type == EventType.ERROR:
@@ -198,7 +198,7 @@ async def validate_common(api: MeshCoreAPI) -> dict[str, Any]:
 
 async def validate_usb_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     """Validate the user input allows us to connect to the USB device."""
-    api = MeshCoreAPI(
+    api = RadioSession(
         hass=hass,
         connection_type=CONNECTION_TYPE_USB,
         usb_path=data[CONF_USB_PATH],
@@ -209,7 +209,7 @@ async def validate_usb_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[
 
 async def validate_ble_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     """Validate the user input allows us to connect to the BLE device."""
-    api = MeshCoreAPI(
+    api = RadioSession(
         hass=hass,
         connection_type=CONNECTION_TYPE_BLE,
         ble_address=data[CONF_BLE_ADDRESS],
@@ -219,7 +219,7 @@ async def validate_ble_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[
 
 async def validate_tcp_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     """Validate the user input allows us to connect to the TCP device."""
-    api = MeshCoreAPI(
+    api = RadioSession(
         hass=hass,
         connection_type=CONNECTION_TYPE_TCP,
         tcp_host=data[CONF_TCP_HOST],
@@ -723,13 +723,13 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             return self._show_add_repeater_form(repeater_dict, errors, user_input)
 
         coordinator = self.hass.data[DOMAIN].get(self.config_entry.entry_id) # type: ignore
-        meshcore = coordinator.api.mesh_core # type: ignore
-        if not meshcore:
+        session = coordinator.api # type: ignore
+        if not session or not session.connected:
             errors["base"] = "Device not connected. Please ensure the MeshCore device is connected."
             return self._show_add_repeater_form(repeater_dict, errors, user_input)
 
         # validate the repeater can be logged into
-        contact = meshcore.get_contact_by_key_prefix(pubkey_prefix)
+        contact = session.contact_by_prefix(pubkey_prefix)
         if not contact:
             _LOGGER.error(f"Contact not found with public key prefix: {pubkey_prefix}")
             errors["base"] = "Contact not found"
@@ -742,7 +742,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             errors["base"] = f"Mesh traffic budget exhausted. Try again in {int(wait)} seconds."
             return self._show_add_repeater_form(repeater_dict, errors, user_input)
 
-        result = await coordinator.api.session.login(contact, password)
+        result = await session.login(contact, password)
         if not result:
             _LOGGER.error("Login to repeater failed or timed out")
             errors["base"] = "Failed to log in to repeater. Check password and try again."
@@ -1240,7 +1240,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         )
 
         coordinator = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id)
-        if not coordinator or not coordinator.api.mesh_core:
+        if not coordinator or not coordinator.api.connected:
             return "Unknown"
 
         try:
@@ -1253,7 +1253,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 {},
             )
             return await async_query_repeater_firmware(
-                coordinator.api.session,
+                coordinator.api,
                 pubkey_prefix,
                 password=(
                     repeater.get(CONF_REPEATER_PASSWORD, "")
