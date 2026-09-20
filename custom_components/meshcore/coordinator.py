@@ -62,18 +62,20 @@ from .const import (
 )
 from .radio import RadioSession
 from .traffic import (
-    COST_DIRECT,
-    COST_LOGIN_STATUS,
-    COST_NEIGHBOUR_PAGE,
     NODE_CLIENT,
     NODE_REPEATER,
+    OP_NEIGHBOURS,
+    OP_STATUS,
+    OP_TELEMETRY,
     POLICY_GOVERNED,
+    Lane,
     MeshBudget,
     TrafficPolicy,
     auto_disable_applies,
     backoff_delay,
+    classify_lane,
     denial_counts_as_failure,
-    request_cost,
+    iso_timestamp,
     resolve_policy,
     should_login,
     should_reset_path,
@@ -87,6 +89,12 @@ MSG_SAFETY_NET_INTERVAL: int = 60
 
 # Debounce for the governed node-schedule store.
 TRAFFIC_SAVE_DELAY: int = 30
+
+# Key the lane credits are stored under, alongside the per-node schedules.
+TRAFFIC_BUDGET_KEY: str = "budget"
+
+# A deferred node is announced at most this often, per node and per lane.
+DEFER_LOG_INTERVAL: int = 600
 
 # Stale contact and neighbour sweeps run at most once a day.
 DAILY_CLEANUP_INTERVAL: int = 86400
@@ -211,10 +219,14 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self._last_successful_request = {}
         self._auto_disabled_devices = set()
 
-        # Mesh traffic policy: the budget every mesh request crosses, plus the
-        # governed-only store that lets node schedules survive a restart.
+        # Mesh traffic policy: the lane budget every mesh request crosses, the
+        # nodes currently waiting on a lane, and the governed-only store that
+        # lets schedules and credits survive a restart.
         self._traffic_policy: TrafficPolicy = resolve_policy(config_entry)
-        self._rate_limiter = MeshBudget(self._traffic_policy, self._tracked_node_count())
+        self._rate_limiter = MeshBudget(self._traffic_policy)
+        self._deferred_nodes: dict[tuple[str, str], dict[str, Any]] = {}
+        self._last_defer_log: dict[tuple[str, str], float] = {}
+        self._path_reset_pending: set[str] = set()
         self._traffic_store: Store[dict[str, Any]] | None = (
             Store(hass, 1, f"{DOMAIN}.traffic_{config_entry.entry_id}")
             if self._traffic_policy == POLICY_GOVERNED
@@ -698,39 +710,51 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     return node_config.get(key, default)
         return DEFAULT_CLIENT_UPDATE_INTERVAL
     
-    def _tracked_node_count(self) -> int:
-        """Number of nodes the mesh budget is sized for."""
-        return len(self._tracked_repeaters) + len(self._tracked_clients)
-
     @property
     def traffic_policy(self) -> TrafficPolicy:
         """Return the traffic policy this entry runs under."""
         return self._traffic_policy
 
-    def check_interactive_budget(self, base_cost: int, *, has_path: bool = True) -> float:
+    def check_interactive_budget(self, lane: Lane) -> float:
         """Charge a user-driven mesh send; seconds to wait when it is refused.
 
         Frozen under legacy, where service calls have never touched the budget.
         """
         if self._traffic_policy != POLICY_GOVERNED:
             return 0.0
-        cost = request_cost(self._traffic_policy, base_cost, has_path=has_path)
-        if self._rate_limiter.try_consume(cost, interactive=True):
+        if self._rate_limiter.try_consume(lane):
             return 0.0
-        return self._rate_limiter.next_eligible(cost, interactive=True)
+        return self._rate_limiter.next_eligible(lane)
 
-    def require_mesh_budget(self, base_cost: int, *, has_path: bool = True) -> None:
+    def require_mesh_budget(self, lane: Lane) -> None:
         """Charge an interactive mesh send, refusing the call when credit is short."""
-        wait = self.check_interactive_budget(base_cost, has_path=has_path)
+        wait = self.check_interactive_budget(lane)
         if not wait:
             return
         seconds = max(1, int(wait))
         raise HomeAssistantError(
-            f"Mesh traffic budget exhausted; try again in {seconds} seconds",
+            f"Mesh traffic {lane} lane is empty; try again in {seconds} seconds",
             translation_domain=DOMAIN,
             translation_key="traffic_deferred",
-            translation_placeholders={"seconds": str(seconds)},
+            translation_placeholders={"lane": lane, "seconds": str(seconds)},
         )
+
+    def deferred_nodes(self) -> list[dict[str, Any]]:
+        """Return the nodes whose next poll is still waiting on a lane."""
+        now = self._current_time()
+        return [
+            {"name": entry["name"], "lane": entry["lane"], "until": iso_timestamp(entry["until"])}
+            for entry in self._deferred_nodes.values()
+            if entry["until"] > now
+        ]
+
+    def traffic_attributes(self) -> dict[str, Any] | None:
+        """Return the lane rates and deferrals for the rate-limiter sensor."""
+        attributes = self._rate_limiter.attributes()
+        if attributes is None:
+            return None
+        attributes["deferred_nodes"] = self.deferred_nodes()
+        return attributes
 
     def _path_reset_disabled(self, node_config: dict) -> bool:
         """Whether this node's path-reset toggle is switched off."""
@@ -741,20 +765,14 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             )
         )
 
-    def _charge_neighbour_page(self, _page: int) -> bool:
-        """Pay for one more neighbour page; legacy paid for the scan up front."""
-        if self._traffic_policy != POLICY_GOVERNED:
-            return True
-        return self._rate_limiter.try_consume(COST_NEIGHBOUR_PAGE)
-
     def _traffic_snapshot(self) -> dict[str, Any]:
-        """Per-node schedule state worth carrying across a restart."""
+        """Per-node schedule state and lane credits worth carrying across a restart."""
         prefixes = (
             set(self._next_repeater_update_times)
             | set(self._next_telemetry_update_times)
             | set(self._auto_disabled_devices)
         )
-        return {
+        snapshot: dict[str, Any] = {
             prefix: {
                 "next_due": {
                     "status": self._next_repeater_update_times.get(prefix, 0),
@@ -768,6 +786,8 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             }
             for prefix in prefixes
         }
+        snapshot[TRAFFIC_BUDGET_KEY] = self._rate_limiter.snapshot()
+        return snapshot
 
     def _save_traffic_state(self) -> None:
         """Queue a debounced save of the node schedules; legacy keeps none."""
@@ -783,7 +803,9 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         except Exception as ex:
             self.logger.warning("Could not load stored node schedules: %s", ex)
             return
-        for prefix, state in (stored or {}).items():
+        nodes = dict(stored or {})
+        self._rate_limiter.restore(nodes.pop(TRAFFIC_BUDGET_KEY, None))
+        for prefix, state in nodes.items():
             next_due = state.get("next_due", {})
             failures = state.get("failures", {})
             self._next_repeater_update_times[prefix] = next_due.get("status", 0)
@@ -897,6 +919,9 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             result = await self.api.exchange("reset_path", contact)
             if result and result.type != EventType.ERROR:
                 self.logger.info(f"Successfully reset path for {node_name}")
+                prefix = node_config.get("pubkey_prefix")
+                if prefix:
+                    self._path_reset_pending.add(prefix)
                 return True
             else:
                 error_msg = result.payload if result and result.type == EventType.ERROR else "no response or unexpected result"
@@ -926,8 +951,6 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self._stale_neighbor_days = config_entry.data.get(
             CONF_STALE_NEIGHBOR_DAYS, DEFAULT_STALE_NEIGHBOR_DAYS
         )
-        self._traffic_policy = resolve_policy(config_entry)
-        self._rate_limiter.reconfigure(self._traffic_policy, self._tracked_node_count())
         _LOGGER.debug(f"Updated telemetry settings - Enabled: {self._self_telemetry_enabled}, Interval: {self._self_telemetry_interval}, Tracked clients: {len(self._tracked_clients)}")
 
     def _current_time(self) -> int:
@@ -954,9 +977,17 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         sensors for neighbours not seen before, and tracks sightings as
         timestamps in a rolling 48 h window.
         """
+        lane = classify_lane(OP_NEIGHBOURS, contact)
+
+        def charge_page(_page: int) -> bool:
+            """Pay for one more page; legacy paid for the whole scan up front."""
+            if self._traffic_policy != POLICY_GOVERNED:
+                return True
+            return self._rate_limiter.try_consume(lane)
+
         try:
             # Legacy pays one token for the whole scan; governed pays per page.
-            if not self._rate_limiter.try_consume(COST_NEIGHBOUR_PAGE):
+            if not self._rate_limiter.try_consume(lane):
                 self.logger.debug(f"Rate limited: skipping neighbor fetch for {repeater_name}")
                 return
 
@@ -964,7 +995,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             result = await self.api.fetch_neighbours(
                 contact,
                 pubkey_prefix_length=NEIGHBOR_PUBKEY_PREFIX_LENGTH,
-                page_cb=self._charge_neighbour_page,
+                page_cb=charge_page,
             )
 
             if not result or "neighbours" not in result:
@@ -1250,7 +1281,9 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
 
             failure_count = self._repeater_consecutive_failures.get(pubkey_prefix, 0)
             has_path = contact.get("out_path_len", -1) > -1
-            cost = request_cost(self._traffic_policy, COST_LOGIN_STATUS, has_path=has_path)
+            lane = classify_lane(
+                OP_STATUS, contact, path_reset=pubkey_prefix in self._path_reset_pending
+            )
 
             if should_login(
                 self._traffic_policy,
@@ -1260,7 +1293,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             ):
                 self.logger.info(f"Attempting login to repeater {repeater_name} after {failure_count} failures")
 
-                if not self._rate_limiter.try_consume(cost):
+                if not self._rate_limiter.try_consume(lane):
                     self.logger.debug(f"Rate limited: skipping login to {repeater_name}")
                     if denial_counts_as_failure(self._traffic_policy):
                         # Legacy has never counted this one against the
@@ -1268,7 +1301,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                         self._increment_failure(pubkey_prefix)
                         self._apply_backoff(pubkey_prefix, failure_count + 1, update_interval)
                     else:
-                        self._defer_node(pubkey_prefix, cost, "repeater")
+                        self._defer_node(pubkey_prefix, repeater_name, lane, OP_STATUS)
                     return
 
                 try:
@@ -1296,16 +1329,17 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
 
             self.logger.debug(f"Sending status request to repeater: {repeater_name} ({pubkey_prefix})")
 
-            if not self._rate_limiter.try_consume(cost):
+            if not self._rate_limiter.try_consume(lane):
                 self.logger.debug(f"Rate limited: skipping status request to {repeater_name}")
                 if denial_counts_as_failure(self._traffic_policy):
                     await self._record_node_failure(
                         pubkey_prefix, failure_count + 1, update_interval, "repeater"
                     )
                 else:
-                    self._defer_node(pubkey_prefix, cost, "repeater")
+                    self._defer_node(pubkey_prefix, repeater_name, lane, OP_STATUS)
                 return
 
+            self._begin_attempt(pubkey_prefix, OP_STATUS)
             status_event = await self.api.req_status(contact)
             result = status_event.payload if status_event else None
             _LOGGER.debug(f"Status response received: {result}")
@@ -1383,13 +1417,34 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         else:
             self._next_repeater_update_times[pubkey_prefix] = when
 
-    def _defer_node(self, pubkey_prefix: str, cost: int, update_type: str) -> None:
-        """Push a node's next attempt to the moment the budget can pay for it."""
-        wait = int(self._rate_limiter.next_eligible(cost))
-        self._set_next_due(pubkey_prefix, update_type, self._current_time() + wait)
-        self.logger.debug(
-            f"Deferred {update_type} {pubkey_prefix} for {wait}s: mesh budget exhausted"
-        )
+    def _defer_node(
+        self, pubkey_prefix: str, node_name: str, lane: Lane, update_type: str
+    ) -> None:
+        """Push a node's next attempt to the moment its lane can pay for it.
+
+        The decision is announced at INFO once per node per lane per
+        ``DEFER_LOG_INTERVAL``, so a mesh short of credit says so without
+        filling the log on every tick.
+        """
+        now = self._current_time()
+        until = now + int(self._rate_limiter.next_eligible(lane))
+        self._set_next_due(pubkey_prefix, update_type, until)
+        self._deferred_nodes[(pubkey_prefix, update_type)] = {
+            "name": node_name,
+            "lane": lane,
+            "until": until,
+        }
+        if now - self._last_defer_log.get((pubkey_prefix, lane), 0) >= DEFER_LOG_INTERVAL:
+            self._last_defer_log[(pubkey_prefix, lane)] = now
+            _LOGGER.info(
+                "Deferring %s for %s (%s lane empty, next at %s)",
+                update_type, node_name, lane, iso_timestamp(until),
+            )
+
+    def _begin_attempt(self, pubkey_prefix: str, update_type: str) -> None:
+        """Clear the deferral and the post-reset flag once the lane has paid."""
+        self._deferred_nodes.pop((pubkey_prefix, update_type), None)
+        self._path_reset_pending.discard(pubkey_prefix)
 
     def _apply_backoff(
         self,
@@ -1425,23 +1480,26 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
 
         failure_count = self._telemetry_consecutive_failures.get(pubkey_prefix, 0)
         has_path = bool(contact) and contact.get("out_path_len", -1) > -1
-        cost = request_cost(self._traffic_policy, COST_DIRECT, has_path=has_path)
+        lane = classify_lane(
+            OP_TELEMETRY, contact, path_reset=pubkey_prefix in self._path_reset_pending
+        )
 
         await asyncio.sleep(random.uniform(0, MAX_RANDOM_DELAY))
 
         try:
             self.logger.debug(f"Sending telemetry request to node: {node_name} ({pubkey_prefix})")
 
-            if not self._rate_limiter.try_consume(cost):
+            if not self._rate_limiter.try_consume(lane):
                 self.logger.debug(f"Rate limited: skipping telemetry request to {node_name}")
                 if denial_counts_as_failure(self._traffic_policy):
                     await self._record_node_failure(
                         pubkey_prefix, failure_count + 1, update_interval, "telemetry"
                     )
                 else:
-                    self._defer_node(pubkey_prefix, cost, "telemetry")
+                    self._defer_node(pubkey_prefix, node_name, lane, OP_TELEMETRY)
                 return
 
+            self._begin_attempt(pubkey_prefix, OP_TELEMETRY)
             telemetry_event = await self.api.req_telemetry(contact)
             telemetry_result = telemetry_event.payload.get("lpp") if telemetry_event else None
 

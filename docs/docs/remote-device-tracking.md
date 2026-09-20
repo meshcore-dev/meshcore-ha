@@ -175,17 +175,62 @@ above and in the rest of this page; nothing about it has changed.
 
 | | Legacy (default) | Governed |
 |---|---|---|
-| Budget | 20 requests, refilling one every 2 minutes | 12 + 2 per tracked node (20-48), refilling 6 per node per hour (24-96/h) |
-| Request cost | 1 per mesh request | 1 direct, 2 login/status, 8 flood or unknown route, 1 per neighbour page |
+| Budget | 20 requests, refilling one every 2 minutes | three lanes, flat per radio (below) |
+| Request cost | 1 per mesh request | 1 per request in its own lane |
 | Budget exhausted | counted as a node failure, node backs off | the poll is deferred to when credit returns; no failure recorded |
-| Service calls | never metered | metered, with 6 credits reserved so your own commands still get through |
+| Service calls | never metered | metered, in the lane they belong to |
 | Backoff | fits five retries inside the refresh interval | doubles the interval up to 24 h, with +/-10% jitter |
 | Auto-disable | repeaters only, status polling only | repeaters and clients, status and telemetry |
 | Node schedules | in memory, reset on restart | persisted, restored on restart |
 
-Under Governed a refused service call raises an error naming the seconds to wait
-rather than sending. Switch only if your mesh is congested; saving the setting
-reloads the integration.
+The budget is **flat per radio**. Tracking more nodes shares it rather than
+growing it: each node is simply polled less often. Mesh health does not care
+how many repeaters one Home Assistant tracks, it cares how much airtime the
+radio spends.
+
+### The three lanes
+
+What actually costs the mesh is flood traffic, which every node in range
+repeats. A routed request reaches one node over a known path and costs the mesh
+very little, so it gets a much larger allowance. Each lane refills on its own:
+an empty flood lane can never hold up a routed poll or a message you sent.
+
+| Lane | Capacity | Refill | Carries |
+|---|---|---|---|
+| Flood | 3 | 6/hour | automatic traffic that floods: polling a contact with no route, path discovery, the first probe after a path reset, adverts sent from automations |
+| Direct | 20 | 120/hour | automatic traffic over a known route: status, telemetry, login and neighbour paging for routed contacts |
+| Messages | 10 | 60/hour | `send_message`, `send_channel_message` and `trace`, from any caller |
+
+When a lane is empty an automatic poll is **deferred**, not failed: the node's
+next attempt is moved to the moment its lane has credit again, and no failure is
+recorded against it. A service call cannot be deferred, so it raises an error
+naming the lane and the seconds to wait.
+
+### Reading the budget
+
+The **Request Rate Limiter** sensor keeps its Legacy value (the credits left in
+the direct lane) and, under Governed, carries the whole picture as attributes:
+
+- `policy`
+- `flood_credits`, `flood_capacity`, `flood_refill_per_hour`, `flood_next_eligible`
+- the same four for `direct_` and `messages_`
+- `deferred_nodes` — every node currently waiting, as `{name, lane, until}`
+
+`<lane>_next_eligible` is an ISO timestamp while the lane is empty and `null`
+while it has credit. Each deferral is also logged once per node per lane per
+10 minutes:
+
+```
+Deferring status for Repeater A (flood lane empty, next at 2026-09-20T18:55:37+00:00)
+```
+
+Seeing a node deferred in the flood lane means the mesh has no route to it. The
+fix is a route, not more budget: keep **Disable Path Reset** on (in each node's
+entry under **Manage Monitored Devices**) so a node with a good manual path is
+never dropped back to flooding.
+
+Switch policies only if your mesh is congested; saving the setting reloads the
+integration.
 
 ## Data Collection
 

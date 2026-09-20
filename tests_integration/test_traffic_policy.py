@@ -18,8 +18,10 @@ import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from meshcore.events import Event, EventType
+from meshcore.packets import BinaryReqType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.meshcore import coordinator as coordinator_module
 from custom_components.meshcore import services
 from custom_components.meshcore.const import (
     ATTR_CHANNEL_IDX,
@@ -33,8 +35,16 @@ from custom_components.meshcore.const import (
 )
 from custom_components.meshcore.coordinator import MeshCoreDataUpdateCoordinator
 from custom_components.meshcore.radio import RadioSession
+from custom_components.meshcore.sensor import RateLimiterSensor
 from custom_components.meshcore.services import async_setup_services
-from custom_components.meshcore.traffic import POLICY_GOVERNED, POLICY_LEGACY
+from custom_components.meshcore.traffic import (
+    LANE_DIRECT,
+    LANE_FLOOD,
+    LANE_MESSAGES,
+    POLICY_GOVERNED,
+    POLICY_LEGACY,
+    iso_timestamp,
+)
 from tests.support.fake_radio import FakeRadio
 
 PREFIX: Final = "aabbccddeeff"
@@ -104,9 +114,16 @@ async def governed(hass: HomeAssistant) -> AsyncIterator[SimpleNamespace]:
         await mesh.radio.close()
 
 
-def _drain(mesh: SimpleNamespace) -> None:
-    """Spend every credit the budget has, interactive reserve included."""
-    while mesh.coordinator._rate_limiter.try_consume(1, interactive=True):
+def _credits(mesh: SimpleNamespace, lane: str) -> int:
+    """Read one lane's remaining credits off the budget's own report."""
+    attributes = mesh.coordinator._rate_limiter.attributes()
+    assert attributes is not None
+    return attributes[f"{lane}_credits"]
+
+
+def _drain(mesh: SimpleNamespace, lane: str = LANE_DIRECT) -> None:
+    """Spend every credit one lane has; legacy drains its single bucket."""
+    while mesh.coordinator._rate_limiter.try_consume(lane):
         pass
 
 
@@ -166,36 +183,38 @@ async def test_legacy_never_meters_service_calls(
 async def test_governed_charges_a_direct_message_and_defers_when_short(
     hass: HomeAssistant, governed: SimpleNamespace
 ) -> None:
-    """The send is charged; once credit runs out the call is refused, not queued."""
+    """The send is charged to the message lane; a dry lane refuses, never queues."""
     governed.radio.script[governed.radio.key("send_msg", CONTACT, "hi")] = Event(
         EventType.MSG_SENT, {"expected_ack": b"\x01\x02\x03\x04", "suggested_timeout": 80}
     )
-    before = governed.coordinator._rate_limiter.get_tokens()
+    before = _credits(governed, LANE_MESSAGES)
 
     await hass.services.async_call(
         DOMAIN, SERVICE_SEND_MESSAGE, {ATTR_PUBKEY_PREFIX: PREFIX, ATTR_MESSAGE: "hi"},
         blocking=True,
     )
-    assert governed.coordinator._rate_limiter.get_tokens() == before - 1
+    assert _credits(governed, LANE_MESSAGES) == before - 1
+    assert governed.coordinator._rate_limiter.get_tokens() == 20
 
-    _drain(governed)
+    _drain(governed, LANE_MESSAGES)
     with pytest.raises(HomeAssistantError) as refused:
         await hass.services.async_call(
             DOMAIN, SERVICE_SEND_MESSAGE, {ATTR_PUBKEY_PREFIX: PREFIX, ATTR_MESSAGE: "hi"},
             blocking=True,
         )
     assert refused.value.translation_key == "traffic_deferred"
+    assert refused.value.translation_placeholders["lane"] == LANE_MESSAGES
     assert "seconds" in refused.value.translation_placeholders
 
 
-async def test_governed_charges_a_channel_message_the_flood_cost(
+async def test_governed_charges_a_channel_message_to_the_message_lane(
     hass: HomeAssistant, governed: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A channel message reaches the whole mesh and is priced accordingly."""
+    """A channel message is the user's own send, so it spends their lane."""
     monkeypatch.setattr(services, "time", SimpleNamespace(time=lambda: NOW))
     key = governed.radio.key("send_chan_msg", 0, "hi", timestamp=NOW)
     governed.radio.script[key] = Event(EventType.OK, {})
-    before = governed.coordinator._rate_limiter.get_tokens()
+    before = _credits(governed, LANE_MESSAGES)
 
     await hass.services.async_call(
         DOMAIN, SERVICE_SEND_CHANNEL_MESSAGE, {ATTR_CHANNEL_IDX: 0, ATTR_MESSAGE: "hi"},
@@ -203,7 +222,8 @@ async def test_governed_charges_a_channel_message_the_flood_cost(
     )
 
     assert key in governed.radio.calls
-    assert governed.coordinator._rate_limiter.get_tokens() == before - 8
+    assert _credits(governed, LANE_MESSAGES) == before - 1
+    assert _credits(governed, LANE_FLOOD) == 3
 
 
 async def test_mesh_round_trip_does_not_block_a_local_command(
@@ -288,3 +308,128 @@ def _returning(value: Any):
         return value
 
     return load
+
+
+UNROUTED_PREFIX: Final = "0011223344ff"
+UNROUTED_CONTACT: Final = {
+    "public_key": UNROUTED_PREFIX + "22" * 26,
+    "adv_name": "Flooder",
+    "out_path_len": -1,
+    "added_to_node": True,
+}
+ACK: Final = b"\x11\x22\x33\x44"
+
+
+def _status_answer(radio: FakeRadio):
+    """Script a status request the node answers before the local reply lands."""
+
+    def respond() -> Any:
+        """Build the awaitable FakeRadio runs for this invocation."""
+
+        async def run() -> Event:
+            """Deliver the remote status frame, then report the local send."""
+            await radio.emit(
+                EventType.STATUS_RESPONSE,
+                {"pubkey_pre": PREFIX, "uptime": 42},
+                {"pubkey_prefix": PREFIX, "tag": ACK.hex()},
+            )
+            return Event(
+                EventType.MSG_SENT,
+                {"type": 1, "expected_ack": ACK, "suggested_timeout": 80},
+                {"type": 1, "expected_ack": ACK.hex()},
+            )
+
+        return run()
+
+    return respond
+
+
+async def test_an_empty_flood_lane_defers_only_the_unrouted_node(
+    hass: HomeAssistant,
+    governed: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Flood exhaustion holds back an unrouted poll; routed polls and messages run."""
+    monkeypatch.setattr(
+        coordinator_module, "random", SimpleNamespace(uniform=lambda _low, _high: 0.0)
+    )
+    coordinator, radio = governed.coordinator, governed.radio
+    radio.contacts[UNROUTED_CONTACT["public_key"]] = dict(UNROUTED_CONTACT)
+    radio.script[
+        radio.key(
+            "send_binary_req", CONTACT, BinaryReqType.STATUS, timeout=0, min_timeout=0.0
+        )
+    ] = _status_answer(radio)
+    radio.script[radio.key("send_msg", CONTACT, "hi")] = Event(
+        EventType.MSG_SENT, {"expected_ack": ACK, "suggested_timeout": 80}
+    )
+
+    _drain(governed, LANE_FLOOD)
+    await coordinator._update_repeater(
+        {"name": "Flooder", "pubkey_prefix": UNROUTED_PREFIX, "update_interval": 7200}
+    )
+
+    unrouted_request = radio.key(
+        "send_binary_req", UNROUTED_CONTACT, BinaryReqType.STATUS, timeout=0, min_timeout=0.0
+    )
+    assert unrouted_request not in radio.calls
+    assert coordinator._repeater_consecutive_failures.get(UNROUTED_PREFIX, 0) == 0
+    due = coordinator._next_repeater_update_times[UNROUTED_PREFIX]
+    assert 590 <= due - coordinator._current_time() <= 600
+    deferred = coordinator.deferred_nodes()
+    assert deferred == [{"name": "Flooder", "lane": LANE_FLOOD, "until": iso_timestamp(due)}]
+    assert coordinator.traffic_attributes()["deferred_nodes"] == deferred
+    assert (
+        f"Deferring status for Flooder (flood lane empty, next at {iso_timestamp(due)})"
+        in caplog.text
+    )
+
+    await coordinator._update_repeater(
+        {"name": "Repeater", "pubkey_prefix": PREFIX, "update_interval": 7200}
+    )
+    assert coordinator._repeater_consecutive_failures[PREFIX] == 0
+    assert _credits(governed, LANE_DIRECT) == 19
+
+    await hass.services.async_call(
+        DOMAIN, SERVICE_SEND_MESSAGE, {ATTR_PUBKEY_PREFIX: PREFIX, ATTR_MESSAGE: "hi"},
+        blocking=True,
+    )
+    assert radio.key("send_msg", CONTACT, "hi") in radio.calls
+    assert _credits(governed, LANE_MESSAGES) == 9
+
+
+async def test_the_rate_limiter_sensor_publishes_the_lane_rates(
+    governed: SimpleNamespace, legacy: SimpleNamespace
+) -> None:
+    """Governed exposes every lane on the existing sensor; legacy adds nothing."""
+    assert RateLimiterSensor(legacy.coordinator).extra_state_attributes is None
+
+    sensor = RateLimiterSensor(governed.coordinator)
+    assert sensor.native_value == 20
+    attributes = sensor.extra_state_attributes
+    assert attributes is not None
+    assert attributes["policy"] == POLICY_GOVERNED
+    assert attributes["flood_capacity"] == 3
+    assert attributes["flood_refill_per_hour"] == 6
+    assert attributes["direct_capacity"] == 20
+    assert attributes["direct_refill_per_hour"] == 120
+    assert attributes["messages_capacity"] == 10
+    assert attributes["messages_refill_per_hour"] == 60
+    assert attributes["deferred_nodes"] == []
+    assert attributes["direct_next_eligible"] is None
+
+    _drain(governed, LANE_FLOOD)
+    attributes = sensor.extra_state_attributes
+    assert attributes is not None
+    assert attributes["flood_credits"] == 0
+    assert attributes["flood_next_eligible"].endswith("+00:00")
+    assert set(RateLimiterSensor._unrecorded_attributes) == {
+        "deferred_nodes",
+        "flood_credits",
+        "direct_credits",
+        "messages_credits",
+        "flood_next_eligible",
+        "direct_next_eligible",
+        "messages_next_eligible",
+    }

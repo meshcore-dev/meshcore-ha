@@ -81,7 +81,7 @@ from .const import (
     get_contact_discovery_mode,
 )
 from .radio import RadioSession
-from .traffic import COST_LOGIN_STATUS, TRAFFIC_POLICIES, resolve_policy
+from .traffic import OP_LOGIN, TRAFFIC_POLICIES, classify_lane, resolve_policy
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -735,11 +735,12 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             errors["base"] = "Contact not found"
             return self._show_add_repeater_form(repeater_dict, errors, user_input)
             
-        wait = coordinator.check_interactive_budget(
-            COST_LOGIN_STATUS, has_path=contact.get("out_path_len", -1) > -1
-        )
+        lane = classify_lane(OP_LOGIN, contact)
+        wait = coordinator.check_interactive_budget(lane)
         if wait:
-            errors["base"] = f"Mesh traffic budget exhausted. Try again in {int(wait)} seconds."
+            errors["base"] = (
+                f"Mesh traffic {lane} lane is empty. Try again in {int(wait)} seconds."
+            )
             return self._show_add_repeater_form(repeater_dict, errors, user_input)
 
         result = await session.login(contact, password)

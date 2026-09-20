@@ -1,25 +1,28 @@
-"""Mesh traffic policy: one budget and one set of node-schedule decisions.
+"""Mesh traffic policy: the lanes every RF send crosses and the node schedule.
 
-Every RF send the integration makes crosses the budget here, and every tracked
-node's next poll comes from these pure helpers, so the difference between the
-frozen ``legacy`` numbers and the ``governed`` ones is a flag rather than a
-second code path.
+Every mesh request the integration makes is classified into a lane and paid
+for here, and every tracked node's next poll comes from these pure helpers, so
+the difference between the frozen ``legacy`` numbers and the ``governed`` ones
+is a flag rather than a second code path.
 
 ``legacy`` (the default) reproduces the integration's historical arithmetic
-exactly: a 20-token bucket refilling one token every 120 s, one token per mesh
-request whatever it costs the mesh, a denial counted as a node failure, a
-backoff sized to fit five retries inside the refresh window, and auto-disable
-that only ever reaches repeaters in the status loop.
+exactly: one 20-token bucket refilling a token every 120 s, one token per mesh
+request whatever it costs the mesh, lanes ignored, a denial counted as a node
+failure, a backoff sized to fit five retries inside the refresh window, and
+auto-disable that only ever reaches repeaters in the status loop.
 
-``governed`` sizes the budget to the mesh being tracked, charges flood-routed
-traffic what it costs, keeps credits in reserve for the user's own commands,
-defers instead of failing when credit runs out, and applies auto-disable to
-clients and to the telemetry loops as well.
+``governed`` governs flood traffic, which is what actually costs the mesh. The
+budget is flat per radio -- tracking more nodes shares it rather than growing
+it -- and split into three independent lanes so unrouted polling can never
+starve a routed poll or a message the user sent. It defers instead of failing
+when a lane runs dry, and applies auto-disable to clients and telemetry too.
 """
 
 from __future__ import annotations
 
 import random
+import time
+from datetime import UTC, datetime
 from typing import Any, Final, Literal
 
 from .const import (
@@ -34,10 +37,42 @@ from .const import (
 from .rate_limiter import TokenBucket
 
 TrafficPolicy = Literal["legacy", "governed"]
+Lane = Literal["flood", "direct", "messages"]
 
 POLICY_LEGACY: Final[TrafficPolicy] = "legacy"
 POLICY_GOVERNED: Final[TrafficPolicy] = "governed"
 TRAFFIC_POLICIES: Final = (POLICY_LEGACY, POLICY_GOVERNED)
+
+LANE_FLOOD: Final[Lane] = "flood"
+LANE_DIRECT: Final[Lane] = "direct"
+LANE_MESSAGES: Final[Lane] = "messages"
+
+# The governed budget, flat per radio and shared by every tracked node:
+# lane -> (burst capacity, credits refilled per hour). Flood is what actually
+# costs the mesh, so it is the scarce lane; a routed request reaches one node
+# over a known path and may run at volume; the user's own messages get a lane
+# of their own so automatic polling can never hold them up.
+GOVERNED_LANES: Final[dict[Lane, tuple[int, int]]] = {
+    LANE_FLOOD: (3, 6),
+    LANE_DIRECT: (20, 120),
+    LANE_MESSAGES: (10, 60),
+}
+
+OP_STATUS: Final = "status"
+OP_TELEMETRY: Final = "telemetry"
+OP_LOGIN: Final = "login"
+OP_NEIGHBOURS: Final = "neighbours"
+OP_FIRMWARE: Final = "firmware"
+OP_MESSAGE: Final = "message"
+OP_CHANNEL_MESSAGE: Final = "channel_message"
+OP_TRACE: Final = "trace"
+OP_ADVERT: Final = "advert"
+OP_PATH_DISCOVERY: Final = "path_discovery"
+
+# Operations the user drives directly, whatever route they take.
+MESSAGE_OPS: Final = frozenset({OP_MESSAGE, OP_CHANNEL_MESSAGE, OP_TRACE})
+# Operations that reach the whole mesh however much it knows about the target.
+FLOOD_OPS: Final = frozenset({OP_ADVERT, OP_PATH_DISCOVERY})
 
 NODE_REPEATER: Final = "repeater"
 NODE_CLIENT: Final = "client"
@@ -46,18 +81,6 @@ LOGIN_COOLDOWN_SECONDS: Final = 3600
 LEGACY_RETRY_WINDOW_DIVISOR: Final = 31 * 2
 GOVERNED_BACKOFF_CAP_SECONDS: Final = 86400
 GOVERNED_BACKOFF_JITTER: Final = 0.1
-
-COST_DIRECT: Final = 1
-COST_FLOOD: Final = 8
-COST_NEIGHBOUR_PAGE: Final = 1
-COST_LOGIN_STATUS: Final = 2
-INTERACTIVE_RESERVE: Final = 6
-
-GOVERNED_CAPACITY_BASE: Final = 12
-GOVERNED_CAPACITY_PER_NODE: Final = 2
-GOVERNED_CAPACITY_RANGE: Final = (20, 48)
-GOVERNED_REFILL_PER_NODE_PER_HOUR: Final = 6
-GOVERNED_REFILL_RANGE_PER_HOUR: Final = (24, 96)
 SECONDS_PER_HOUR: Final = 3600
 
 
@@ -70,29 +93,27 @@ def resolve_policy(config_entry: Any) -> TrafficPolicy:
     return POLICY_GOVERNED if value == POLICY_GOVERNED else POLICY_LEGACY
 
 
-def budget_limits(policy: TrafficPolicy, node_count: int) -> tuple[int, float]:
-    """Return the bucket capacity and the seconds one credit takes to refill."""
-    if policy != POLICY_GOVERNED:
-        return RATE_LIMITER_CAPACITY, float(RATE_LIMITER_REFILL_RATE_SECONDS)
-
-    low, high = GOVERNED_CAPACITY_RANGE
-    capacity = min(
-        max(GOVERNED_CAPACITY_BASE + GOVERNED_CAPACITY_PER_NODE * node_count, low), high
-    )
-    low, high = GOVERNED_REFILL_RANGE_PER_HOUR
-    per_hour = min(max(GOVERNED_REFILL_PER_NODE_PER_HOUR * node_count, low), high)
-    return capacity, SECONDS_PER_HOUR / per_hour
+def iso_timestamp(epoch_seconds: float) -> str:
+    """Format an epoch second as a UTC ISO timestamp for entity attributes."""
+    return datetime.fromtimestamp(epoch_seconds, tz=UTC).isoformat()
 
 
-def request_cost(policy: TrafficPolicy, base_cost: int, *, has_path: bool = True) -> int:
-    """Return what one mesh request costs; legacy charges one for everything.
+def classify_lane(op: str, contact: Any = None, *, path_reset: bool = False) -> Lane:
+    """Return the lane an operation spends from.
 
-    A request to a node with no established path floods the mesh, so governed
-    charges it the flood cost no matter what the caller asked for.
+    The user's own messages have a lane of their own whatever route they take.
+    Everything else is direct only when the mesh already knows a route to the
+    contact: an operation that reaches the whole mesh, a contact with no path,
+    and the first request after a path reset all flood.
     """
-    if policy != POLICY_GOVERNED:
-        return 1
-    return base_cost if has_path else COST_FLOOD
+    if op in MESSAGE_OPS:
+        return LANE_MESSAGES
+    if op in FLOOD_OPS or path_reset:
+        return LANE_FLOOD
+    out_path_len = contact.get("out_path_len") if contact else None
+    if out_path_len is None or out_path_len < 0:
+        return LANE_FLOOD
+    return LANE_DIRECT
 
 
 def backoff_delay(policy: TrafficPolicy, failure_count: int, interval: int) -> int:
@@ -137,7 +158,7 @@ def denial_counts_as_failure(policy: TrafficPolicy) -> bool:
     """Whether a budget denial is recorded against the node.
 
     Legacy blames the node for traffic HA chose not to send. Governed defers
-    the poll to the moment credit returns instead.
+    the poll to the moment its lane has credit again instead.
     """
     return policy != POLICY_GOVERNED
 
@@ -158,57 +179,84 @@ def auto_disable_applies(
 
 
 class MeshBudget:
-    """The credit budget every mesh send crosses, sized by policy.
+    """The credits every mesh send spends, flat per radio.
 
-    Under ``legacy`` this is the historical token bucket: capacity 20, one
-    token every 120 s, one token per request. Under ``governed`` capacity and
-    refill scale with the number of tracked nodes, requests cost what they
-    cost the mesh, and automatic traffic may not spend the reserve that keeps
-    the user's own commands answerable.
+    Under ``legacy`` this is the historical single token bucket -- capacity
+    20, one token every 120 s, one token per request -- and the lane a caller
+    names is ignored. Under ``governed`` each lane owns a bucket from
+    ``GOVERNED_LANES``, so polling a node the mesh has no route to cannot
+    spend the credit a routed poll or a user's message needs.
     """
 
-    def __init__(self, policy: TrafficPolicy, node_count: int = 0) -> None:
-        """Size a budget for the policy and the nodes currently tracked."""
+    def __init__(self, policy: TrafficPolicy) -> None:
+        """Build the buckets for the policy; the rates never move after this."""
         self._policy: TrafficPolicy = policy
-        capacity, refill_rate = budget_limits(policy, node_count)
-        self._bucket = TokenBucket(capacity=capacity, refill_rate_seconds=refill_rate)
+        self._legacy_bucket = TokenBucket(
+            capacity=RATE_LIMITER_CAPACITY,
+            refill_rate_seconds=float(RATE_LIMITER_REFILL_RATE_SECONDS),
+        )
+        self._lanes: dict[str, TokenBucket] = {
+            lane: TokenBucket(capacity=capacity, refill_rate_seconds=SECONDS_PER_HOUR / per_hour)
+            for lane, (capacity, per_hour) in GOVERNED_LANES.items()
+        }
 
     @property
     def policy(self) -> TrafficPolicy:
         """Return the policy this budget is enforcing."""
         return self._policy
 
-    def reconfigure(self, policy: TrafficPolicy, node_count: int) -> None:
-        """Re-derive the limits after a settings change, keeping credit in hand."""
-        capacity, refill_rate = budget_limits(policy, node_count)
-        self._policy = policy
-        self._bucket.capacity = capacity
-        self._bucket.refill_rate = refill_rate
-        self._bucket.tokens = min(self._bucket.tokens, capacity)
+    def _bucket(self, lane: Lane) -> TokenBucket:
+        """Return the bucket a lane spends from; legacy pools them into one."""
+        if self._policy != POLICY_GOVERNED:
+            return self._legacy_bucket
+        return self._lanes[lane]
 
     def get_tokens(self) -> int:
-        """Return the credits currently available (refill applied)."""
-        return self._bucket.get_tokens()
+        """Return the credits the rate-limiter sensor reports as its state."""
+        return self._bucket(LANE_DIRECT).get_tokens()
 
-    def try_consume(self, cost: int = 1, *, interactive: bool = False) -> bool:
-        """Spend credits without waiting; False means the send must not happen.
+    def try_consume(self, lane: Lane = LANE_DIRECT) -> bool:
+        """Spend one credit in a lane; False means the send must not happen."""
+        return self._bucket(lane).try_consume(1)
 
-        Automatic traffic may not spend below the interactive reserve, so a
-        mesh saturated by polling still answers a service call.
-        """
+    def next_eligible(self, lane: Lane = LANE_DIRECT) -> float:
+        """Return the seconds until this lane can pay for one more request."""
+        bucket = self._bucket(lane)
+        return max(0.0, (1 - bucket.get_tokens()) * bucket.refill_rate)
+
+    def attributes(self) -> dict[str, Any] | None:
+        """Return the per-lane rates for the sensor; legacy has no lanes."""
         if self._policy != POLICY_GOVERNED:
-            return self._bucket.try_consume(1)
-        floor = 0 if interactive else INTERACTIVE_RESERVE
-        if self._bucket.get_tokens() - cost < floor:
-            return False
-        return self._bucket.try_consume(cost)
+            return None
+        now = time.time()
+        attributes: dict[str, Any] = {"policy": self._policy}
+        for lane, (capacity, per_hour) in GOVERNED_LANES.items():
+            wait = self.next_eligible(lane)
+            attributes[f"{lane}_credits"] = self._lanes[lane].get_tokens()
+            attributes[f"{lane}_capacity"] = capacity
+            attributes[f"{lane}_refill_per_hour"] = per_hour
+            attributes[f"{lane}_next_eligible"] = iso_timestamp(now + wait) if wait else None
+        return attributes
 
-    def next_eligible(self, cost: int = 1, *, interactive: bool = False) -> float:
-        """Return the seconds until a request of this cost could be admitted."""
-        needed = cost
-        if self._policy == POLICY_GOVERNED and not interactive:
-            needed += INTERACTIVE_RESERVE
-        elif self._policy != POLICY_GOVERNED:
-            needed = 1
-        missing = needed - self._bucket.get_tokens()
-        return max(0.0, missing * self._bucket.refill_rate)
+    def snapshot(self) -> dict[str, Any]:
+        """Return the lane credits and the wall-clock second they were counted."""
+        if self._policy != POLICY_GOVERNED:
+            return {}
+        return {
+            "at": time.time(),
+            "lanes": {lane: bucket.get_tokens() for lane, bucket in self._lanes.items()},
+        }
+
+    def restore(self, stored: dict[str, Any] | None) -> None:
+        """Re-apply persisted credits, refilled for the time the restart took."""
+        if self._policy != POLICY_GOVERNED or not stored:
+            return
+        elapsed = max(0.0, time.time() - float(stored.get("at", 0.0)))
+        for lane, credits in (stored.get("lanes") or {}).items():
+            bucket = self._lanes.get(lane)
+            if bucket is None:
+                continue
+            bucket.tokens = min(
+                bucket.capacity, int(credits) + int(elapsed / bucket.refill_rate)
+            )
+            bucket.last_refill = time.monotonic()

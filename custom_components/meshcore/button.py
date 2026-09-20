@@ -22,7 +22,7 @@ from .repeater_firmware import (
     RepeaterFirmwareRefreshError,
     async_refresh_repeater_firmware,
 )
-from .traffic import COST_LOGIN_STATUS
+from .traffic import OP_FIRMWARE, classify_lane
 from .utils import format_entity_id
 
 _LOGGER = logging.getLogger(__name__)
@@ -145,7 +145,8 @@ class MeshCoreRepeaterFirmwareRefreshButton(CoordinatorEntity, ButtonEntity):
         if not self.coordinator.api.connected:
             raise HomeAssistantError("MeshCore device is not connected")
 
-        self.coordinator.require_mesh_budget(COST_LOGIN_STATUS)
+        contact = self.coordinator.api.contact_by_prefix(self.pubkey_prefix)
+        self.coordinator.require_mesh_budget(classify_lane(OP_FIRMWARE, contact))
 
         try:
             await async_refresh_repeater_firmware(

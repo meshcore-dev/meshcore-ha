@@ -685,7 +685,7 @@
   },
   "exceptions": {
     "traffic_deferred": {
-      "message": "Mesh traffic budget exhausted; try again in {seconds} seconds"
+      "message": "Mesh traffic {lane} lane is empty; try again in {seconds} seconds"
     }
   },
   "selector": {

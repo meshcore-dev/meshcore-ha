@@ -51,7 +51,18 @@ from .const import (
     SERVICE_TRACE,
     get_contact_discovery_mode,
 )
-from .traffic import COST_DIRECT, COST_FLOOD
+from .traffic import (
+    OP_ADVERT,
+    OP_CHANNEL_MESSAGE,
+    OP_LOGIN,
+    OP_MESSAGE,
+    OP_NEIGHBOURS,
+    OP_PATH_DISCOVERY,
+    OP_STATUS,
+    OP_TELEMETRY,
+    OP_TRACE,
+    classify_lane,
+)
 from .utils import extract_pubkey_from_selection
 
 _LOGGER = logging.getLogger(__name__)
@@ -92,8 +103,17 @@ _REMOTE_WAIT_COMMANDS = frozenset({
     "fetch_all_neighbours",
     "send_msg_with_retry",
 })
-# Mesh-bound commands that reach the whole mesh rather than one node.
-_FLOOD_COMMANDS = frozenset({"send_advert", "send_path_discovery"})
+# What each metered mesh-bound command is, so the budget can pick its lane.
+_COMMAND_OPS = {
+    "send_advert": OP_ADVERT,
+    "send_path_discovery": OP_PATH_DISCOVERY,
+    "send_trace": OP_TRACE,
+    "send_login": OP_LOGIN,
+    "send_statusreq": OP_STATUS,
+    "send_telemetry_req": OP_TELEMETRY,
+    "fetch_all_neighbours": OP_NEIGHBOURS,
+    "send_msg_with_retry": OP_MESSAGE,
+}
 
 
 def _mesh_routing(command_name: str) -> tuple[bool, bool]:
@@ -380,9 +400,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                             _LOGGER.error(f"Contact with pubkey prefix '{pubkey_prefix}' not found")
                             continue
 
-                    coordinator.require_mesh_budget(
-                        COST_DIRECT, has_path=contact.get("out_path_len", -1) > -1
-                    )
+                    coordinator.require_mesh_budget(classify_lane(OP_MESSAGE, contact))
                     
                     result = await api.exchange("send_msg", contact, message)
 
@@ -495,7 +513,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                         "Sending message to channel %s: %s", channel_idx, message
                     )
 
-                    coordinator.require_mesh_budget(COST_FLOOD)
+                    coordinator.require_mesh_budget(classify_lane(OP_CHANNEL_MESSAGE))
 
                     # Set flood scope before sending if requested, then always reset.
                     async with api.transaction():
@@ -909,8 +927,11 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     needs_lease, waits_remote = _mesh_routing(command_name)
                     run = api.invoke if waits_remote else api.exchange
                     if needs_lease:
+                        target = next(
+                            (arg for arg in prepared_args if isinstance(arg, dict)), None
+                        )
                         coordinator.require_mesh_budget(
-                            COST_FLOOD if command_name in _FLOOD_COMMANDS else COST_DIRECT
+                            classify_lane(_COMMAND_OPS.get(command_name, OP_STATUS), target)
                         )
                         async with api.mesh_lease():
                             result = await run(command_name, *prepared_args, **prepared_kwargs)
@@ -1792,7 +1813,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         tag = random.randint(0, 0xFFFFFFFF)
 
         out_path_len = contact.get("out_path_len", -1)
-        coordinator.require_mesh_budget(COST_DIRECT, has_path=out_path_len > -1)
+        coordinator.require_mesh_budget(classify_lane(OP_TRACE, contact))
         out_path_hash_mode = contact.get("out_path_hash_mode", 0)
         out_path_hex = contact.get("out_path", "") or ""
 

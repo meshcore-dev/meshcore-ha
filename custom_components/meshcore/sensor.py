@@ -44,6 +44,7 @@ from .const import (
     NodeType,
 )
 from .telemetry_sensor import TelemetrySensorManager
+from .traffic import GOVERNED_LANES
 from .utils import (
     calculate_battery_percentage,
     format_entity_id,
@@ -747,6 +748,13 @@ class RateLimiterSensor(CoordinatorEntity, SensorEntity):
     """Sensor for monitoring rate limiter token bucket."""
 
     _attr_has_entity_name = True
+    # Credits, deadlines and the deferral list move on every tick; only the
+    # policy and the lane rates are worth a database row.
+    _unrecorded_attributes = frozenset(
+        {"deferred_nodes"}
+        | {f"{lane}_credits" for lane in GOVERNED_LANES}
+        | {f"{lane}_next_eligible" for lane in GOVERNED_LANES}
+    )
 
     def __init__(self, coordinator: MeshCoreDataUpdateCoordinator) -> None:
         """Initialize the rate limiter sensor."""
@@ -791,6 +799,11 @@ class RateLimiterSensor(CoordinatorEntity, SensorEntity):
         tokens = self.coordinator._rate_limiter.get_tokens()
         _LOGGER.debug(f"Rate limiter tokens: {tokens}")
         return tokens
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Publish the governed lane rates; legacy has one pool and no lanes."""
+        return self.coordinator.traffic_attributes()
 
     @property
     def available(self) -> bool:

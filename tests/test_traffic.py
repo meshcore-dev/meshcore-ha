@@ -48,32 +48,6 @@ def test_policy_defaults_to_legacy_and_reads_options_before_data() -> None:
     assert traffic.resolve_policy(_entry(data={"traffic_policy": "nonsense"})) == LEGACY
 
 
-@pytest.mark.parametrize("node_count", [0, 1, 4, 8, 18, 40])
-def test_legacy_budget_limits_never_move(node_count: int) -> None:
-    assert traffic.budget_limits(LEGACY, node_count) == (20, 120.0)
-
-
-@pytest.mark.parametrize(
-    ("node_count", "capacity", "per_hour"),
-    [(1, 20, 24), (4, 20, 24), (8, 28, 48), (18, 48, 96), (40, 48, 96)],
-)
-def test_governed_budget_scales_with_tracked_nodes(
-    node_count: int, capacity: int, per_hour: int
-) -> None:
-    assert traffic.budget_limits(GOVERNED, node_count) == (capacity, 3600 / per_hour)
-
-
-def test_legacy_charges_one_credit_for_every_request() -> None:
-    assert traffic.request_cost(LEGACY, traffic.COST_FLOOD) == 1
-    assert traffic.request_cost(LEGACY, traffic.COST_DIRECT, has_path=False) == 1
-
-
-def test_governed_charges_flood_for_an_unknown_route() -> None:
-    assert traffic.request_cost(GOVERNED, traffic.COST_DIRECT) == 1
-    assert traffic.request_cost(GOVERNED, traffic.COST_LOGIN_STATUS) == 2
-    assert traffic.request_cost(GOVERNED, traffic.COST_DIRECT, has_path=False) == 8
-
-
 @pytest.mark.parametrize(
     ("failures", "delay"),
     [(0, 116), (1, 232), (2, 464), (3, 928), (4, 1856), (5, 3712), (6, 7200), (9, 7200)],
@@ -133,55 +107,129 @@ def test_governed_auto_disable_covers_both_types_in_both_loops(
     assert traffic.auto_disable_applies(GOVERNED, node_type, telemetry=telemetry) is True
 
 
-def test_legacy_budget_spends_one_credit_per_request(clock) -> None:
-    budget = traffic.MeshBudget(LEGACY, node_count=8)
+
+
+ROUTED = {"out_path_len": 2}
+UNROUTED = {"out_path_len": -1}
+
+
+@pytest.mark.parametrize("op", [traffic.OP_STATUS, traffic.OP_TELEMETRY, traffic.OP_LOGIN])
+def test_a_routed_contact_is_direct_and_an_unrouted_one_floods(op: str) -> None:
+    assert traffic.classify_lane(op, ROUTED) == traffic.LANE_DIRECT
+    assert traffic.classify_lane(op, UNROUTED) == traffic.LANE_FLOOD
+    assert traffic.classify_lane(op, {}) == traffic.LANE_FLOOD
+    assert traffic.classify_lane(op, None) == traffic.LANE_FLOOD
+
+
+def test_mesh_wide_operations_flood_whatever_the_route() -> None:
+    assert traffic.classify_lane(traffic.OP_ADVERT, ROUTED) == traffic.LANE_FLOOD
+    assert traffic.classify_lane(traffic.OP_PATH_DISCOVERY, ROUTED) == traffic.LANE_FLOOD
+
+
+def test_the_request_after_a_path_reset_floods() -> None:
+    assert (
+        traffic.classify_lane(traffic.OP_STATUS, ROUTED, path_reset=True) == traffic.LANE_FLOOD
+    )
+    assert traffic.classify_lane(traffic.OP_STATUS, ROUTED) == traffic.LANE_DIRECT
+
+
+@pytest.mark.parametrize(
+    "op", [traffic.OP_MESSAGE, traffic.OP_CHANNEL_MESSAGE, traffic.OP_TRACE]
+)
+@pytest.mark.parametrize("contact", [ROUTED, UNROUTED, None])
+def test_user_messages_have_their_own_lane(op: str, contact: dict | None) -> None:
+    assert traffic.classify_lane(op, contact) == traffic.LANE_MESSAGES
+
+
+def test_governed_lane_rates_are_flat_and_do_not_move() -> None:
+    assert traffic.GOVERNED_LANES == {
+        traffic.LANE_FLOOD: (3, 6),
+        traffic.LANE_DIRECT: (20, 120),
+        traffic.LANE_MESSAGES: (10, 60),
+    }
+
+
+def test_legacy_pools_every_lane_into_one_bucket(clock) -> None:
+    budget = traffic.MeshBudget(LEGACY)
     assert budget.get_tokens() == 20
 
-    for _ in range(20):
-        assert budget.try_consume(traffic.COST_FLOOD) is True
-    assert budget.get_tokens() == 0
-    assert budget.try_consume(1) is False
-    assert budget.next_eligible(1) == 120.0
+    for lane in traffic.GOVERNED_LANES:
+        assert budget.try_consume(lane) is True
+    assert budget.get_tokens() == 17
 
-    clock.value += 120
-    assert budget.try_consume(1, interactive=True) is True
-
-
-def test_governed_budget_keeps_a_reserve_for_interactive_sends(clock) -> None:
-    budget = traffic.MeshBudget(GOVERNED, node_count=4)
-    assert budget.get_tokens() == 20
-
-    assert budget.try_consume(traffic.COST_FLOOD) is True  # 12 left
-    assert budget.try_consume(traffic.COST_FLOOD) is False  # would leave 4, below reserve
-    assert budget.get_tokens() == 12
-
-    assert budget.try_consume(traffic.COST_FLOOD, interactive=True) is True
-    assert budget.get_tokens() == 4
-    assert budget.try_consume(1) is False
-    assert budget.try_consume(1, interactive=True) is True
-
-
-def test_governed_next_eligible_counts_the_reserve(clock) -> None:
-    budget = traffic.MeshBudget(GOVERNED, node_count=4)
-    while budget.try_consume(1, interactive=True):
+    while budget.try_consume(traffic.LANE_DIRECT):
         pass
     assert budget.get_tokens() == 0
-    assert budget.next_eligible(1, interactive=True) == 150.0
-    assert budget.next_eligible(1) == 7 * 150.0
+    assert budget.try_consume(traffic.LANE_MESSAGES) is False
+    assert budget.next_eligible(traffic.LANE_FLOOD) == 120.0
 
-    clock.value += 150 * 7
-    assert budget.try_consume(1) is True
+    clock.value += 120
+    assert budget.try_consume(traffic.LANE_FLOOD) is True
 
 
-def test_reconfigure_resizes_without_handing_out_credit(clock) -> None:
-    budget = traffic.MeshBudget(GOVERNED, node_count=18)
-    assert budget.get_tokens() == 48
+def test_governed_lanes_are_independent(clock) -> None:
+    budget = traffic.MeshBudget(GOVERNED)
 
-    budget.reconfigure(GOVERNED, 1)
+    for _ in range(3):
+        assert budget.try_consume(traffic.LANE_FLOOD) is True
+    assert budget.try_consume(traffic.LANE_FLOOD) is False
+    assert budget.next_eligible(traffic.LANE_FLOOD) == 600.0
+
+    assert budget.try_consume(traffic.LANE_DIRECT) is True
+    assert budget.try_consume(traffic.LANE_MESSAGES) is True
+    assert budget.next_eligible(traffic.LANE_DIRECT) == 0.0
+
+    clock.value += 600
+    assert budget.try_consume(traffic.LANE_FLOOD) is True
+
+
+def test_governed_sensor_state_reports_direct_credits(clock) -> None:
+    budget = traffic.MeshBudget(GOVERNED)
     assert budget.get_tokens() == 20
-
-    budget.reconfigure(LEGACY, 1)
-    assert budget.policy == LEGACY
-    assert traffic.budget_limits(LEGACY, 1) == (20, 120.0)
-    assert budget.try_consume(traffic.COST_FLOOD) is True
+    assert budget.try_consume(traffic.LANE_DIRECT) is True
     assert budget.get_tokens() == 19
+    assert budget.try_consume(traffic.LANE_FLOOD) is True
+    assert budget.get_tokens() == 19
+
+
+def test_governed_attributes_expose_every_lane_rate(clock) -> None:
+    budget = traffic.MeshBudget(GOVERNED)
+    for _ in range(3):
+        budget.try_consume(traffic.LANE_FLOOD)
+
+    attributes = budget.attributes()
+    assert attributes is not None
+    assert attributes["policy"] == GOVERNED
+    assert attributes["flood_capacity"] == 3
+    assert attributes["flood_refill_per_hour"] == 6
+    assert attributes["flood_credits"] == 0
+    assert attributes["flood_next_eligible"].endswith("+00:00")
+    assert attributes["direct_credits"] == 20
+    assert attributes["direct_next_eligible"] is None
+    assert attributes["messages_capacity"] == 10
+    assert attributes["messages_refill_per_hour"] == 60
+
+
+def test_legacy_publishes_no_lane_attributes(clock) -> None:
+    assert traffic.MeshBudget(LEGACY).attributes() is None
+
+
+def test_governed_credits_survive_a_restart(clock) -> None:
+    budget = traffic.MeshBudget(GOVERNED)
+    for _ in range(3):
+        budget.try_consume(traffic.LANE_FLOOD)
+    stored = budget.snapshot()
+    assert stored["lanes"] == {"flood": 0, "direct": 20, "messages": 10}
+
+    restored = traffic.MeshBudget(GOVERNED)
+    restored.restore({**stored, "at": stored["at"] - 1200})
+    assert restored.try_consume(traffic.LANE_FLOOD) is True
+    assert restored.try_consume(traffic.LANE_FLOOD) is True
+    assert restored.try_consume(traffic.LANE_FLOOD) is False
+
+
+def test_legacy_persists_no_credits(clock) -> None:
+    budget = traffic.MeshBudget(LEGACY)
+    assert budget.snapshot() == {}
+    budget.restore({"at": 0, "lanes": {"flood": 3}})
+    assert budget.get_tokens() == 20
