@@ -33,26 +33,26 @@ query = _MODULE.async_query_repeater_firmware
 refresh = _MODULE.async_refresh_repeater_firmware
 
 
-class _Dispatcher:
+class _Session:
+    """Stand in for RadioSession: one live subscription over a scripted radio."""
+
     def __init__(self, events):
         self.events = events
+        self.mesh_core = None
         self.listener_registered = False
         self.filters = None
         self.callback = None
 
-    def subscribe(self, event_type, callback, attribute_filters):
+    def subscribe(self, event_type, callback, *, attribute_filters=None):
         self.listener_registered = True
         self.filters = attribute_filters
         self.callback = callback
 
-        dispatcher = self
+        def unsubscribe():
+            self.listener_registered = False
+            self.callback = None
 
-        class Subscription:
-            def unsubscribe(self):
-                dispatcher.listener_registered = False
-                dispatcher.callback = None
-
-        return Subscription()
+        return unsubscribe
 
     def dispatch_events(self):
         for event in self.events:
@@ -68,15 +68,15 @@ def _event(prefix, text, event_type=_EventType.CONTACT_MSG_RECV):
     )
 
 
-def _meshcore(events, *, send_type=_EventType.MSG_SENT):
+def _session(events, *, send_type=_EventType.MSG_SENT):
     contact = {"public_key": "aabbccddeeff" + "0" * 52}
-    dispatcher = _Dispatcher(events)
+    session = _Session(events)
 
     async def send_cmd(sent_contact, command):
-        assert dispatcher.listener_registered
+        assert session.listener_registered
         assert sent_contact is contact
         assert command == "ver"
-        dispatcher.dispatch_events()
+        session.dispatch_events()
         return SimpleNamespace(type=send_type, payload={})
 
     async def send_login_sync(sent_contact, password):
@@ -84,11 +84,11 @@ def _meshcore(events, *, send_type=_EventType.MSG_SENT):
         assert password == "secret"
         return True
 
-    return SimpleNamespace(
-        dispatcher=dispatcher,
+    session.mesh_core = SimpleNamespace(
         commands=SimpleNamespace(send_cmd=send_cmd, send_login_sync=send_login_sync),
         get_contact_by_key_prefix=lambda prefix: contact,
     )
+    return session
 
 
 def _entry(entry_id, prefix="aabbccddeeff", version="1.0.0"):
@@ -123,7 +123,7 @@ def _hass_for(entry, device):
 
 @pytest.mark.asyncio
 async def test_query_registers_listener_first_and_ignores_other_repeater() -> None:
-    meshcore = _meshcore(
+    session = _session(
         [
             _event("112233445566", "wrong-version"),
             _event("aabbccddeeff", "ordinary direct message"),
@@ -131,8 +131,8 @@ async def test_query_registers_listener_first_and_ignores_other_repeater() -> No
         ]
     )
 
-    assert await query(meshcore, "aabbccddeeff") == "1.14.2 (Build: 2026-09-18)"
-    assert meshcore.dispatcher.filters == {"pubkey_prefix": "aabbccddeeff"}
+    assert await query(session, "aabbccddeeff") == "1.14.2 (Build: 2026-09-18)"
+    assert session.filters == {"pubkey_prefix": "aabbccddeeff"}
 
 
 @pytest.mark.asyncio
@@ -144,7 +144,7 @@ async def test_refresh_updates_config_and_repeater_device() -> None:
     version = await refresh(
         hass,
         entry,
-        _meshcore([_event("aabbccddeeff", "1.14.2 (Build: 2026-09-18)")]),
+        _session([_event("aabbccddeeff", "1.14.2 (Build: 2026-09-18)")]),
         "aabbccddeeff",
     )
 
@@ -167,7 +167,7 @@ async def test_refresh_failure_preserves_known_version(send_type) -> None:
         await refresh(
             hass,
             entry,
-            _meshcore(events, send_type=send_type),
+            _session(events, send_type=send_type),
             "aabbccddeeff",
             timeout=0.01,
         )
@@ -186,7 +186,7 @@ async def test_error_reply_is_not_persisted() -> None:
         await refresh(
             hass,
             entry,
-            _meshcore([_event("aabbccddeeff", "Error: not logged in")]),
+            _session([_event("aabbccddeeff", "Error: not logged in")]),
             "aabbccddeeff",
         )
 
@@ -204,7 +204,7 @@ async def test_missing_device_registry_entry_does_not_update_config() -> None:
         await refresh(
             hass,
             entry,
-            _meshcore(
+            _session(
                 [_event("aabbccddeeff", "1.14.2 (Build: 2026-09-18)")]
             ),
             "aabbccddeeff",
@@ -219,26 +219,22 @@ async def test_missing_device_registry_entry_does_not_update_config() -> None:
 async def test_cancellation_removes_response_listener() -> None:
     listener_removed = asyncio.Event()
 
-    class BlockingDispatcher:
-        def subscribe(self, event_type, callback, attribute_filters):
-            class Subscription:
-                def unsubscribe(self):
-                    listener_removed.set()
-
-            return Subscription()
-
     send_started = asyncio.Event()
 
     async def send_cmd(contact, command):
         send_started.set()
         await asyncio.Future()
 
-    meshcore = SimpleNamespace(
-        dispatcher=BlockingDispatcher(),
-        commands=SimpleNamespace(send_cmd=send_cmd),
-        get_contact_by_key_prefix=lambda prefix: {"public_key": "aabbccddeeff" + "0" * 52},
+    session = SimpleNamespace(
+        subscribe=lambda *a, **kw: listener_removed.set,
+        mesh_core=SimpleNamespace(
+            commands=SimpleNamespace(send_cmd=send_cmd),
+            get_contact_by_key_prefix=lambda prefix: {
+                "public_key": "aabbccddeeff" + "0" * 52
+            },
+        ),
     )
-    task = asyncio.create_task(query(meshcore, "aabbccddeeff"))
+    task = asyncio.create_task(query(session, "aabbccddeeff"))
     await send_started.wait()
 
     task.cancel()
@@ -254,10 +250,6 @@ async def test_concurrent_refresh_for_same_repeater_is_rejected() -> None:
     hass, _ = _hass_for(entry, SimpleNamespace(id="target-device"))
     send_started = asyncio.Event()
 
-    class BlockingDispatcher:
-        def subscribe(self, event_type, callback, attribute_filters):
-            return SimpleNamespace(unsubscribe=lambda: None)
-
     async def send_login_sync(contact, password):
         return True
 
@@ -265,19 +257,21 @@ async def test_concurrent_refresh_for_same_repeater_is_rejected() -> None:
         send_started.set()
         await asyncio.Future()
 
-    meshcore = SimpleNamespace(
-        dispatcher=BlockingDispatcher(),
-        commands=SimpleNamespace(
-            send_login_sync=send_login_sync, send_cmd=send_cmd
+    session = SimpleNamespace(
+        subscribe=lambda *a, **kw: (lambda: None),
+        mesh_core=SimpleNamespace(
+            commands=SimpleNamespace(
+                send_login_sync=send_login_sync, send_cmd=send_cmd
+            ),
+            get_contact_by_key_prefix=lambda prefix: {
+                "public_key": "aabbccddeeff" + "0" * 52
+            },
         ),
-        get_contact_by_key_prefix=lambda prefix: {
-            "public_key": "aabbccddeeff" + "0" * 52
-        },
     )
-    first = asyncio.create_task(refresh(hass, entry, meshcore, "aabbccddeeff"))
+    first = asyncio.create_task(refresh(hass, entry, session, "aabbccddeeff"))
     await send_started.wait()
     with pytest.raises(RefreshError, match="already in progress"):
-        await refresh(hass, entry, meshcore, "aabbccddeeff")
+        await refresh(hass, entry, session, "aabbccddeeff")
     first.cancel()
     with pytest.raises(asyncio.CancelledError):
         await first
@@ -292,7 +286,7 @@ async def test_refresh_targets_only_supplied_hub_entry() -> None:
     await refresh(
         hass,
         target,
-        _meshcore([_event("aabbccddeeff", "1.14.2 (Build: 2026-09-18)")]),
+        _session([_event("aabbccddeeff", "1.14.2 (Build: 2026-09-18)")]),
         "aabbccddeeff",
     )
 

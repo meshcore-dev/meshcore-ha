@@ -80,12 +80,13 @@ def _run(coro):
 
 # --- Fakes -------------------------------------------------------------------
 
-class _FakeDispatcher:
+class _FakeSession:
     def __init__(self):
         self.subscriptions = []
 
-    def subscribe(self, event_filter, callback):
+    def subscribe(self, event_filter, callback, *, attribute_filters=None):
         self.subscriptions.append((event_filter, callback))
+        return lambda: None
 
 
 class _FakeSensor:
@@ -94,14 +95,15 @@ class _FakeSensor:
     def __init__(self, connected: bool):
         self._native_value = None
         self.write_calls = 0
-        self.dispatcher = _FakeDispatcher()
+        self.hass = object()
+        self.session = _FakeSession()
         self.coordinator = types.SimpleNamespace(
-            api=types.SimpleNamespace(
-                connected=connected,
-                mesh_core=types.SimpleNamespace(dispatcher=self.dispatcher),
-            )
+            api=types.SimpleNamespace(connected=connected, session=self.session)
         )
         self.entity_description = types.SimpleNamespace(key="node_status")
+
+    def async_on_remove(self, unsubscribe):
+        pass
 
     def async_write_ha_state(self):
         self.write_calls += 1
@@ -128,8 +130,8 @@ def test_update_callback_pushes_state():
     s = _FakeSensor(connected=True)
     _run(async_added_to_hass(s))
 
-    assert len(s.dispatcher.subscriptions) == 1
-    event_filter, callback = s.dispatcher.subscriptions[0]
+    assert len(s.session.subscriptions) == 1
+    event_filter, callback = s.session.subscriptions[0]
     assert event_filter is None  # node_status subscribes to all events
 
     # Simulate the connection dropping, then an event arriving.

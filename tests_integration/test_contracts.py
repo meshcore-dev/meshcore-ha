@@ -103,8 +103,8 @@ async def runtime(hass: HomeAssistant) -> AsyncIterator[SimpleNamespace]:
     await radio.start()
     radio.contacts = {c["public_key"]: c for c in fixture["contacts"]}
     api = MeshCoreAPI(hass=hass, connection_type="tcp", tcp_host="fixture.invalid")
-    api._mesh_core = radio
-    api._connected = True
+    api.session._mesh_core = radio
+    api.session._connected = True
     coordinator = MeshCoreDataUpdateCoordinator(
         hass,
         logging.getLogger(__name__),
@@ -346,8 +346,8 @@ async def test_connection_event_contracts(
     radio = runtime.radio
     radio.script[("send_appstart",)] = Event(EventType.SELF_INFO, {"name": "Hub"})
     with (
-        patch("custom_components.meshcore.meshcore_api.MeshCore.create_tcp", return_value=radio),
-        patch("custom_components.meshcore.meshcore_api.time", SimpleNamespace(time=lambda: NOW)),
+        patch("custom_components.meshcore.radio.MeshCore.create_tcp", return_value=radio),
+        patch("custom_components.meshcore.radio.time", SimpleNamespace(time=lambda: NOW)),
     ):
         radio.script[("set_time", NOW)] = Event(EventType.OK, {})
         assert await runtime.api.connect()

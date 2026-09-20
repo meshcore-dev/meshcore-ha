@@ -141,15 +141,14 @@ class MeshCoreRepeaterFirmwareRefreshButton(CoordinatorEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Query the repeater and persist its reported firmware version."""
-        meshcore = self.coordinator.api.mesh_core
-        if not meshcore:
+        if not self.coordinator.api.connected:
             raise HomeAssistantError("MeshCore device is not connected")
 
         try:
             await async_refresh_repeater_firmware(
                 self.hass,
                 self.coordinator.config_entry,
-                meshcore,
+                self.coordinator.api.session,
                 self.pubkey_prefix,
             )
         except RepeaterFirmwareRefreshError as ex:

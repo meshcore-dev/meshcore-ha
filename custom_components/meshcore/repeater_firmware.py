@@ -26,13 +26,17 @@ class RepeaterFirmwareRefreshError(Exception):
 
 
 async def async_query_repeater_firmware(
-    meshcore,
+    session,
     pubkey_prefix: str,
     *,
     password: str | None = None,
     timeout: float = 15,
 ) -> str:
     """Query one repeater's firmware version."""
+    meshcore = session.mesh_core
+    if meshcore is None:
+        raise RepeaterFirmwareRefreshError("MeshCore device is not connected")
+
     contact = meshcore.get_contact_by_key_prefix(pubkey_prefix)
     if not contact:
         raise RepeaterFirmwareRefreshError("repeater contact was not found")
@@ -61,7 +65,7 @@ async def async_query_repeater_firmware(
         elif _VERSION_REPLY_PATTERN.fullmatch(text):
             response_future.set_result(event)
 
-    subscription = meshcore.dispatcher.subscribe(
+    unsubscribe = session.subscribe(
         EventType.CONTACT_MSG_RECV,
         _handle_response,
         attribute_filters={"pubkey_prefix": target_prefix},
@@ -80,7 +84,7 @@ async def async_query_repeater_firmware(
         except TimeoutError as ex:
             raise RepeaterFirmwareRefreshError("timed out waiting for version reply") from ex
     finally:
-        subscription.unsubscribe()
+        unsubscribe()
 
     if message is None or getattr(message, "type", None) != EventType.CONTACT_MSG_RECV:
         raise RepeaterFirmwareRefreshError("timed out waiting for version reply")
@@ -127,7 +131,7 @@ def async_save_repeater_firmware_version(
 async def async_refresh_repeater_firmware(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
-    meshcore,
+    session,
     pubkey_prefix: str,
     *,
     timeout: float = 15,
@@ -151,7 +155,7 @@ async def async_refresh_repeater_firmware(
             if repeater.get("pubkey_prefix") == pubkey_prefix
         )
         version = await async_query_repeater_firmware(
-            meshcore,
+            session,
             pubkey_prefix,
             password=repeater.get("password", ""),
             timeout=timeout,

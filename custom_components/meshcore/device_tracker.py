@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from datetime import datetime
 from functools import partial
 from typing import Any
@@ -38,17 +39,13 @@ class DeviceTrackerManager:
         self.async_add_entities = async_add_entities
         self.discovered_trackers = {}  # Track discovered device trackers by unique key
         
-    async def setup_gps_listener(self):
-        """Set up the GPS telemetry event listener."""
-        if not self.coordinator.api.mesh_core:
-            _LOGGER.warning("No MeshCore instance available for GPS device tracker setup")
-            return
-            
-        self.coordinator.api.mesh_core.subscribe(
-            EventType.TELEMETRY_RESPONSE,
-            self._handle_gps_telemetry_event
+    def setup_gps_listener(self) -> Callable[[], None]:
+        """Subscribe to telemetry for GPS discovery; returns the remover."""
+        unsubscribe = self.coordinator.api.session.subscribe(
+            EventType.TELEMETRY_RESPONSE, self._handle_gps_telemetry_event
         )
         _LOGGER.debug("GPS device tracker manager initialized")
+        return unsubscribe
         
     async def _handle_gps_telemetry_event(self, event: Event):
         """Handle incoming telemetry events and discover new GPS trackers."""
@@ -268,5 +265,5 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     """Set up MeshCore device tracker from a config entry."""
     coordinator = hass.data[DOMAIN][config_entry.entry_id]
     tracker_manager = DeviceTrackerManager(coordinator, async_add_entities)
-    await tracker_manager.setup_gps_listener()
+    config_entry.async_on_unload(tracker_manager.setup_gps_listener())
     coordinator.device_tracker_manager = tracker_manager

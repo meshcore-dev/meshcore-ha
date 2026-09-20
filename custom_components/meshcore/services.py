@@ -19,24 +19,6 @@ from homeassistant.helpers.service import async_register_admin_service
 
 from meshcore.events import EventType
 
-# Commands that modify values reported in SELF_INFO.
-# After these succeed, send_appstart() refreshes cached self_info
-# so sensors and name-change detection pick up the new values.
-_SELF_INFO_COMMANDS = frozenset({
-    "set_radio",
-    "set_tx_power",
-    "set_name",
-    "set_coords",
-    "set_multi_acks",
-    "set_advert_loc_policy",
-    "set_path_hash_mode",
-    "set_telemetry_mode_base",
-    "set_telemetry_mode_loc",
-    "set_telemetry_mode_env",
-    "set_manual_add_contacts",
-    "import_private_key",
-})
-
 from .binary_sensor import create_contact_sensor
 from .const import (
     ATTR_CHANNEL_IDX,
@@ -73,6 +55,44 @@ from .const import (
 from .utils import extract_pubkey_from_selection
 
 _LOGGER = logging.getLogger(__name__)
+
+
+async def _wait_for_filtered_event(
+    session, event_type, attribute_filters: dict[str, Any], timeout: float
+):
+    """Await one filtered event through the session; None when it times out."""
+    future = asyncio.get_running_loop().create_future()
+
+    def resolve(event) -> None:
+        if not future.done():
+            future.set_result(event)
+
+    unsubscribe = session.subscribe(event_type, resolve, attribute_filters=attribute_filters)
+    try:
+        return await asyncio.wait_for(future, timeout)
+    except TimeoutError:
+        return None
+    finally:
+        unsubscribe()
+
+
+# Commands that modify values reported in SELF_INFO.
+# After these succeed, send_appstart() refreshes cached self_info
+# so sensors and name-change detection pick up the new values.
+_SELF_INFO_COMMANDS = frozenset({
+    "set_radio",
+    "set_tx_power",
+    "set_name",
+    "set_coords",
+    "set_multi_acks",
+    "set_advert_loc_policy",
+    "set_path_hash_mode",
+    "set_telemetry_mode_base",
+    "set_telemetry_mode_loc",
+    "set_telemetry_mode_env",
+    "set_manual_add_contacts",
+    "import_private_key",
+})
 
 
 # Schema for send_message service with either node_id or pubkey_prefix required
@@ -398,10 +418,11 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                                         "Waiting for ACK (code=%s, timeout=%.1fs) for message to %s",
                                         ack_code[:8], ack_timeout, display_name
                                     )
-                                    ack_event = await api.mesh_core.dispatcher.wait_for_event(
+                                    ack_event = await _wait_for_filtered_event(
+                                        api.session,
                                         EventType.ACK,
-                                        attribute_filters={"code": ack_code},
-                                        timeout=ack_timeout
+                                        {"code": ack_code},
+                                        ack_timeout,
                                     )
                                     ack_received = ack_event is not None
                                     if ack_received:
@@ -1397,7 +1418,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         if entry_id:
             coordinator = hass.data[DOMAIN].get(entry_id)
         else:
-            for config_entry_id, coord in hass.data[DOMAIN].items():
+            for coord in hass.data[DOMAIN].values():
                 if hasattr(coord, 'api'):
                     coordinator = coord
                     break
@@ -1408,7 +1429,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
         # Find the full public key from discovered contacts
         full_pubkey = None
-        for pubkey, contact in coordinator._discovered_contacts.items():
+        for pubkey in coordinator._discovered_contacts:
             if pubkey.startswith(pubkey_prefix):
                 full_pubkey = pubkey
                 break
@@ -1520,7 +1541,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         if entry_id:
             coordinator = hass.data[DOMAIN].get(entry_id)
         else:
-            for config_entry_id, coord in hass.data[DOMAIN].items():
+            for coord in hass.data[DOMAIN].values():
                 if hasattr(coord, "api"):
                     coordinator = coord
                     break
@@ -1831,10 +1852,11 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             # for other contacts can't satisfy this wait. Mirrors
             # Remote-Terminal-for-MeshCore's approach.
             path_response_task = asyncio.create_task(
-                mesh_core.dispatcher.wait_for_event(
+                _wait_for_filtered_event(
+                    api.session,
                     EventType.PATH_RESPONSE,
-                    attribute_filters={"pubkey_pre": pubkey_prefix},
-                    timeout=30.0,  # outer safety; real bound applied below
+                    {"pubkey_pre": pubkey_prefix},
+                    30.0,  # outer safety; real bound applied below
                 )
             )
 
@@ -1979,10 +2001,11 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         effective_timeout = min(max(requested_timeout_s, fw_suggested_s, 5.0), 60.0)
 
         try:
-            trace_event = await mesh_core.dispatcher.wait_for_event(
+            trace_event = await _wait_for_filtered_event(
+                api.session,
                 EventType.TRACE_DATA,
-                attribute_filters={"tag": tag},
-                timeout=effective_timeout,
+                {"tag": tag},
+                effective_timeout,
             )
         except Exception as ex:
             _LOGGER.error("trace: awaiting TRACE_DATA raised: %s", ex)

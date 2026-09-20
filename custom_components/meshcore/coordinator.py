@@ -6,6 +6,7 @@ import logging
 import random
 import time
 from collections import deque
+from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
 
@@ -276,6 +277,10 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self._repeater_neighbors: dict[str, dict[str, dict]] = {}
         # Track which neighbor sensor entities have been created: set of "repeater_pubkey:neighbor_pubkey"
         self._created_neighbor_sensors: set = set()
+
+        # CHANNEL_INFO listener handle; registered once, kept across reconnects
+        self._channel_info_unsub: Callable[[], None] | None = None
+        api.session.add_connect_hook(self._on_radio_connected)
 
         # Auto-cleanup of stale neighbors (daily)
         self._auto_cleanup_stale_neighbors = config_entry.data.get(
@@ -822,9 +827,41 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
     def max_channels(self) -> int:
         """Get the maximum number of channels supported by the device."""
         return self._max_channels
-    
+
+    def _on_radio_connected(self) -> None:
+        """Re-arm the per-connection work the session's recovery invalidated."""
+        self._device_info_initialized = False
+        self._manual_mode_initialized = False
+        self._initial_drain_done = False
+
+    async def async_shutdown(self) -> None:
+        """Stop scheduled refreshes, node tasks and the entry's own listeners."""
+        await super().async_shutdown()
+
+        if self._channel_info_unsub is not None:
+            self._channel_info_unsub()
+            self._channel_info_unsub = None
+
+        tasks = [
+            task
+            for task in (
+                *self._active_repeater_tasks.values(),
+                *self._active_telemetry_tasks.values(),
+            )
+            if not task.done()
+        ]
+        self._active_repeater_tasks.clear()
+        self._active_telemetry_tasks.clear()
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
     def _setup_channel_info_listener(self) -> None:
-        """Set up CHANNEL_INFO event listener to capture channel information."""
+        """Capture CHANNEL_INFO payloads; registered once for the entry's life."""
+        if self._channel_info_unsub is not None:
+            return
+
         def handle_channel_info(event: Event):
             try:
                 channel_idx = event.payload.get("channel_idx")
@@ -833,11 +870,9 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     self.logger.debug(f"Saved channel info for channel {channel_idx}: {event.payload}")
             except Exception as ex:
                 self.logger.error(f"Error handling CHANNEL_INFO event: {ex}")
-        
-        # Subscribe to CHANNEL_INFO events
-        self.api.mesh_core.dispatcher.subscribe(
-            EventType.CHANNEL_INFO,
-            handle_channel_info,
+
+        self._channel_info_unsub = self.api.session.subscribe(
+            EventType.CHANNEL_INFO, handle_channel_info
         )
         self.logger.debug("Registered CHANNEL_INFO event listener")
     
@@ -1197,7 +1232,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             stored = await self._neighbor_store.async_load()
             if stored:
                 now = time.time()
-                for rptr_prefix, neighbors in stored.items():
+                for _rptr_prefix, neighbors in stored.items():
                     for n_pubkey, n_data in neighbors.items():
                         last_updated = n_data.get("last_updated", now)
                         elapsed = now - last_updated
@@ -1565,17 +1600,11 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                       f"Failures: {self._repeater_consecutive_failures}")
         
     
-        # Reconnect if needed
+        # The session owns recovery; a tick during an outage simply fails.
         if not self.api.connected:
-            self.logger.info("Connecting to device... (init)")
-            await self.api.disconnect()
-            # Reset initialization flags
-            self._device_info_initialized = False
-            connection_success = await self.api.connect()
-            if not connection_success:
-                self.logger.error("Failed to connect to MeshCore device")
-                raise UpdateFailed("Failed to connect to MeshCore device")
-        
+            raise UpdateFailed("Device not connected")
+
+
         # Always get battery status
         await self.api.mesh_core.commands.get_bat()
         
@@ -1828,11 +1857,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 contact = self.api.mesh_core.get_contact_by_key_prefix(pubkey_prefix)
                 if contact:
                     _LOGGER.debug(f"Starting telemetry update task for {repeater_name}")
-                    
-                    # Use same interval as repeater update for telemetry
-                    update_interval = repeater_config.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
-                    
-                    # Create and start telemetry task
+
                     telemetry_task = asyncio.create_task(
                         self._update_node_telemetry(contact, repeater_config)
                     )
@@ -1869,9 +1894,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 contact = self.api.mesh_core.get_contact_by_key_prefix(pubkey_prefix)
                 if contact:
                     _LOGGER.debug(f"Starting telemetry update task for client {client_name}")
-                    
-                    update_interval = client_config.get(CONF_CLIENT_UPDATE_INTERVAL, DEFAULT_CLIENT_UPDATE_INTERVAL)
-                    
+
                     telemetry_task = asyncio.create_task(
                         self._update_node_telemetry(contact, client_config)
                     )

@@ -149,12 +149,12 @@ async def validate_common(api: MeshCoreAPI) -> dict[str, Any]:
         connect_success = await asyncio.wait_for(api.connect(), timeout=CONNECTION_TIMEOUT)
         
         # Check if connection was successful
-        if not connect_success or not api._mesh_core:
+        if not connect_success or not api.mesh_core:
             _LOGGER.error("Failed to connect to device - connect() returned False")
             raise CannotConnect("Device connection failed")
-            
+
         # Get node info to verify communication
-        node_info = await api._mesh_core.commands.send_appstart()
+        node_info = await api.mesh_core.commands.send_appstart()
         
         # Validate we got meaningful info back
         if node_info.type == EventType.ERROR:
@@ -173,11 +173,11 @@ async def validate_common(api: MeshCoreAPI) -> dict[str, Any]:
         
         # If we get here, the connection was successful and we got valid info
         return {"title": f"MeshCore Node {device_name}", "name": device_name, "pubkey": public_key}
-    except TimeoutError:
-        raise CannotConnect("Connection timed out")
+    except TimeoutError as ex:
+        raise CannotConnect("Connection timed out") from ex
     except Exception as ex:
         _LOGGER.error("Validation error: %s", ex)
-        raise CannotConnect(f"Failed to connect: {str(ex)}")
+        raise CannotConnect(f"Failed to connect: {str(ex)}") from ex
 
 async def validate_usb_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     """Validate the user input allows us to connect to the USB device."""
@@ -1227,7 +1227,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 {},
             )
             return await async_query_repeater_firmware(
-                coordinator.api.mesh_core,
+                coordinator.api.session,
                 pubkey_prefix,
                 password=(
                     repeater.get(CONF_REPEATER_PASSWORD, "")

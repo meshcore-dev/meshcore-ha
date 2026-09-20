@@ -19,26 +19,25 @@ PREFIX_ONE = "aabbccddeeff"
 PREFIX_TWO = "112233445566"
 
 
-class _Dispatcher:
-    """Minimal dispatcher implementing the query helper's subscription API."""
+class _Session:
+    """Minimal session implementing the query helper's subscription API."""
 
     def __init__(self, event=None):
         self.event = event
+        self.mesh_core = None
         self.listener_registered = False
         self.callback = None
         self.filters = None
 
-    def subscribe(self, event_type, callback, attribute_filters):
+    def subscribe(self, event_type, callback, *, attribute_filters=None):
         self.listener_registered = True
         self.callback = callback
         self.filters = attribute_filters
-        dispatcher = self
 
-        class _Subscription:
-            def unsubscribe(self):
-                dispatcher.callback = None
+        def unsubscribe():
+            self.callback = None
 
-        return _Subscription()
+        return unsubscribe
 
     def dispatch_reply(self):
         if self.event is None or self.callback is None:
@@ -58,9 +57,9 @@ def _event(prefix: str, text: str):
     )
 
 
-def _meshcore(prefix: str, *, event=None, send_error=False, login_timeout=False):
+def _session(prefix: str, *, event=None, send_error=False, login_timeout=False):
     contact = {"public_key": prefix + "0" * 52}
-    dispatcher = _Dispatcher(event)
+    session = _Session(event)
 
     async def send_login_sync(sent_contact, password):
         assert sent_contact is contact
@@ -70,7 +69,7 @@ def _meshcore(prefix: str, *, event=None, send_error=False, login_timeout=False)
         return SimpleNamespace(type=EventType.LOGIN_SUCCESS)
 
     async def send_cmd(sent_contact, command):
-        assert dispatcher.listener_registered
+        assert session.listener_registered
         assert sent_contact is contact
         assert command == "ver"
         result = SimpleNamespace(
@@ -78,11 +77,10 @@ def _meshcore(prefix: str, *, event=None, send_error=False, login_timeout=False)
             payload={},
         )
         if not send_error:
-            dispatcher.dispatch_reply()
+            session.dispatch_reply()
         return result
 
-    return SimpleNamespace(
-        dispatcher=dispatcher,
+    session.mesh_core = SimpleNamespace(
         commands=SimpleNamespace(
             send_login_sync=send_login_sync,
             send_cmd=send_cmd,
@@ -91,6 +89,7 @@ def _meshcore(prefix: str, *, event=None, send_error=False, login_timeout=False)
             contact if requested == prefix else None
         ),
     )
+    return session
 
 
 def _repeater(name: str, prefix: str, version: str) -> dict:
@@ -102,7 +101,7 @@ def _repeater(name: str, prefix: str, version: str) -> dict:
     }
 
 
-async def _setup_buttons(hass, meshcore):
+async def _setup_buttons(hass, session):
     repeaters = [
         _repeater("One", PREFIX_ONE, "1.0.0"),
         _repeater("Two", PREFIX_TWO, "2.0.0"),
@@ -116,7 +115,8 @@ async def _setup_buttons(hass, meshcore):
 
     coordinator = MagicMock()
     coordinator.config_entry = entry
-    coordinator.api.mesh_core = meshcore
+    coordinator.api.connected = True
+    coordinator.api.session = session
     coordinator.pubkey = "hubpubkey"
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
@@ -135,7 +135,7 @@ async def _setup_buttons(hass, meshcore):
 @pytest.mark.asyncio
 async def test_setup_targets_each_repeater_on_its_hub(hass):
     """Create one button per configured repeater with hub-scoped identifiers."""
-    _, buttons = await _setup_buttons(hass, _meshcore(PREFIX_ONE))
+    _, buttons = await _setup_buttons(hass, _session(PREFIX_ONE))
 
     assert [button.pubkey_prefix for button in buttons] == [PREFIX_ONE, PREFIX_TWO]
     assert buttons[0].device_info["identifiers"] == {
@@ -150,8 +150,8 @@ async def test_setup_targets_each_repeater_on_its_hub(hass):
 async def test_press_updates_config_entry_and_repeater_device(hass):
     """Persist a successful reply only to the selected repeater and device."""
     version = "MeshCore 1.14.2 (Build: Sep 18 2026)"
-    meshcore = _meshcore(PREFIX_ONE, event=_event(PREFIX_ONE, version))
-    entry, buttons = await _setup_buttons(hass, meshcore)
+    session = _session(PREFIX_ONE, event=_event(PREFIX_ONE, version))
+    entry, buttons = await _setup_buttons(hass, session)
     registry = dr.async_get(hass)
     target = registry.async_get_or_create(
         config_entry_id=entry.entry_id,
@@ -179,13 +179,13 @@ async def test_press_updates_config_entry_and_repeater_device(hass):
 @pytest.mark.parametrize("failure", ["timeout", "error"])
 async def test_press_failure_preserves_previous_versions(hass, failure):
     """Keep config and registry versions on timeout or command rejection."""
-    meshcore = _meshcore(
+    session = _session(
         PREFIX_ONE,
         event=None,
         send_error=failure == "error",
         login_timeout=failure == "timeout",
     )
-    entry, buttons = await _setup_buttons(hass, meshcore)
+    entry, buttons = await _setup_buttons(hass, session)
     registry = dr.async_get(hass)
     target = registry.async_get_or_create(
         config_entry_id=entry.entry_id,

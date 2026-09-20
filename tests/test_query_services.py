@@ -74,6 +74,23 @@ class _Event:
         self.attributes = attributes or {}
 
 
+class _FakeSession:
+    """Deliver scripted events to session subscribers.
+
+    A scripted ``None`` stands for "this event never arrives", which the
+    service's filtered wait reports exactly as it reports a timeout.
+    """
+
+    def __init__(self, events):
+        self.events = events
+
+    def subscribe(self, event_type, handler, *, attribute_filters=None):
+        """Resolve the caller's waiter straight away and return its remover."""
+        if event_type in self.events:
+            handler(self.events[event_type])
+        return lambda: None
+
+
 def _build_coordinator(
     *,
     contacts_dict=None,          # dict[pubkey→contact] for both get_all_contacts and by-prefix lookup
@@ -140,20 +157,10 @@ def _build_coordinator(
     else:
         mesh_core.commands.send = AsyncMock(return_value=path_send_event)
 
-    # dispatcher.wait_for_event dispatches by event type:
-    #   PATH_RESPONSE → path_response_event (via pre-registered task)
-    #   TRACE_DATA    → trace_event
-    async def _wait_for_event(event_type, attribute_filters=None, timeout=None):
-        if event_type == _ET.PATH_RESPONSE:
-            return path_response_event
-        if event_type == _ET.TRACE_DATA:
-            return trace_event
-        return None
-
-    mesh_core.dispatcher = MagicMock()
-    mesh_core.dispatcher.wait_for_event = AsyncMock(side_effect=_wait_for_event)
-
     coord.api.mesh_core = mesh_core
+    coord.api.session = _FakeSession(
+        {_ET.PATH_RESPONSE: path_response_event, _ET.TRACE_DATA: trace_event}
+    )
 
     coord._discovered_contacts = {}
     return coord

@@ -10,7 +10,8 @@ from pathlib import Path
 
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
+from homeassistant.core import Event as HassEvent
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import entity_registry as er
@@ -318,17 +319,35 @@ def _migrate_unique_ids_scope_contact_diagnostics(
         )
 
 
+async def _async_release_runtime(
+    hass: HomeAssistant, entry: ConfigEntry, coordinator: MeshCoreDataUpdateCoordinator
+) -> None:
+    """Drop an entry's runtime: coordinator jobs, uploaders, then the radio."""
+    hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+    await coordinator.async_shutdown()
+    if getattr(coordinator, "mqtt_uploader", None):
+        await coordinator.mqtt_uploader.async_stop()
+    await coordinator.api.disconnect()
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up MeshCore from a config entry."""
     # Home Assistant can trigger a duplicate setup during rapid reload/update cycles.
-    # Skip duplicate setup for an already initialized entry to avoid double platform setup.
-    if entry.entry_id in hass.data.get(DOMAIN, {}):
+    # A runtime whose radio is still up owns the device and is left alone; a stale
+    # one is torn down first so the entry never ends up with two radio owners.
+    existing = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if existing is not None:
+        if existing.api.connected:
+            _LOGGER.warning(
+                "Duplicate setup call detected for entry %s (%s); skipping",
+                entry.title,
+                entry.entry_id,
+            )
+            return True
         _LOGGER.warning(
-            "Duplicate setup call detected for entry %s (%s); skipping",
-            entry.title,
-            entry.entry_id,
+            "Replacing stale runtime for entry %s (%s)", entry.title, entry.entry_id
         )
-        return True
+        await _async_release_runtime(hass, entry, existing)
 
     # Get configuration from entry
     connection_type = entry.data[CONF_CONNECTION_TYPE]
@@ -381,304 +400,310 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             f"after {max_retries} attempts"
         )
 
-    # --- Public key change detection and entity migration ---
-    # After connecting, the API caches SELF_INFO (including public_key) via send_appstart().
-    # Compare the live key to what's stored in config_entry to detect key changes.
-    live_pubkey = api._last_self_info.get("public_key", "") if connected else ""
-    stored_pubkey = entry.data.get(CONF_PUBKEY, "")
-
-    if live_pubkey and stored_pubkey and live_pubkey != stored_pubkey:
-        _LOGGER.warning(
-            "Public key changed! Old: %s... New: %s... Migrating entities.",
-            stored_pubkey[:12], live_pubkey[:12],
-        )
-
-        # Migrate entity IDs and unique_ids before platforms are set up
-        old_prefix = stored_pubkey[:6]
-        new_prefix = live_pubkey[:6]
-        _migrate_entity_ids(hass, entry, old_prefix, new_prefix)
-
-        # Update config entry with new pubkey so coordinator picks it up
-        new_data = dict(entry.data)
-        new_data[CONF_PUBKEY] = live_pubkey
-        hass.config_entries.async_update_entry(entry, data=new_data)
-
-        # Create persistent repair issue to warn about automation/dashboard references
-        ir.async_create_issue(
-            hass,
-            DOMAIN,
-            f"pubkey_changed_{entry.entry_id}",
-            is_fixable=False,
-            is_persistent=True,
-            severity=ir.IssueSeverity.WARNING,
-            translation_key=REPAIR_PUBKEY_CHANGED,
-            translation_placeholders={
-                "old_key": stored_pubkey[:12],
-                "new_key": live_pubkey[:12],
-            },
-        )
-    elif live_pubkey and not stored_pubkey:
-        # First time getting pubkey (shouldn't normally happen, but handle gracefully)
-        new_data = dict(entry.data)
-        new_data[CONF_PUBKEY] = live_pubkey
-        hass.config_entries.async_update_entry(entry, data=new_data)
-        _LOGGER.info("Stored initial public key: %s...", live_pubkey[:12])
-
-    # One-time migration: remove device name from unique_ids
-    _migrate_unique_ids_remove_name(hass, entry)
-    # One-time migration: scope contact-diagnostic unique_ids by
-    # entry_id so multi-entry installs don't collide on shared mesh
-    # contacts (F-U1). Idempotent.
-    _migrate_unique_ids_scope_contact_diagnostics(hass, entry)
-
-    # TODO: remove this with contact refresh interval migration?
-    # Get the messages interval for base update frequency
-    # Check options first, then data, then use default
-    messages_interval = entry.options.get(
-        CONF_MESSAGES_INTERVAL,
-        entry.data.get(CONF_MESSAGES_INTERVAL, DEFAULT_UPDATE_TICK)
-    )
-    
-    coordinator = MeshCoreDataUpdateCoordinator(
-        hass,
-        _LOGGER,
-        name=DOMAIN,
-        update_interval=timedelta(seconds=messages_interval),
-        api=api,
-        config_entry=entry,
-    )
-    
-    # Initialize all repeater next update times to 0 so they get updated immediately
-    for repeater in coordinator._tracked_repeaters:
-        if repeater.get("pubkey_prefix"):
-            coordinator._next_repeater_update_times[repeater.get("pubkey_prefix")] = 0
-    
-    # Load discovered contacts from storage before platforms set up
     try:
-        stored_contacts = await coordinator._store.async_load()
-        if stored_contacts:
-            coordinator._discovered_contacts = stored_contacts
-            _LOGGER.info(f"Loaded {len(stored_contacts)} discovered contacts from storage")
-    except Exception as ex:
-        _LOGGER.error(f"Error loading discovered contacts: {ex}")
+        # --- Public key change detection and entity migration ---
+        # After connecting, the API caches SELF_INFO (including public_key) via send_appstart().
+        # Compare the live key to what's stored in config_entry to detect key changes.
+        live_pubkey = api.self_info.get("public_key", "") if connected else ""
+        stored_pubkey = entry.data.get(CONF_PUBKEY, "")
 
-    # Enforce discovered contacts limit on startup (trim dict + save only, no entity cleanup)
-    if entry.data.get(CONF_LIMIT_DISCOVERED_CONTACTS, False):
-        max_contacts = entry.data.get(CONF_MAX_DISCOVERED_CONTACTS, DEFAULT_MAX_DISCOVERED_CONTACTS)
-        if len(coordinator._discovered_contacts) > max_contacts:
-            evict_count = len(coordinator._discovered_contacts) - max_contacts
-            keys_to_evict = list(coordinator._discovered_contacts.keys())[:evict_count]
-            for key in keys_to_evict:
-                del coordinator._discovered_contacts[key]
-            try:
-                await coordinator._store.async_save(coordinator._discovered_contacts)
-            except Exception as ex:
-                _LOGGER.error(f"Error saving discovered contacts after startup eviction: {ex}")
-            _LOGGER.info(f"Evicted {evict_count} discovered contacts on startup (limit: {max_contacts})")
+        if live_pubkey and stored_pubkey and live_pubkey != stored_pubkey:
+            _LOGGER.warning(
+                "Public key changed! Old: %s... New: %s... Migrating entities.",
+                stored_pubkey[:12], live_pubkey[:12],
+            )
 
-    # Load contacts from device on initialization
-    if connected and api.mesh_core:
-        try:
-            _LOGGER.info("Loading contacts from device on initialization...")
-            contacts_changed = await api.mesh_core.ensure_contacts(follow=False)
+            # Migrate entity IDs and unique_ids before platforms are set up
+            old_prefix = stored_pubkey[:6]
+            new_prefix = live_pubkey[:6]
+            _migrate_entity_ids(hass, entry, old_prefix, new_prefix)
 
-            # Index contacts by 12-char prefix
-            coordinator._contacts = {}
-            for contact in api.mesh_core.contacts.values():
-                public_key = contact.get("public_key")
-                if public_key:
-                    prefix = public_key[:12]
-                    coordinator._contacts[prefix] = contact
-                    # Mark each contact as dirty so binary sensors update
-                    coordinator.mark_contact_dirty(prefix)
+            # Update config entry with new pubkey so coordinator picks it up
+            new_data = dict(entry.data)
+            new_data[CONF_PUBKEY] = live_pubkey
+            hass.config_entries.async_update_entry(entry, data=new_data)
 
-            _LOGGER.info(f"Loaded {len(coordinator._contacts)} contacts from device")
-        except Exception as ex:
-            _LOGGER.error(f"Error loading contacts from device: {ex}")
+            # Create persistent repair issue to warn about automation/dashboard references
+            ir.async_create_issue(
+                hass,
+                DOMAIN,
+                f"pubkey_changed_{entry.entry_id}",
+                is_fixable=False,
+                is_persistent=True,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key=REPAIR_PUBKEY_CHANGED,
+                translation_placeholders={
+                    "old_key": stored_pubkey[:12],
+                    "new_key": live_pubkey[:12],
+                },
+            )
+        elif live_pubkey and not stored_pubkey:
+            # First time getting pubkey (shouldn't normally happen, but handle gracefully)
+            new_data = dict(entry.data)
+            new_data[CONF_PUBKEY] = live_pubkey
+            hass.config_entries.async_update_entry(entry, data=new_data)
+            _LOGGER.info("Stored initial public key: %s...", live_pubkey[:12])
 
-    # Load channel info eagerly so RX_LOG decryption works before the first
-    # coordinator update fires (avoids empty _channel_info causing pending_cache_keys=[]).
-    if connected and api.mesh_core:
-        try:
-            _LOGGER.info("Loading channel info on startup for RX_LOG correlation...")
-            await coordinator.fetch_all_channel_info()
-            _LOGGER.info(f"Startup channel info loaded: {len(coordinator._channel_info)} channels")
-        except Exception as ex:
-            _LOGGER.error(f"Error loading channel info on startup: {ex}")
+        # One-time migration: remove device name from unique_ids
+        _migrate_unique_ids_remove_name(hass, entry)
+        # One-time migration: scope contact-diagnostic unique_ids by
+        # entry_id so multi-entry installs don't collide on shared mesh
+        # contacts (F-U1). Idempotent.
+        _migrate_unique_ids_scope_contact_diagnostics(hass, entry)
 
-    # Store coordinator for this entry
-    hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN][entry.entry_id] = coordinator
-
-    integration_version = await hass.async_add_executor_job(_read_integration_version)
-    try:
-        mqtt_uploader = MeshCoreMqttUploader(
+        # TODO: remove this with contact refresh interval migration?
+        # Get the messages interval for base update frequency
+        # Check options first, then data, then use default
+        messages_interval = entry.options.get(
+            CONF_MESSAGES_INTERVAL,
+            entry.data.get(CONF_MESSAGES_INTERVAL, DEFAULT_UPDATE_TICK)
+        )
+    
+        coordinator = MeshCoreDataUpdateCoordinator(
             hass,
             _LOGGER,
-            entry,
-            api=coordinator.api,
-            integration_version=integration_version,
+            name=DOMAIN,
+            update_interval=timedelta(seconds=messages_interval),
+            api=api,
+            config_entry=entry,
         )
-        await mqtt_uploader.async_start()
-        coordinator.mqtt_uploader = mqtt_uploader
-    except Exception as ex:
-        _LOGGER.warning("MQTT uploader failed to start: %s - continuing without it", ex)
-        coordinator.mqtt_uploader = None
-
-    try:
-        map_uploader = MeshCoreMapUploader(hass, _LOGGER, entry, api=coordinator.api)
-        if coordinator.api.self_info:
-            map_uploader.update_self_info(coordinator.api.self_info)
-        coordinator.map_uploader = map_uploader
-    except Exception as ex:
-        _LOGGER.warning("Map Auto Uploader failed to initialize: %s - continuing without it", ex)
-        coordinator.map_uploader = None
     
-    # Load persisted neighbor data before sensor platform setup so that
-    # sensor.py can recreate neighbor sensor entities from the stored data.
-    await coordinator.async_load_neighbor_data()
-
-    # Set up all platforms for this device
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-    # Bring the EXISTING discovered-contact population into line with the
-    # configured contact discovery mode now that platforms are up (entities,
-    # the binary_sensor add-callback, and the tracking sets all exist). Runs
-    # once per setup with the correct post-reload coordinator, so it covers
-    # start, reload, and the reload a mode switch triggers -- without the
-    # pre-reload race. full is a near no-op (the setup create-pass already
-    # built entities); data_only/off remove the discovered per-contact
-    # entities, and off also clears the discovered set.
-    try:
-        await coordinator.async_reconcile_discovered_for_mode()
-    except Exception as ex:
-        _LOGGER.error("Error reconciling discovered contacts to mode: %s", ex)
-
-    # Register static paths for icons
-    should_cache = False
-    icons_path = Path(__file__).parent / "www" / "icons"
+        # Initialize all repeater next update times to 0 so they get updated immediately
+        for repeater in coordinator._tracked_repeaters:
+            if repeater.get("pubkey_prefix"):
+                coordinator._next_repeater_update_times[repeater.get("pubkey_prefix")] = 0
     
-    if not hass.data.get(STATIC_PATH_REGISTERED_KEY):
-        await hass.http.async_register_static_paths([
-            StaticPathConfig("/api/meshcore/static", str(icons_path), should_cache)
-        ])
-        hass.data[STATIC_PATH_REGISTERED_KEY] = True
-    
-    # Set up services
-    await async_setup_services(hass)
-    
-    # Register update listener for config entry updates
-    entry.async_on_unload(entry.add_update_listener(async_update_options))
-    
-    # Subscribe to all MeshCore events and forward them to the HA event bus
-    async def forward_all_events(event):
-        """Forward all MeshCore events to Home Assistant event bus."""
-        if not event:
-            return
+        # Load discovered contacts from storage before platforms set up
+        try:
+            stored_contacts = await coordinator._store.async_load()
+            if stored_contacts:
+                coordinator._discovered_contacts = stored_contacts
+                _LOGGER.info(f"Loaded {len(stored_contacts)} discovered contacts from storage")
+        except Exception as ex:
+            _LOGGER.error(f"Error loading discovered contacts: {ex}")
 
-        # Convert event type to string if possible
-        event_type_str = str(event.type) if hasattr(event, "type") else "UNKNOWN"
+        # Enforce discovered contacts limit on startup (trim dict + save only, no entity cleanup)
+        if entry.data.get(CONF_LIMIT_DISCOVERED_CONTACTS, False):
+            max_contacts = entry.data.get(CONF_MAX_DISCOVERED_CONTACTS, DEFAULT_MAX_DISCOVERED_CONTACTS)
+            if len(coordinator._discovered_contacts) > max_contacts:
+                evict_count = len(coordinator._discovered_contacts) - max_contacts
+                keys_to_evict = list(coordinator._discovered_contacts.keys())[:evict_count]
+                for key in keys_to_evict:
+                    del coordinator._discovered_contacts[key]
+                try:
+                    await coordinator._store.async_save(coordinator._discovered_contacts)
+                except Exception as ex:
+                    _LOGGER.error(f"Error saving discovered contacts after startup eviction: {ex}")
+                _LOGGER.info(f"Evicted {evict_count} discovered contacts on startup (limit: {max_contacts})")
+
+        # Load contacts from device on initialization
+        if connected and api.mesh_core:
+            try:
+                _LOGGER.info("Loading contacts from device on initialization...")
+                await api.mesh_core.ensure_contacts(follow=False)
+
+                # Index contacts by 12-char prefix
+                coordinator._contacts = {}
+                for contact in api.mesh_core.contacts.values():
+                    public_key = contact.get("public_key")
+                    if public_key:
+                        prefix = public_key[:12]
+                        coordinator._contacts[prefix] = contact
+                        # Mark each contact as dirty so binary sensors update
+                        coordinator.mark_contact_dirty(prefix)
+
+                _LOGGER.info(f"Loaded {len(coordinator._contacts)} contacts from device")
+            except Exception as ex:
+                _LOGGER.error(f"Error loading contacts from device: {ex}")
+
+        # Load channel info eagerly so RX_LOG decryption works before the first
+        # coordinator update fires (avoids empty _channel_info causing pending_cache_keys=[]).
+        if connected and api.mesh_core:
+            try:
+                _LOGGER.info("Loading channel info on startup for RX_LOG correlation...")
+                await coordinator.fetch_all_channel_info()
+                _LOGGER.info(f"Startup channel info loaded: {len(coordinator._channel_info)} channels")
+            except Exception as ex:
+                _LOGGER.error(f"Error loading channel info on startup: {ex}")
+
+        # Store coordinator for this entry
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][entry.entry_id] = coordinator
+
+        integration_version = await hass.async_add_executor_job(_read_integration_version)
+        try:
+            mqtt_uploader = MeshCoreMqttUploader(
+                hass,
+                _LOGGER,
+                entry,
+                api=coordinator.api,
+                integration_version=integration_version,
+            )
+            await mqtt_uploader.async_start()
+            coordinator.mqtt_uploader = mqtt_uploader
+        except Exception as ex:
+            _LOGGER.warning("MQTT uploader failed to start: %s - continuing without it", ex)
+            coordinator.mqtt_uploader = None
 
         try:
-            sanitized_payload = sanitize_event_data(event.payload)
-
-            # Special handling for RX_LOG events
-            if hasattr(event, "type") and event.type == EventType.RX_LOG_DATA:
-                # Parse basic packet structure
-                parsed_rx_log = parse_rx_log_data(event.payload)
-
-                # Also attempt to decrypt GroupText payload
-                decrypted_data = parse_and_decrypt_rx_log(event.payload, coordinator._channel_info)
-
-                if isinstance(sanitized_payload, dict):
-                    if parsed_rx_log:
-                        sanitized_payload["parsed"] = parsed_rx_log
-                    if decrypted_data:
-                        sanitized_payload["decrypted"] = decrypted_data
-
-                # Store for correlation if decryption succeeded
-                if decrypted_data.get("decrypted") and decrypted_data.get("timestamp"):
-                    channel_idx = decrypted_data["channel_idx"]
-                    timestamp = decrypted_data["timestamp"]
-                    text = decrypted_data.get("text")
-
-                    hash_key = create_message_correlation_key(channel_idx, timestamp)
-
-                    route_type = event.payload.get("route_type")
-                    flood_scope = None
-                    if route_type == 0:
-                        # 'payload' hex starts at the header byte;
-                        # 'raw_hex' has 2 framing bytes before the header.
-                        pkt_hex = event.payload.get("payload", "")
-                        pkt_payload = event.payload.get("pkt_payload", b"")
-                        payload_type_int = event.payload.get("payload_type", 0)
-                        scope_keys = load_flood_scope_keys(
-                            coordinator.config_entry.data.get(CONF_FLOOD_SCOPES, "")
-                        )
-                        if scope_keys and pkt_hex and pkt_payload:
-                            try:
-                                pkt_bytes = bytes.fromhex(pkt_hex) if isinstance(pkt_hex, str) else pkt_hex
-                                # header(1) + transport_codes[0](2 LE) + transport_codes[1](2)
-                                if len(pkt_bytes) >= 3:
-                                    transport_code = int.from_bytes(pkt_bytes[1:3], "little")
-                                    flood_scope = match_flood_scope(
-                                        transport_code, payload_type_int, pkt_payload, scope_keys
-                                    )
-                            except Exception:
-                                pass
-
-                    rx_log_entry = {
-                        "channel_idx": channel_idx,
-                        "channel_name": decrypted_data.get("channel_name"),
-                        "timestamp": timestamp,
-                        "text": text,
-                        "snr": event.payload.get("snr"),
-                        "rssi": event.payload.get("rssi"),
-                        "path_len": decrypted_data.get("path_len"),
-                        "path": decrypted_data.get("path"),
-                        "path_hash_size": decrypted_data.get("path_hash_size"),
-                        "channel_hash": decrypted_data.get("channel_hash"),
-                        "route_type": route_type,
-                        "route_typename": event.payload.get("route_typename"),
-                        "region_scope": route_type == 0,
-                        "flood_scope": flood_scope,
-                    }
-
-                    if hash_key in coordinator._pending_rx_logs:
-                        coordinator._pending_rx_logs[hash_key].append(rx_log_entry)
-                    else:
-                        coordinator._pending_rx_logs[hash_key] = [rx_log_entry]
-
-                    _LOGGER.debug(f"Stored RX_LOG for correlation: ch={channel_idx}, hash={hash_key[:8]}")
-
-            # Fire event to HA event bus with sanitized payload
-            _LOGGER.debug(f"Firing event to HA event bus: {event}")
-            hass.bus.async_fire(f"{DOMAIN}_raw_event", {
-                "event_type": event_type_str,
-                "payload": sanitized_payload,
-                "timestamp": time.time()
-            })
-            if getattr(coordinator, "mqtt_uploader", None):
-                hass.async_create_task(
-                    coordinator.mqtt_uploader.async_publish_raw_event(event_type_str, sanitized_payload)
-                )
+            map_uploader = MeshCoreMapUploader(hass, _LOGGER, entry, api=coordinator.api)
+            if coordinator.api.self_info:
+                map_uploader.update_self_info(coordinator.api.self_info)
+            coordinator.map_uploader = map_uploader
         except Exception as ex:
-            _LOGGER.error(f"Error serializing event payload: {ex}")
-            # Fire event without payload to ensure delivery
-            hass.bus.async_fire(f"{DOMAIN}_raw_event", {
-                "event_type": event_type_str,
-                "payload": None,
-                "timestamp": time.time(),
-                "serialization_error": str(ex)
-            })
-        
-    # Add the all-events listener
-    if coordinator.api.mesh_core:
-        _LOGGER.info("Setting up all-events subscriber for MeshCore")
-        coordinator.api.mesh_core.subscribe(
-            None,
-            forward_all_events
+            _LOGGER.warning("Map Auto Uploader failed to initialize: %s - continuing without it", ex)
+            coordinator.map_uploader = None
+    
+        # Load persisted neighbor data before sensor platform setup so that
+        # sensor.py can recreate neighbor sensor entities from the stored data.
+        await coordinator.async_load_neighbor_data()
+
+        # Set up all platforms for this device
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+        # Bring the EXISTING discovered-contact population into line with the
+        # configured contact discovery mode now that platforms are up (entities,
+        # the binary_sensor add-callback, and the tracking sets all exist). Runs
+        # once per setup with the correct post-reload coordinator, so it covers
+        # start, reload, and the reload a mode switch triggers -- without the
+        # pre-reload race. full is a near no-op (the setup create-pass already
+        # built entities); data_only/off remove the discovered per-contact
+        # entities, and off also clears the discovered set.
+        try:
+            await coordinator.async_reconcile_discovered_for_mode()
+        except Exception as ex:
+            _LOGGER.error("Error reconciling discovered contacts to mode: %s", ex)
+
+        # Register static paths for icons
+        should_cache = False
+        icons_path = Path(__file__).parent / "www" / "icons"
+    
+        if not hass.data.get(STATIC_PATH_REGISTERED_KEY):
+            await hass.http.async_register_static_paths([
+                StaticPathConfig("/api/meshcore/static", str(icons_path), should_cache)
+            ])
+            hass.data[STATIC_PATH_REGISTERED_KEY] = True
+    
+        # Set up services
+        await async_setup_services(hass)
+    
+        # Register update listener for config entry updates
+        entry.async_on_unload(entry.add_update_listener(async_update_options))
+
+        async def close_session_on_stop(event: HassEvent) -> None:
+            """Release the radio when Home Assistant shuts down."""
+            await api.disconnect()
+
+        entry.async_on_unload(
+            hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, close_session_on_stop)
         )
+
+        # Subscribe to all MeshCore events and forward them to the HA event bus
+        async def forward_all_events(event):
+            """Forward all MeshCore events to Home Assistant event bus."""
+            if not event:
+                return
+
+            # Convert event type to string if possible
+            event_type_str = str(event.type) if hasattr(event, "type") else "UNKNOWN"
+
+            try:
+                sanitized_payload = sanitize_event_data(event.payload)
+
+                # Special handling for RX_LOG events
+                if hasattr(event, "type") and event.type == EventType.RX_LOG_DATA:
+                    # Parse basic packet structure
+                    parsed_rx_log = parse_rx_log_data(event.payload)
+
+                    # Also attempt to decrypt GroupText payload
+                    decrypted_data = parse_and_decrypt_rx_log(event.payload, coordinator._channel_info)
+
+                    if isinstance(sanitized_payload, dict):
+                        if parsed_rx_log:
+                            sanitized_payload["parsed"] = parsed_rx_log
+                        if decrypted_data:
+                            sanitized_payload["decrypted"] = decrypted_data
+
+                    # Store for correlation if decryption succeeded
+                    if decrypted_data.get("decrypted") and decrypted_data.get("timestamp"):
+                        channel_idx = decrypted_data["channel_idx"]
+                        timestamp = decrypted_data["timestamp"]
+                        text = decrypted_data.get("text")
+
+                        hash_key = create_message_correlation_key(channel_idx, timestamp)
+
+                        route_type = event.payload.get("route_type")
+                        flood_scope = None
+                        if route_type == 0:
+                            # 'payload' hex starts at the header byte;
+                            # 'raw_hex' has 2 framing bytes before the header.
+                            pkt_hex = event.payload.get("payload", "")
+                            pkt_payload = event.payload.get("pkt_payload", b"")
+                            payload_type_int = event.payload.get("payload_type", 0)
+                            scope_keys = load_flood_scope_keys(
+                                coordinator.config_entry.data.get(CONF_FLOOD_SCOPES, "")
+                            )
+                            if scope_keys and pkt_hex and pkt_payload:
+                                try:
+                                    pkt_bytes = bytes.fromhex(pkt_hex) if isinstance(pkt_hex, str) else pkt_hex
+                                    # header(1) + transport_codes[0](2 LE) + transport_codes[1](2)
+                                    if len(pkt_bytes) >= 3:
+                                        transport_code = int.from_bytes(pkt_bytes[1:3], "little")
+                                        flood_scope = match_flood_scope(
+                                            transport_code, payload_type_int, pkt_payload, scope_keys
+                                        )
+                                except Exception:
+                                    pass
+
+                        rx_log_entry = {
+                            "channel_idx": channel_idx,
+                            "channel_name": decrypted_data.get("channel_name"),
+                            "timestamp": timestamp,
+                            "text": text,
+                            "snr": event.payload.get("snr"),
+                            "rssi": event.payload.get("rssi"),
+                            "path_len": decrypted_data.get("path_len"),
+                            "path": decrypted_data.get("path"),
+                            "path_hash_size": decrypted_data.get("path_hash_size"),
+                            "channel_hash": decrypted_data.get("channel_hash"),
+                            "route_type": route_type,
+                            "route_typename": event.payload.get("route_typename"),
+                            "region_scope": route_type == 0,
+                            "flood_scope": flood_scope,
+                        }
+
+                        if hash_key in coordinator._pending_rx_logs:
+                            coordinator._pending_rx_logs[hash_key].append(rx_log_entry)
+                        else:
+                            coordinator._pending_rx_logs[hash_key] = [rx_log_entry]
+
+                        _LOGGER.debug(f"Stored RX_LOG for correlation: ch={channel_idx}, hash={hash_key[:8]}")
+
+                # Fire event to HA event bus with sanitized payload
+                _LOGGER.debug(f"Firing event to HA event bus: {event}")
+                hass.bus.async_fire(f"{DOMAIN}_raw_event", {
+                    "event_type": event_type_str,
+                    "payload": sanitized_payload,
+                    "timestamp": time.time()
+                })
+                if getattr(coordinator, "mqtt_uploader", None):
+                    hass.async_create_task(
+                        coordinator.mqtt_uploader.async_publish_raw_event(event_type_str, sanitized_payload)
+                    )
+            except Exception as ex:
+                _LOGGER.error(f"Error serializing event payload: {ex}")
+                # Fire event without payload to ensure delivery
+                hass.bus.async_fire(f"{DOMAIN}_raw_event", {
+                    "event_type": event_type_str,
+                    "payload": None,
+                    "timestamp": time.time(),
+                    "serialization_error": str(ex)
+                })
+        
+        # Add the all-events listener
+        session = coordinator.api.session
+        _LOGGER.info("Setting up all-events subscriber for MeshCore")
+        entry.async_on_unload(session.subscribe(None, forward_all_events))
 
         if coordinator.map_uploader:
 
@@ -691,8 +716,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     str(event.type), event.payload
                 )
 
-            coordinator.api.mesh_core.subscribe(EventType.SELF_INFO, map_self_info_handler)
-            coordinator.api.mesh_core.subscribe(EventType.RX_LOG_DATA, map_rx_log_handler)
+            entry.async_on_unload(
+                session.subscribe(EventType.SELF_INFO, map_self_info_handler)
+            )
+            entry.async_on_unload(
+                session.subscribe(EventType.RX_LOG_DATA, map_rx_log_handler)
+            )
 
         # Subscribe to NEW_CONTACT events to track discovered contacts
         async def handle_new_contact(event):
@@ -741,10 +770,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 coordinator.async_set_updated_data(updated_data)
 
         _LOGGER.info("Setting up NEW_CONTACT event listener")
-        coordinator.api.mesh_core.subscribe(
-            EventType.NEW_CONTACT,
-            handle_new_contact
-        )
+        entry.async_on_unload(session.subscribe(EventType.NEW_CONTACT, handle_new_contact))
 
         # Subscribe to MESSAGES_WAITING for instant message delivery.
         # The companion firmware sends this push notification when messages
@@ -757,11 +783,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.debug("MESSAGES_WAITING received, triggering immediate message fetch")
             asyncio.create_task(coordinator.async_flush_messages())
 
-        coordinator.api.mesh_core.subscribe(
-            EventType.MESSAGES_WAITING,
-            handle_messages_waiting
+        entry.async_on_unload(
+            session.subscribe(EventType.MESSAGES_WAITING, handle_messages_waiting)
         )
         _LOGGER.info("MESSAGES_WAITING auto-fetch subscriber registered")
+    except Exception:
+        _LOGGER.exception("Setup failed for entry %s; rolling back", entry.entry_id)
+        runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+        if runtime is not None:
+            await _async_release_runtime(hass, entry, runtime)
+        else:
+            await api.disconnect()
+        raise
 
     # Fetch initial data immediately
     # await coordinator._async_update_data()
@@ -775,28 +808,24 @@ async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload a config entry."""
-    # Unload platforms
+    """Unload a config entry, silencing the radio before the platforms go away."""
+    coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+
+    # Entities stop receiving radio pushes before teardown, but a platform may
+    # still refuse the unload, so nothing is destroyed until that result is known.
+    if coordinator is not None:
+        coordinator.api.session.pause_forwarding()
+
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    
-    # Remove entry from data
-    if unload_ok and entry.entry_id in hass.data[DOMAIN]:
-        # Get coordinator and clean up
-        coordinator = hass.data[DOMAIN][entry.entry_id]
-        
-        # Remove any event listeners registered by the coordinator
-        if hasattr(coordinator, "_remove_listeners"):
-            for remove_listener in coordinator._remove_listeners:
-                remove_listener()
-                
-        # Disconnect from the device
-        if getattr(coordinator, "mqtt_uploader", None):
-            await coordinator.mqtt_uploader.async_stop()
-        await coordinator.api.disconnect()
-        
-        # Remove entry
-        hass.data[DOMAIN].pop(entry.entry_id)
-        
+
+    if not unload_ok:
+        if coordinator is not None:
+            coordinator.api.session.resume_forwarding()
+        return False
+
+    if coordinator is not None:
+        await _async_release_runtime(hass, entry, coordinator)
+
         # Unsubscribe from the message_sent event listener for this entry
         event_key = f"{DOMAIN}_message_sent_listener_{entry.entry_id}"
         if event_key in hass.data[DOMAIN]:
@@ -804,7 +833,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if callable(unsubscribe_func):
                 unsubscribe_func()
                 _LOGGER.debug("Unsubscribed message_sent event listener")
-        
+
         # If no more entries, unload services
         if not hass.data[DOMAIN]:
             await async_unload_services(hass)

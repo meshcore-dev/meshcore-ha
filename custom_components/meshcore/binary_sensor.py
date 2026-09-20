@@ -237,9 +237,6 @@ async def async_setup_entry(
     # Store callback so services (e.g. add_contact) can create binary sensors dynamically
     coordinator.binary_sensor_async_add_entities = async_add_entities
 
-    # Set up event listeners
-    listeners = []
-    
     # Create event handlers
     @callback
     def contacts_event_handler(event):
@@ -253,31 +250,16 @@ async def async_setup_entry(
     async def channel_message_handler(event):
         await handle_channel_message(event, coordinator, async_add_entities)
     
-    # Subscribe to events directly from mesh_core
-    if coordinator.api.mesh_core:
-        # Contact discovery for diagnostic entities (both CONTACTS and NEW_CONTACT events)
-        listeners.append(coordinator.api.mesh_core.subscribe(
-            EventType.CONTACTS,
-            contacts_event_handler
-        ))
+    # Subscribe through the session so the handlers survive a reconnect
+    session = coordinator.api.session
+    for event_type, handler in (
+        (EventType.CONTACTS, contacts_event_handler),
+        (EventType.NEW_CONTACT, contacts_event_handler),
+        (EventType.CONTACT_MSG_RECV, contact_message_handler),
+        (EventType.CHANNEL_MSG_RECV, channel_message_handler),
+    ):
+        entry.async_on_unload(session.subscribe(event_type, handler))
 
-        listeners.append(coordinator.api.mesh_core.subscribe(
-            EventType.NEW_CONTACT,
-            contacts_event_handler
-        ))
-
-        # Message events to create entities on first message
-        listeners.append(coordinator.api.mesh_core.subscribe(
-            EventType.CONTACT_MSG_RECV,
-            contact_message_handler
-        ))
-
-        # Channel message events
-        listeners.append(coordinator.api.mesh_core.subscribe(
-            EventType.CHANNEL_MSG_RECV,
-            channel_message_handler
-        ))
-        
     # Create sensors for any existing contacts (including discovered ones loaded from storage)
     existing_contacts = coordinator.get_all_contacts()
     if existing_contacts:
@@ -879,12 +861,15 @@ class MeshCoreSelfDiagnosticBinarySensor(CoordinatorEntity, BinarySensorEntity):
     async def async_added_to_hass(self) -> None:
         """Subscribe to STATS_CORE and decode this sensor's fault bit."""
         await super().async_added_to_hass()
-        meshcore = self.coordinator.api.mesh_core
 
         def update_flag(event) -> None:
+            if self.hass is None:
+                return
             errors = event.payload.get("errors")
             if isinstance(errors, int):
                 self._attr_is_on = bool(errors & self._bit_mask)
                 self.async_write_ha_state()
 
-        meshcore.dispatcher.subscribe(EventType.STATS_CORE, update_flag)
+        self.async_on_remove(
+            self.coordinator.api.session.subscribe(EventType.STATS_CORE, update_flag)
+        )

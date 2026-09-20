@@ -531,7 +531,7 @@ async def async_setup_entry(
 
     # Initialize telemetry sensor manager for dynamic sensor creation
     coordinator.telemetry_manager = TelemetrySensorManager(coordinator, async_add_entities)
-    await coordinator.telemetry_manager.setup_telemetry_listener()
+    entry.async_on_unload(coordinator.telemetry_manager.setup_telemetry_listener())
 
     # First, handle cleanup of removed repeater devices
     # Get registries
@@ -1046,17 +1046,16 @@ class MeshCoreSensor(CoordinatorEntity, SensorEntity):
     async def async_added_to_hass(self):
         """Register event handlers when entity is added to hass."""
         await super().async_added_to_hass()
-        meshcore = self.coordinator.api.mesh_core
+        session = self.coordinator.api.session
         key = self.entity_description.key
 
         if key == "node_status":
             def update_status(event: Event):
+                if self.hass is None:
+                    return
                 self._native_value = "online" if self.coordinator.api.connected else "offline"
                 self.async_write_ha_state()
-            meshcore.dispatcher.subscribe(
-                None,
-                update_status,
-            )
+            self.async_on_remove(session.subscribe(None, update_status))
             # Seed initial state from the current connection: the API may
             # already be connected before the first event arrives post-restart.
             self._native_value = "online" if self.coordinator.api.connected else "offline"
@@ -1064,102 +1063,90 @@ class MeshCoreSensor(CoordinatorEntity, SensorEntity):
         elif key == "battery_voltage":
             def update_battery(event: Event):
                 self._native_value = event.payload.get("level") / 1000.0  # Convert from mV to V
-            meshcore.dispatcher.subscribe(
-                EventType.BATTERY,
-                update_battery,
-            )
+            self.async_on_remove(session.subscribe(EventType.BATTERY, update_battery))
 
         elif key == "battery_percentage":
             def update_battery(event: Event):
                 voltage_mv = event.payload.get("level")
                 self._native_value = calculate_battery_percentage(voltage_mv)
-            meshcore.dispatcher.subscribe(
-                EventType.BATTERY,
-                update_battery,
-            )
+            self.async_on_remove(session.subscribe(EventType.BATTERY, update_battery))
 
         elif key == "node_count":
             def update_count(event: Event):
+                if self.hass is None:
+                    return
                 # Count all added contacts + self
                 self._native_value = len([c for c in self.coordinator.get_all_contacts() if c.get("added_to_node", True)]) + 1
                 self.async_write_ha_state()
-            meshcore.dispatcher.subscribe(
-                EventType.CONTACTS,
-                update_count,
-            )
-            meshcore.dispatcher.subscribe(
-                EventType.NEW_CONTACT,
-                update_count,
-            )
+            self.async_on_remove(session.subscribe(EventType.CONTACTS, update_count))
+            self.async_on_remove(session.subscribe(EventType.NEW_CONTACT, update_count))
 
         elif key == "tx_power":
             def update_tx(event: Event):
+                if self.hass is None:
+                    return
                 self._native_value = event.payload.get("tx_power")
                 self.async_write_ha_state()
-            meshcore.dispatcher.subscribe(
-                EventType.SELF_INFO,
-                update_tx,
-            )
+            self.async_on_remove(session.subscribe(EventType.SELF_INFO, update_tx))
 
         elif key == "latitude":
             def update_lat(event: Event):
+                if self.hass is None:
+                    return
                 self._native_value = event.payload.get("adv_lat")
                 self.async_write_ha_state()
-            meshcore.dispatcher.subscribe(
-                EventType.SELF_INFO,
-                update_lat,
-            )
+            self.async_on_remove(session.subscribe(EventType.SELF_INFO, update_lat))
 
         elif key == "longitude":
             def update_lon(event: Event):
+                if self.hass is None:
+                    return
                 self._native_value = event.payload.get("adv_lon")
                 self.async_write_ha_state()
-            meshcore.dispatcher.subscribe(
-                EventType.SELF_INFO,
-                update_lon,
-            )
+            self.async_on_remove(session.subscribe(EventType.SELF_INFO, update_lon))
 
         elif key == "frequency":
             def update_freq(event: Event):
+                if self.hass is None:
+                    return
                 self._native_value = event.payload.get("radio_freq")
                 self.async_write_ha_state()
-            meshcore.dispatcher.subscribe(
-                EventType.SELF_INFO,
-                update_freq,
-            )
+            self.async_on_remove(session.subscribe(EventType.SELF_INFO, update_freq))
 
         elif key == "bandwidth":
             def update_bw(event: Event):
+                if self.hass is None:
+                    return
                 self._native_value = event.payload.get("radio_bw")
                 self.async_write_ha_state()
-            meshcore.dispatcher.subscribe(
-                EventType.SELF_INFO,
-                update_bw,
-            )
+            self.async_on_remove(session.subscribe(EventType.SELF_INFO, update_bw))
 
         elif key == "spreading_factor":
             def update_sf(event: Event):
+                if self.hass is None:
+                    return
                 self._native_value = event.payload.get("radio_sf")
                 self.async_write_ha_state()
-            meshcore.dispatcher.subscribe(
-                EventType.SELF_INFO,
-                update_sf,
-            )
+            self.async_on_remove(session.subscribe(EventType.SELF_INFO, update_sf))
 
         # --- Self-diagnostic sensors (local get_stats_* polling) ---
         # STATS_CORE
         elif key == "uptime":
             def update_uptime(event: Event):
+                if self.hass is None:
+                    return
                 value = event.payload.get("uptime_secs")
                 self._native_value = round(value / 60, 1) if isinstance(value, (int, float)) else None
                 self.async_write_ha_state()
-            meshcore.dispatcher.subscribe(EventType.STATS_CORE, update_uptime)
+            self.async_on_remove(session.subscribe(EventType.STATS_CORE, update_uptime))
 
         elif key == "tx_queue_len":
             def update_queue_len(event: Event):
+                if self.hass is None:
+                    return
                 self._native_value = event.payload.get("queue_len")
                 self.async_write_ha_state()
-            meshcore.dispatcher.subscribe(EventType.STATS_CORE, update_queue_len)
+            self.async_on_remove(session.subscribe(EventType.STATS_CORE, update_queue_len))
 
         # STATS_CORE `errors` is decoded into `problem` binary sensors
         # (see binary_sensor.py MeshCoreSelfDiagnosticBinarySensor) rather
@@ -1168,89 +1155,110 @@ class MeshCoreSensor(CoordinatorEntity, SensorEntity):
         # STATS_RADIO
         elif key == "noise_floor":
             def update_noise_floor(event: Event):
+                if self.hass is None:
+                    return
                 self._native_value = event.payload.get("noise_floor")
                 self.async_write_ha_state()
-            meshcore.dispatcher.subscribe(EventType.STATS_RADIO, update_noise_floor)
+            self.async_on_remove(session.subscribe(EventType.STATS_RADIO, update_noise_floor))
 
         elif key == "last_rssi":
             def update_last_rssi(event: Event):
+                if self.hass is None:
+                    return
                 self._native_value = event.payload.get("last_rssi")
                 self.async_write_ha_state()
-            meshcore.dispatcher.subscribe(EventType.STATS_RADIO, update_last_rssi)
+            self.async_on_remove(session.subscribe(EventType.STATS_RADIO, update_last_rssi))
 
         elif key == "last_snr":
             def update_last_snr(event: Event):
+                if self.hass is None:
+                    return
                 # SDK already unscales SNR (raw value was multiplied by 4)
                 self._native_value = event.payload.get("last_snr")
                 self.async_write_ha_state()
-            meshcore.dispatcher.subscribe(EventType.STATS_RADIO, update_last_snr)
+            self.async_on_remove(session.subscribe(EventType.STATS_RADIO, update_last_snr))
 
         elif key == "tx_airtime":
             def update_tx_airtime(event: Event):
+                if self.hass is None:
+                    return
                 value = event.payload.get("tx_air_secs")
                 self._native_value = round(value / 60, 1) if isinstance(value, (int, float)) else None
                 self.async_write_ha_state()
-            meshcore.dispatcher.subscribe(EventType.STATS_RADIO, update_tx_airtime)
+            self.async_on_remove(session.subscribe(EventType.STATS_RADIO, update_tx_airtime))
 
         elif key == "rx_airtime":
             def update_rx_airtime(event: Event):
+                if self.hass is None:
+                    return
                 value = event.payload.get("rx_air_secs")
                 self._native_value = round(value / 60, 1) if isinstance(value, (int, float)) else None
                 self.async_write_ha_state()
-            meshcore.dispatcher.subscribe(EventType.STATS_RADIO, update_rx_airtime)
+            self.async_on_remove(session.subscribe(EventType.STATS_RADIO, update_rx_airtime))
 
         # STATS_PACKETS
         elif key == "nb_recv":
             def update_nb_recv(event: Event):
+                if self.hass is None:
+                    return
                 self._native_value = event.payload.get("recv")
                 self.async_write_ha_state()
-            meshcore.dispatcher.subscribe(EventType.STATS_PACKETS, update_nb_recv)
+            self.async_on_remove(session.subscribe(EventType.STATS_PACKETS, update_nb_recv))
 
         elif key == "nb_sent":
             def update_nb_sent(event: Event):
+                if self.hass is None:
+                    return
                 self._native_value = event.payload.get("sent")
                 self.async_write_ha_state()
-            meshcore.dispatcher.subscribe(EventType.STATS_PACKETS, update_nb_sent)
+            self.async_on_remove(session.subscribe(EventType.STATS_PACKETS, update_nb_sent))
 
         elif key == "sent_flood":
             def update_sent_flood(event: Event):
+                if self.hass is None:
+                    return
                 self._native_value = event.payload.get("flood_tx")
                 self.async_write_ha_state()
-            meshcore.dispatcher.subscribe(EventType.STATS_PACKETS, update_sent_flood)
+            self.async_on_remove(session.subscribe(EventType.STATS_PACKETS, update_sent_flood))
 
         elif key == "sent_direct":
             def update_sent_direct(event: Event):
+                if self.hass is None:
+                    return
                 self._native_value = event.payload.get("direct_tx")
                 self.async_write_ha_state()
-            meshcore.dispatcher.subscribe(EventType.STATS_PACKETS, update_sent_direct)
+            self.async_on_remove(session.subscribe(EventType.STATS_PACKETS, update_sent_direct))
 
         elif key == "recv_flood":
             def update_recv_flood(event: Event):
+                if self.hass is None:
+                    return
                 self._native_value = event.payload.get("flood_rx")
                 self.async_write_ha_state()
-            meshcore.dispatcher.subscribe(EventType.STATS_PACKETS, update_recv_flood)
+            self.async_on_remove(session.subscribe(EventType.STATS_PACKETS, update_recv_flood))
 
         elif key == "recv_direct":
             def update_recv_direct(event: Event):
+                if self.hass is None:
+                    return
                 self._native_value = event.payload.get("direct_rx")
                 self.async_write_ha_state()
-            meshcore.dispatcher.subscribe(EventType.STATS_PACKETS, update_recv_direct)
+            self.async_on_remove(session.subscribe(EventType.STATS_PACKETS, update_recv_direct))
 
         elif key == "recv_errors":
             def update_recv_errors(event: Event):
+                if self.hass is None:
+                    return
                 # May be None on a legacy 26-byte STATS_PACKETS frame
                 self._native_value = event.payload.get("recv_errors")
                 self.async_write_ha_state()
-            meshcore.dispatcher.subscribe(EventType.STATS_PACKETS, update_recv_errors)
+            self.async_on_remove(session.subscribe(EventType.STATS_PACKETS, update_recv_errors))
 
 
     @property
     def device_info(self):
         return DeviceInfo(**self.coordinator.device_info)
 
-    @property
-    def native_value(self) -> Any:
-        return self._native_value
 
 class MeshCoreCompanionPrefixSensor(CoordinatorEntity, SensorEntity):
     """Sensor displaying the device's companion prefix from its public key.
@@ -1289,31 +1297,33 @@ class MeshCoreCompanionPrefixSensor(CoordinatorEntity, SensorEntity):
         self._path_hash_mode = 0
 
         # Try to read initial path_hash_mode from cached SELF_INFO
-        if coordinator.api._last_self_info:
-            self._path_hash_mode = coordinator.api._last_self_info.get(
-                "path_hash_mode", 0
-            )
+        if coordinator.api.self_info:
+            self._path_hash_mode = coordinator.api.self_info.get("path_hash_mode", 0)
 
-        # Subscribe to SELF_INFO for live updates
-        if coordinator.api.mesh_core:
-            meshcore = coordinator.api.mesh_core
+    async def async_added_to_hass(self) -> None:
+        """Track SELF_INFO for live key and path-hash-mode changes."""
+        await super().async_added_to_hass()
 
-            def update_from_self_info(event: Event):
-                changed = False
-                new_key = event.payload.get("public_key")
-                if new_key and new_key != self._full_key:
-                    self._full_key = new_key
-                    changed = True
-                new_mode = event.payload.get("path_hash_mode")
-                if new_mode is not None and new_mode != self._path_hash_mode:
-                    self._path_hash_mode = new_mode
-                    changed = True
-                if changed:
-                    self.async_write_ha_state()
+        def update_from_self_info(event: Event):
+            if self.hass is None:
+                return
+            changed = False
+            new_key = event.payload.get("public_key")
+            if new_key and new_key != self._full_key:
+                self._full_key = new_key
+                changed = True
+            new_mode = event.payload.get("path_hash_mode")
+            if new_mode is not None and new_mode != self._path_hash_mode:
+                self._path_hash_mode = new_mode
+                changed = True
+            if changed:
+                self.async_write_ha_state()
 
-            meshcore.dispatcher.subscribe(
+        self.async_on_remove(
+            self.coordinator.api.session.subscribe(
                 EventType.SELF_INFO, update_from_self_info
             )
+        )
 
     @property
     def _prefix_byte_len(self) -> int:
@@ -1572,25 +1582,24 @@ class MeshCorePathSensor(CoordinatorEntity, SensorEntity):
         """Register event handlers when entity is added to hass."""
         await super().async_added_to_hass()
 
-        # Only set up listener if MeshCore instance is available
-        if not self.coordinator.api.mesh_core:
-            _LOGGER.warning(f"No MeshCore instance available for path tracking: {self.node_name}")
-            return
-
         # Only set up if we have a pubkey_prefix
         if not self.pubkey_prefix:
             _LOGGER.warning(f"No pubkey_prefix available for node {self.node_name}, can't track path")
             return
 
-        meshcore = self.coordinator.api.mesh_core
+        session = self.coordinator.api.session
 
         def handle_contacts_event(event: Event):
             """Handle CONTACTS event to update path information."""
             if event.type != EventType.CONTACTS:
                 return
 
+            mesh_core = self.coordinator.api.mesh_core
+            if mesh_core is None:
+                return
+
             # Find our contact using the helper method
-            contact = meshcore.get_contact_by_key_prefix(self.pubkey_prefix)
+            contact = mesh_core.get_contact_by_key_prefix(self.pubkey_prefix)
             if contact:
                 # Update the sensor based on the description key
                 if self.entity_description.key == "out_path":
@@ -1600,10 +1609,7 @@ class MeshCorePathSensor(CoordinatorEntity, SensorEntity):
                     self._native_value = path_len if path_len != -1 else None
 
         # Subscribe to CONTACTS events
-        meshcore.dispatcher.subscribe(
-            EventType.CONTACTS,
-            handle_contacts_event
-        )
+        self.async_on_remove(session.subscribe(EventType.CONTACTS, handle_contacts_event))
 
         _LOGGER.debug(f"Set up path tracking for {self.node_type} {self.node_name} ({self.pubkey_prefix})")
 
@@ -1674,34 +1680,26 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
         """Register event handlers when entity is added to hass."""
         await super().async_added_to_hass()
 
-        # Only set up listener if MeshCore instance is available
-        if not self.coordinator.api.mesh_core:
-            _LOGGER.warning(f"No MeshCore instance available for repeater stats subscription: {self.repeater_name}")
-            return
-
         # Only set up if we have a public key
         if not self.public_key:
             _LOGGER.warning(f"No public key available for repeater {self.repeater_name}, can't subscribe to events")
             return
 
         try:
-
-            # Use the provided pubkey_prefix for filtering (first 12 chars should match)
-            pubkey_prefix_filter = self.public_key[:12]
-
-            # Set up subscription for stats events with filter
-            self.coordinator.api.mesh_core.subscribe(
-                EventType.STATUS_RESPONSE,  # Status response event type
-                self._handle_stats_event,
-                {"pubkey_prefix": pubkey_prefix_filter}  # Filter by pubkey_prefix
+            self.async_on_remove(
+                self.coordinator.api.session.subscribe(
+                    EventType.STATUS_RESPONSE,
+                    self._handle_stats_event,
+                    attribute_filters={"pubkey_prefix": self.public_key[:12]},
+                )
             )
         except Exception as ex:
             _LOGGER.error(f"Error setting up repeater stats subscription for {self.repeater_name}: {ex}")
 
-
-
     async def _handle_stats_event(self, event):
         """Handle repeater stats events."""
+        if self.hass is None:
+            return
         # Create a deep copy of the payload to avoid modifying the original event
         if event.payload:
             if event.payload.get('uptime', 0) == 0:

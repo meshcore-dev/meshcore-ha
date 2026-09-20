@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from datetime import datetime
 from functools import partial
 from typing import Any
@@ -178,17 +179,13 @@ class TelemetrySensorManager:
         self.async_add_entities = async_add_entities
         self.discovered_sensors = {}  # Track discovered sensors by unique key
 
-    async def setup_telemetry_listener(self):
-        """Set up the telemetry event listener."""
-        if not self.coordinator.api.mesh_core:
-            _LOGGER.warning("No MeshCore instance available for telemetry sensor setup")
-            return
-
-        # Subscribe to telemetry response events
-        self.coordinator.api.mesh_core.subscribe(
+    def setup_telemetry_listener(self) -> Callable[[], None]:
+        """Subscribe to telemetry response events; returns the remover."""
+        unsubscribe = self.coordinator.api.session.subscribe(
             EventType.TELEMETRY_RESPONSE, self._handle_telemetry_event
         )
         _LOGGER.debug("Telemetry sensor manager initialized")
+        return unsubscribe
 
     async def _handle_telemetry_event(self, event: Event):
         """Handle incoming telemetry events and discover new sensors."""

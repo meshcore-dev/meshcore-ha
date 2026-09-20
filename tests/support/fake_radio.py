@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import Callable
+from types import SimpleNamespace
 from typing import Any
 
 from meshcore.events import Event, EventDispatcher, EventType, Subscription
@@ -25,6 +26,21 @@ class FakeRadio:
         self.script: dict[tuple, Any] = {}
         self.calls: list[tuple] = []
         self.contacts: dict[str, dict] = {}
+        self.transport_closed = False
+        self.connection_manager = SimpleNamespace(
+            connection=SimpleNamespace(disconnect=self.close_transport)
+        )
+
+    async def close_transport(self) -> None:
+        """Record the explicit handle closure an owner must always perform."""
+        self.transport_closed = True
+        self.connected = False
+
+    def stop(self) -> None:
+        """Cancel the dispatcher worker exactly as MeshCore.stop() does."""
+        if self.dispatcher._task and not self.dispatcher._task.done():
+            self.dispatcher.running = False
+            self.dispatcher._task.cancel()
 
     def __getattr__(self, method: str) -> Callable:
         """Expose scripted SDK command methods without mocking dispatch."""
