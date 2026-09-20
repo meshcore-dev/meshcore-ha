@@ -18,6 +18,8 @@ import importlib.util
 import os
 from unittest.mock import AsyncMock, MagicMock
 
+from tests.support.session import passthrough_exchange
+
 # Load services.py directly (same pattern as test_services_parsing.py) so the
 # relative imports resolve against the mocked sys.modules entries in conftest.
 _SERVICES_PATH = os.path.join(
@@ -52,6 +54,7 @@ def _make_coordinator(contact):
     coordinator.api.connected = True
     coordinator.api.mesh_core.get_contact_by_key_prefix.return_value = contact
     coordinator.api.mesh_core.commands.send_msg = AsyncMock(return_value=result)
+    coordinator.api.session.exchange = passthrough_exchange
     return coordinator
 
 

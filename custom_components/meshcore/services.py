@@ -1,6 +1,5 @@
 """Services for the MeshCore integration."""
 import ast
-import asyncio
 import inspect
 import logging
 import random
@@ -8,6 +7,7 @@ import re
 import shlex
 import time
 import uuid
+from functools import partial
 from typing import Any, cast
 
 import voluptuous as vol
@@ -55,25 +55,6 @@ from .const import (
 from .utils import extract_pubkey_from_selection
 
 _LOGGER = logging.getLogger(__name__)
-
-
-async def _wait_for_filtered_event(
-    session, event_type, attribute_filters: dict[str, Any], timeout: float
-):
-    """Await one filtered event through the session; None when it times out."""
-    future = asyncio.get_running_loop().create_future()
-
-    def resolve(event) -> None:
-        if not future.done():
-            future.set_result(event)
-
-    unsubscribe = session.subscribe(event_type, resolve, attribute_filters=attribute_filters)
-    try:
-        return await asyncio.wait_for(future, timeout)
-    except TimeoutError:
-        return None
-    finally:
-        unsubscribe()
 
 
 # Commands that modify values reported in SELF_INFO.
@@ -374,7 +355,9 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                             continue
                     
                     # Send the message using the new API
-                    result = await api.mesh_core.commands.send_msg(contact, message)
+                    result = await api.session.exchange(
+                        api.mesh_core.commands.send_msg, contact, message
+                    )
 
                     if result.type == EventType.ERROR:
                         _LOGGER.warning(
@@ -418,8 +401,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                                         "Waiting for ACK (code=%s, timeout=%.1fs) for message to %s",
                                         ack_code[:8], ack_timeout, display_name
                                     )
-                                    ack_event = await _wait_for_filtered_event(
-                                        api.session,
+                                    ack_event = await api.session.wait_for(
                                         EventType.ACK,
                                         {"code": ack_code},
                                         ack_timeout,
@@ -485,24 +467,34 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     )
 
                     # Set flood scope before sending if requested, then always reset.
-                    if scope is not None:
-                        _LOGGER.debug("Setting flood scope to: %s", scope)
-                        scope_result = await api.mesh_core.commands.set_flood_scope(scope)
-                        if scope_result.type == EventType.ERROR:
-                            _LOGGER.warning(
-                                "Failed to set flood scope %s: %s", scope, scope_result.payload
-                            )
-
-                    # Capture a fallback timestamp before sending.
-                    # The actual device timestamp may differ from the HA server clock.
-                    fallback_timestamp = int(time.time())
-
-                    try:
-                        result = await api.mesh_core.commands.send_chan_msg(channel_idx, message, timestamp=fallback_timestamp)
-                    finally:
+                    async with api.session.transaction():
                         if scope is not None:
-                            _LOGGER.debug("Resetting flood scope after send")
-                            await api.mesh_core.commands.set_flood_scope(None)
+                            _LOGGER.debug("Setting flood scope to: %s", scope)
+                            scope_result = await api.session.exchange(
+                                api.mesh_core.commands.set_flood_scope, scope
+                            )
+                            if scope_result.type == EventType.ERROR:
+                                _LOGGER.warning(
+                                    "Failed to set flood scope %s: %s", scope, scope_result.payload
+                                )
+
+                        # Capture a fallback timestamp before sending.
+                        # The actual device timestamp may differ from the HA server clock.
+                        fallback_timestamp = int(time.time())
+
+                        try:
+                            result = await api.session.exchange(
+                                api.mesh_core.commands.send_chan_msg,
+                                channel_idx,
+                                message,
+                                timestamp=fallback_timestamp,
+                            )
+                        finally:
+                            if scope is not None:
+                                _LOGGER.debug("Resetting flood scope after send")
+                                await api.session.exchange(
+                                    api.mesh_core.commands.set_flood_scope, None
+                                )
 
                     if result.type == EventType.ERROR:
                         _LOGGER.warning(
@@ -886,13 +878,17 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                         return {"error": "Incoming message consumption is disabled"}
 
                     _LOGGER.debug("Executing %s args=%s kwargs=%s", command_name, prepared_args, prepared_kwargs)
-                    result = await command_method(*prepared_args, **prepared_kwargs)
+                    result = await api.session.exchange(
+                        partial(command_method, *prepared_args, **prepared_kwargs)
+                    )
 
                     # Refresh SELF_INFO after commands that modify config values
                     # so HA sensors immediately reflect the new state.
                     if command_name in _SELF_INFO_COMMANDS and result.type != EventType.ERROR:
                         try:
-                            appstart_result = await api.mesh_core.commands.send_appstart()
+                            appstart_result = await api.session.exchange(
+                                api.mesh_core.commands.send_appstart
+                            )
                             api._cache_self_info_event(appstart_result)
                         except Exception as ex:
                             _LOGGER.warning(
@@ -904,7 +900,9 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     if command_name == "set_channel" and result.type != EventType.ERROR:
                         channel_idx = prepared_args[0]
                         # Fetch updated channel info
-                        channel_info_result = await api.mesh_core.commands.get_channel(channel_idx)
+                        channel_info_result = await api.session.exchange(
+                            api.mesh_core.commands.get_channel, channel_idx
+                        )
                         if channel_info_result.type != EventType.ERROR:
                             coordinator._channel_info[channel_idx] = channel_info_result.payload
                             _LOGGER.info(f"Updated channel {channel_idx} info: {channel_info_result.payload}")
@@ -1841,38 +1839,29 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         # ── Flood contact: run path discovery first ──
         if out_path_len == -1:
             try:
-                dst_bytes = bytes.fromhex(public_key)
+                # Validated here so a malformed key keeps its own error code.
+                bytes.fromhex(public_key)
             except (ValueError, TypeError) as ex:
                 _LOGGER.error("trace: bad pubkey hex for path discovery: %s", ex)
                 return {"trace": None, "error": "contact_missing_pubkey"}
 
-            # Pre-register the PATH_RESPONSE listener so the response can't
-            # arrive and be dispatched before our subscription is live.
-            # Filter by pubkey_pre so concurrent path-discovery traffic
-            # for other contacts can't satisfy this wait. Mirrors
-            # Remote-Terminal-for-MeshCore's approach.
-            path_response_task = asyncio.create_task(
-                _wait_for_filtered_event(
-                    api.session,
-                    EventType.PATH_RESPONSE,
-                    {"pubkey_pre": pubkey_prefix},
-                    30.0,  # outer safety; real bound applied below
-                )
-            )
-
-            pd_data = b"\x34\x00" + dst_bytes
+            # The session arms the PATH_RESPONSE listener before it sends, and
+            # filters on the caller's pubkey_pre so concurrent path-discovery
+            # traffic for other contacts cannot satisfy this wait. The 15s
+            # floor is kept: two-hop flood round-trips routinely run 5-12s
+            # under real LoRa conditions.
             try:
-                send_result = await mesh_core.commands.send(
-                    pd_data,
-                    [EventType.MSG_SENT, EventType.ERROR],
+                send_result, path_event = await api.session.path_discovery(
+                    contact,
+                    identity=pubkey_prefix,
+                    min_timeout=15.0,
+                    max_timeout=30.0,
                 )
             except Exception as ex:
-                path_response_task.cancel()
                 _LOGGER.error("trace: path discovery send raised: %s", ex)
                 return {"trace": None, "error": "path_discovery_failed"}
 
             if send_result is None:
-                path_response_task.cancel()
                 return {
                     "trace": None,
                     "error": "path_discovery_failed",
@@ -1880,7 +1869,6 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                 }
 
             if getattr(send_result, "type", None) == EventType.ERROR:
-                path_response_task.cancel()
                 # Firmware PacketType.ERROR carries {"error_code",
                 # "code_string"} when mapped, or {"reason"} for reader
                 # parse-failures. Accept either shape.
@@ -1899,29 +1887,6 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     "error": "path_discovery_rejected",
                     "reason": reason,
                 }
-
-            # MSG_SENT — firmware accepted and broadcast the request.
-            # Apply a 15s floor on the PATH_RESPONSE wait — two-hop flood
-            # round-trips routinely run 5-12s under real LoRa conditions,
-            # and a shorter timeout gives up before the mesh has had time
-            # to answer. Honour firmware's suggested_timeout if it ever
-            # exceeds 15s.
-            suggested_ms = 0
-            if isinstance(send_result.payload, dict):
-                suggested_ms = send_result.payload.get("suggested_timeout", 0) or 0
-            pd_timeout = max(suggested_ms / 800.0, 15.0)
-
-            try:
-                path_event = await asyncio.wait_for(
-                    path_response_task, timeout=pd_timeout,
-                )
-            except TimeoutError:
-                path_response_task.cancel()
-                path_event = None
-            except Exception as ex:
-                path_response_task.cancel()
-                _LOGGER.error("trace: PATH_RESPONSE wait raised: %s", ex)
-                return {"trace": None, "error": "path_discovery_failed"}
 
             if path_event is None:
                 return {"trace": None, "error": "path_discovery_timeout"}
@@ -1975,8 +1940,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         # ── Send trace and await TRACE_DATA with our tag ──
         start_time = time.monotonic()
         try:
-            send_result = await mesh_core.commands.send_trace(
-                0, tag, flags, trace_path_bytes
+            send_result = await api.session.exchange(
+                mesh_core.commands.send_trace, 0, tag, flags, trace_path_bytes
             )
         except Exception as ex:
             _LOGGER.error("trace: send_trace raised: %s", ex)
@@ -2001,8 +1966,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         effective_timeout = min(max(requested_timeout_s, fw_suggested_s, 5.0), 60.0)
 
         try:
-            trace_event = await _wait_for_filtered_event(
-                api.session,
+            trace_event = await api.session.wait_for(
                 EventType.TRACE_DATA,
                 {"tag": tag},
                 effective_timeout,

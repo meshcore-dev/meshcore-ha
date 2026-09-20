@@ -11,6 +11,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tests.support.session import stub_session
+
 BASE = Path(__file__).resolve().parents[1] / "custom_components" / "meshcore"
 
 
@@ -63,6 +65,7 @@ def make_coordinator(enabled):
     )
     coord.api = SimpleNamespace(
         connected=True,
+        session=stub_session(),
         mesh_core=SimpleNamespace(
             commands=commands, ensure_contacts=AsyncMock(return_value=False)
         ),

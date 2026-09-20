@@ -22,12 +22,21 @@ PREFIX_TWO = "112233445566"
 class _Session:
     """Minimal session implementing the query helper's subscription API."""
 
-    def __init__(self, event=None):
+    def __init__(self, event=None, login=None):
         self.event = event
         self.mesh_core = None
         self.listener_registered = False
         self.callback = None
         self.filters = None
+        self._login = login
+
+    async def exchange(self, fn, /, *args, timeout=None, **kwargs):
+        """Run one command with no gate, the way RadioSession.exchange would."""
+        return await fn(*args, **kwargs)
+
+    async def login(self, contact, password):
+        """Answer the login the firmware refresh performs first."""
+        return await self._login(contact, password)
 
     def subscribe(self, event_type, callback, *, attribute_filters=None):
         self.listener_registered = True
@@ -59,14 +68,14 @@ def _event(prefix: str, text: str):
 
 def _session(prefix: str, *, event=None, send_error=False, login_timeout=False):
     contact = {"public_key": prefix + "0" * 52}
-    session = _Session(event)
-
-    async def send_login_sync(sent_contact, password):
+    async def login(sent_contact, password):
         assert sent_contact is contact
         assert password == "secret"
         if login_timeout:
             raise TimeoutError
         return SimpleNamespace(type=EventType.LOGIN_SUCCESS)
+
+    session = _Session(event, login=login)
 
     async def send_cmd(sent_contact, command):
         assert session.listener_registered
@@ -81,10 +90,7 @@ def _session(prefix: str, *, event=None, send_error=False, login_timeout=False):
         return result
 
     session.mesh_core = SimpleNamespace(
-        commands=SimpleNamespace(
-            send_login_sync=send_login_sync,
-            send_cmd=send_cmd,
-        ),
+        commands=SimpleNamespace(send_cmd=send_cmd),
         get_contact_by_key_prefix=lambda requested: (
             contact if requested == prefix else None
         ),

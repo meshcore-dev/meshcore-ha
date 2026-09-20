@@ -18,6 +18,7 @@ from custom_components.meshcore.const import (
     SERVICE_SEND_CHANNEL_MESSAGE,
 )
 from custom_components.meshcore.services import async_setup_services
+from tests.support.session import stub_session
 
 
 def _coordinator(contacts=None):
@@ -34,7 +35,7 @@ def _coordinator(contacts=None):
         get_contact_by_name=MagicMock(return_value=None),
     )
     return SimpleNamespace(
-        api=SimpleNamespace(connected=True, mesh_core=mesh_core),
+        api=SimpleNamespace(connected=True, mesh_core=mesh_core, session=stub_session()),
         name="test",
     )
 

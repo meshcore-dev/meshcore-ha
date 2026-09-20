@@ -47,7 +47,7 @@ async def async_query_repeater_firmware(
 
     if password is not None:
         try:
-            login_result = await meshcore.commands.send_login_sync(contact, password)
+            login_result = await session.login(contact, password)
         except Exception as ex:
             raise RepeaterFirmwareRefreshError("failed to log in to repeater") from ex
         if not login_result:
@@ -72,7 +72,9 @@ async def async_query_repeater_firmware(
     )
     try:
         try:
-            send_result = await meshcore.commands.send_cmd(contact, "ver")
+            send_result = await session.exchange(
+                meshcore.commands.send_cmd, contact, "ver"
+            )
         except Exception as ex:
             raise RepeaterFirmwareRefreshError("failed to send version command") from ex
 

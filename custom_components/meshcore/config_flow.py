@@ -154,7 +154,7 @@ async def validate_common(api: MeshCoreAPI) -> dict[str, Any]:
             raise CannotConnect("Device connection failed")
 
         # Get node info to verify communication
-        node_info = await api.mesh_core.commands.send_appstart()
+        node_info = await api.session.exchange(api.mesh_core.commands.send_appstart)
         
         # Validate we got meaningful info back
         if node_info.type == EventType.ERROR:
@@ -719,7 +719,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             return self._show_add_repeater_form(repeater_dict, errors, user_input)
             
         # Try to login
-        result = await meshcore.commands.send_login_sync(contact, password)
+        result = await coordinator.api.session.login(contact, password)
         if not result:
             _LOGGER.error("Login to repeater failed or timed out")
             errors["base"] = "Failed to log in to repeater. Check password and try again."

@@ -19,6 +19,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tests.support.session import passthrough_exchange
+
 
 class _ET:
     ERROR = "error"
@@ -80,6 +82,7 @@ def _build_coordinator(command_name, return_value, connected=True):
         AsyncMock(return_value=return_value),
     )
     coord.api.mesh_core = mesh_core
+    coord.api.session.exchange = passthrough_exchange
     coord._discovered_contacts = {}
     return coord
 

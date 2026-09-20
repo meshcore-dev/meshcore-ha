@@ -7,7 +7,7 @@ import contextlib
 import logging
 import random
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any, Final
 
@@ -24,13 +24,20 @@ from .const import (
     DEFAULT_TCP_PORT,
     DOMAIN,
 )
+from .radio_commands import MeshCommands
 
 _LOGGER = logging.getLogger(__name__)
 
 CLOSE_DEADLINE: Final = 5.0
 CONNECT_SETTLE_SECONDS: Final = 1.0
+CREATE_TIMEOUT: Final = 30.0
+LINK_ERRORS: Final = (OSError, EOFError)
 RECONNECT_BACKOFF: Final[tuple[float, ...]] = (5.0, 10.0, 20.0, 40.0, 60.0)
 RECONNECT_JITTER: Final = 0.2
+
+
+class RadioUnavailable(RuntimeError):
+    """Raised when a command cannot run because the link is down."""
 
 
 @dataclass
@@ -43,7 +50,7 @@ class _Registration:
     live: Subscription | None = None
 
 
-class RadioSession:
+class RadioSession(MeshCommands):
     """Own one config entry's MeshCore link: connect, recover, subscribe, close.
 
     Subscriptions registered here outlive the SDK instance they run on: the
@@ -79,6 +86,9 @@ class RadioSession:
         self._registrations: list[_Registration] = []
         self._connect_hooks: list[Callable[[], None]] = []
         self._reconnect_task: asyncio.Task | None = None
+        self._exchange_lock = asyncio.Lock()
+        self._exchange_owner: asyncio.Task | None = None
+        self._mesh_lease = asyncio.Semaphore(1)
 
     @property
     def mesh_core(self) -> MeshCore | None:
@@ -164,6 +174,84 @@ class RadioSession:
         if isinstance(payload, dict):
             self.self_info = dict(payload)
 
+    async def exchange(
+        self,
+        fn: Callable[..., Any],
+        /,
+        *args: Any,
+        timeout: float | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Run one immediate SDK command as the link's only speaker."""
+        if self._exchange_owner is asyncio.current_task():
+            return await self._command(fn, args, kwargs, timeout)
+        async with self._exchange_lock:
+            return await self._command(fn, args, kwargs, timeout)
+
+    @contextlib.asynccontextmanager
+    async def transaction(self) -> AsyncIterator[None]:
+        """Own the link across several immediate exchanges.
+
+        Exchanges made by the owning task run re-entrantly. A transaction must
+        never span a mesh reply, and a mesh request must never be started
+        inside one: the lease and the exchange lock are always taken in that
+        order.
+        """
+        async with self._exchange_lock:
+            self._exchange_owner = asyncio.current_task()
+            try:
+                yield
+            finally:
+                self._exchange_owner = None
+
+    async def wait_for(
+        self, event_type: EventType, attribute_filters: dict[str, Any], timeout: float
+    ) -> Event | None:
+        """Await one filtered event through the session; None when it times out."""
+        future: asyncio.Future[Event] = asyncio.get_running_loop().create_future()
+
+        def resolve(event: Event) -> None:
+            """Hand the first matching event to the waiter."""
+            if not future.done():
+                future.set_result(event)
+
+        unsubscribe = self.subscribe(event_type, resolve, attribute_filters=attribute_filters)
+        try:
+            return await asyncio.wait_for(future, timeout)
+        except TimeoutError:
+            return None
+        finally:
+            unsubscribe()
+
+    def _commands(self) -> Any:
+        """Return the live SDK command surface, or refuse when the link is down."""
+        mesh_core = self.mesh_core
+        if mesh_core is None:
+            raise RadioUnavailable("MeshCore device is not connected")
+        return mesh_core.commands
+
+    async def _command(
+        self,
+        fn: Callable[..., Any],
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+        timeout: float | None,
+    ) -> Any:
+        """Await one SDK command, turning link failures into RadioUnavailable."""
+        mesh_core = self._mesh_core
+        if mesh_core is None or not self._connected:
+            raise RadioUnavailable("MeshCore device is not connected")
+        try:
+            call = fn(*args, **kwargs)
+            result = await (call if timeout is None else asyncio.wait_for(call, timeout))
+        except LINK_ERRORS as ex:
+            self._link_lost(f"command failed: {ex}")
+            raise RadioUnavailable(str(ex)) from ex
+        if not mesh_core.is_connected:
+            self._link_lost("command completed on a closed link")
+            raise RadioUnavailable("MeshCore link is not available")
+        return result
+
     async def _open(self) -> bool:
         """Create and validate an SDK instance, leaving no handle on failure."""
         mesh_core = await self._create()
@@ -181,37 +269,49 @@ class RadioSession:
         return True
 
     async def _create(self) -> MeshCore | None:
-        """Build the SDK instance for the configured transport."""
+        """Build the SDK instance for the configured transport, bounded in time."""
         try:
             _LOGGER.info("Connecting to MeshCore device...")
-            if self.connection_type == CONNECTION_TYPE_USB and self.usb_path:
-                _LOGGER.info(
-                    "Using USB connection at %s with baudrate %s", self.usb_path, self.baudrate
-                )
-                return await MeshCore.create_serial(
-                    self.usb_path,
-                    self.baudrate,
-                    debug=False,
-                    auto_reconnect=False,
-                )
-            if self.connection_type == CONNECTION_TYPE_BLE:
-                _LOGGER.info("Using BLE connection with address %s", self.ble_address)
-                return await MeshCore.create_ble(
-                    self.ble_address if self.ble_address else "",
-                    debug=False,
-                    auto_reconnect=False,
-                )
-            if self.connection_type == CONNECTION_TYPE_TCP and self.tcp_host:
-                _LOGGER.info("Using TCP connection to %s:%s", self.tcp_host, self.tcp_port)
-                return await MeshCore.create_tcp(
-                    self.tcp_host,
-                    self.tcp_port,
-                    debug=False,
-                    auto_reconnect=False,
-                )
-            _LOGGER.error("Invalid connection configuration")
+            factory = self._factory()
+            if factory is None:
+                _LOGGER.error("Invalid connection configuration")
+                return None
+            return await asyncio.wait_for(factory, CREATE_TIMEOUT)
+        except TimeoutError:
+            _LOGGER.error(
+                "Timed out after %.0fs opening the MeshCore connection", CREATE_TIMEOUT
+            )
         except Exception as ex:
             _LOGGER.error("Error connecting to MeshCore device: %s", ex)
+        return None
+
+    def _factory(self) -> Coroutine[Any, Any, MeshCore] | None:
+        """Return the unawaited SDK creation call for the configured transport."""
+        if self.connection_type == CONNECTION_TYPE_USB and self.usb_path:
+            _LOGGER.info(
+                "Using USB connection at %s with baudrate %s", self.usb_path, self.baudrate
+            )
+            return MeshCore.create_serial(
+                self.usb_path,
+                self.baudrate,
+                debug=False,
+                auto_reconnect=False,
+            )
+        if self.connection_type == CONNECTION_TYPE_BLE:
+            _LOGGER.info("Using BLE connection with address %s", self.ble_address)
+            return MeshCore.create_ble(
+                self.ble_address if self.ble_address else "",
+                debug=False,
+                auto_reconnect=False,
+            )
+        if self.connection_type == CONNECTION_TYPE_TCP and self.tcp_host:
+            _LOGGER.info("Using TCP connection to %s:%s", self.tcp_host, self.tcp_port)
+            return MeshCore.create_tcp(
+                self.tcp_host,
+                self.tcp_port,
+                debug=False,
+                auto_reconnect=False,
+            )
         return None
 
     async def _validate(self, mesh_core: MeshCore) -> bool:
@@ -279,13 +379,15 @@ class RadioSession:
         return True
 
     def _handle_sdk_disconnect(self, event: Event) -> None:
-        """React to the SDK's link-loss event exactly once per edge."""
+        """React to the SDK's link-loss event."""
+        self._link_lost(getattr(event, "payload", None))
+
+    def _link_lost(self, reason: Any) -> None:
+        """Cross the link-loss edge exactly once and start recovery."""
         if self._closing or not self._connected:
             return
         self._connected = False
-        _LOGGER.warning(
-            "MeshCore link lost (%s); starting recovery", getattr(event, "payload", None)
-        )
+        _LOGGER.warning("MeshCore link lost (%s); starting recovery", reason)
         self.hass.bus.async_fire(f"{DOMAIN}_disconnected", {"unexpected": True})
         if self._reconnect_task is None or self._reconnect_task.done():
             self._reconnect_task = self.hass.async_create_background_task(

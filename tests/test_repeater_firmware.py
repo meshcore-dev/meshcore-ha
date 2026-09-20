@@ -8,6 +8,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.support.session import passthrough_exchange
+
 
 class _EventType:
     CONTACT_MSG_RECV = "contact_msg_recv"
@@ -42,6 +44,16 @@ class _Session:
         self.listener_registered = False
         self.filters = None
         self.callback = None
+        self.logins = []
+
+    async def exchange(self, fn, /, *args, timeout=None, **kwargs):
+        """Run one command with no gate, the way RadioSession.exchange would."""
+        return await fn(*args, **kwargs)
+
+    async def login(self, contact, password):
+        """Record the login the refresh performs before asking for a version."""
+        self.logins.append((contact, password))
+        return True
 
     def subscribe(self, event_type, callback, *, attribute_filters=None):
         self.listener_registered = True
@@ -79,13 +91,8 @@ def _session(events, *, send_type=_EventType.MSG_SENT):
         session.dispatch_events()
         return SimpleNamespace(type=send_type, payload={})
 
-    async def send_login_sync(sent_contact, password):
-        assert sent_contact is contact
-        assert password == "secret"
-        return True
-
     session.mesh_core = SimpleNamespace(
-        commands=SimpleNamespace(send_cmd=send_cmd, send_login_sync=send_login_sync),
+        commands=SimpleNamespace(send_cmd=send_cmd),
         get_contact_by_key_prefix=lambda prefix: contact,
     )
     return session
@@ -227,6 +234,7 @@ async def test_cancellation_removes_response_listener() -> None:
 
     session = SimpleNamespace(
         subscribe=lambda *a, **kw: listener_removed.set,
+        exchange=passthrough_exchange,
         mesh_core=SimpleNamespace(
             commands=SimpleNamespace(send_cmd=send_cmd),
             get_contact_by_key_prefix=lambda prefix: {
@@ -250,7 +258,7 @@ async def test_concurrent_refresh_for_same_repeater_is_rejected() -> None:
     hass, _ = _hass_for(entry, SimpleNamespace(id="target-device"))
     send_started = asyncio.Event()
 
-    async def send_login_sync(contact, password):
+    async def login(contact, password):
         return True
 
     async def send_cmd(contact, command):
@@ -259,10 +267,10 @@ async def test_concurrent_refresh_for_same_repeater_is_rejected() -> None:
 
     session = SimpleNamespace(
         subscribe=lambda *a, **kw: (lambda: None),
+        exchange=passthrough_exchange,
+        login=login,
         mesh_core=SimpleNamespace(
-            commands=SimpleNamespace(
-                send_login_sync=send_login_sync, send_cmd=send_cmd
-            ),
+            commands=SimpleNamespace(send_cmd=send_cmd),
             get_contact_by_key_prefix=lambda prefix: {
                 "public_key": "aabbccddeeff" + "0" * 52
             },

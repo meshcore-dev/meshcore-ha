@@ -3,9 +3,11 @@
 import asyncio
 from collections.abc import Callable
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Final
 
 from meshcore.events import Event, EventDispatcher, EventType, Subscription
+
+SCRIPTABLE_PRIVATE: Final = frozenset({"_send_login_raw"})
 
 
 class FakeRadio:
@@ -13,7 +15,8 @@ class FakeRadio:
 
     Script keys are ``(method, *args)`` with a trailing sorted keyword tuple
     when keywords are supplied; contact dictionaries become sorted item tuples.
-    Responses are Events, exceptions, or awaitables.
+    Responses are Events, exceptions, awaitables, or callables returning one of
+    those, which is how a command answers differently on each invocation.
     Unscripted commands fail immediately so accidental I/O cannot be hidden.
     """
 
@@ -42,23 +45,30 @@ class FakeRadio:
             self.dispatcher.running = False
             self.dispatcher._task.cancel()
 
+    def key(self, method: str, *args: Any, **kwargs: Any) -> tuple:
+        """Build the script key for one invocation, as callers must script it."""
+        key = (
+            method,
+            *(tuple(sorted(arg.items())) if isinstance(arg, dict) else arg for arg in args),
+        )
+        if kwargs:
+            key += (tuple(sorted(kwargs.items())),)
+        return key
+
     def __getattr__(self, method: str) -> Callable:
         """Expose scripted SDK command methods without mocking dispatch."""
-        if method.startswith("_"):
+        if method.startswith("_") and method not in SCRIPTABLE_PRIVATE:
             raise AttributeError(method)
 
         async def command(*args: Any, **kwargs: Any) -> Any:
             """Return the scripted response for this exact invocation."""
             if not self.connected:
                 raise ConnectionError("FakeRadio link is down")
-            key = (
-                method,
-                *(tuple(sorted(arg.items())) if isinstance(arg, dict) else arg for arg in args),
-            )
-            if kwargs:
-                key += (tuple(sorted(kwargs.items())),)
+            key = self.key(method, *args, **kwargs)
             self.calls.append(key)
             response = self.script[key]
+            if callable(response):
+                response = response()
             if isinstance(response, BaseException):
                 raise response
             if hasattr(response, "__await__"):

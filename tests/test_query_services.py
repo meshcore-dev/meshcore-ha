@@ -23,6 +23,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tests.support.session import open_transaction
+
 
 # ─── Module loading ────────────────────────────────────────────────────
 # Patch meshcore.events.EventType with the handful of members services.py
@@ -75,20 +77,43 @@ class _Event:
 
 
 class _FakeSession:
-    """Deliver scripted events to session subscribers.
+    """Deliver scripted events and run commands without the real gate.
 
     A scripted ``None`` stands for "this event never arrives", which the
-    service's filtered wait reports exactly as it reports a timeout.
+    session's filtered wait reports exactly as it reports a timeout.
     """
 
-    def __init__(self, events):
+    def __init__(self, events, mesh_core=None):
         self.events = events
+        self.mesh_core = mesh_core
 
     def subscribe(self, event_type, handler, *, attribute_filters=None):
         """Resolve the caller's waiter straight away and return its remover."""
         if event_type in self.events:
             handler(self.events[event_type])
         return lambda: None
+
+    async def exchange(self, fn, /, *args, timeout=None, **kwargs):
+        """Run one command with no gate, the way RadioSession.exchange would."""
+        return await fn(*args, **kwargs)
+
+    def transaction(self):
+        """Stand in for the exchange-lock transaction, which owns no state here."""
+        return open_transaction()
+
+    async def wait_for(self, event_type, attribute_filters, timeout):
+        """Return the scripted event for this type, or None for a timeout."""
+        return self.events.get(event_type)
+
+    async def path_discovery(
+        self, contact, *, identity=None, min_timeout=0.0, max_timeout=None
+    ):
+        """Send the discovery frame and pair it with the scripted response."""
+        destination = bytes.fromhex(str(contact.get("public_key") or ""))[:32]
+        sent = await self.mesh_core.commands.send(
+            b"\x34\x00" + destination, [_ET.MSG_SENT, _ET.ERROR]
+        )
+        return sent, self.events.get(_ET.PATH_RESPONSE)
 
 
 def _build_coordinator(
@@ -159,7 +184,8 @@ def _build_coordinator(
 
     coord.api.mesh_core = mesh_core
     coord.api.session = _FakeSession(
-        {_ET.PATH_RESPONSE: path_response_event, _ET.TRACE_DATA: trace_event}
+        {_ET.PATH_RESPONSE: path_response_event, _ET.TRACE_DATA: trace_event},
+        mesh_core=mesh_core,
     )
 
     coord._discovered_contacts = {}

@@ -14,6 +14,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tests.support.session import passthrough_exchange
+
 
 # ─── Module loading ────────────────────────────────────────────────────
 # Patch meshcore.events.EventType with the members services.py references.
@@ -84,6 +86,7 @@ def _build_coordinator(command_name, return_value, contact=None):
     mesh_core.get_contact_by_name = MagicMock(return_value=None)
 
     coord.api.mesh_core = mesh_core
+    coord.api.session.exchange = passthrough_exchange
     coord._discovered_contacts = {}
     return coord
 

@@ -11,6 +11,7 @@ from homeassistant.helpers import entity_registry as er
 from custom_components.meshcore.button import MeshCoreCLIRunButton
 from custom_components.meshcore.const import DOMAIN
 from custom_components.meshcore.services import async_setup_services
+from tests.support.session import passthrough_exchange
 
 
 @pytest.fixture
@@ -25,6 +26,7 @@ async def command_services(hass):
     coordinator = MagicMock()
     coordinator.api.connected = True
     coordinator.api.mesh_core.commands = commands
+    coordinator.api.session.exchange = passthrough_exchange
     coordinator.api.self_info = {"suggested_timeout": 1000}
     coordinator._discovered_contacts = {}
     coordinator.pubkey = "abcdef123456"
