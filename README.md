@@ -139,7 +139,7 @@ pytest tests/
 
 ## Requirements
 
-- Home Assistant (version 2023.8.0 or newer)
+- Home Assistant (version 2025.6.0 or newer)
 - MeshCore node with firmware that supports API commands
 - For BLE: Bluetooth adapter on the Home Assistant host (direct connection only; proxy connections don't work with PIN pairing)
 - For USB: USB port on the Home Assistant host

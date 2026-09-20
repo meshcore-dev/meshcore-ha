@@ -1,0 +1,27 @@
+{
+  "meshcore_message": [
+    {"message": "Hello", "sender_name": "Client", "pubkey_prefix": "bbbbbbbbbbbb", "receiver_name": "meshcore", "entity_id": "binary_sensor.meshcore_cccccc_bbbbbb_messages", "domain": "meshcore", "timestamp": "2023-11-14T22:13:20+00:00", "message_type": "direct", "hop_count": 0, "snr": 7.5},
+    {"message": "Hello", "sender_name": "Client", "channel": "Private", "channel_idx": 1, "entity_id": "binary_sensor.meshcore_cccccc_ch_1_messages", "domain": "meshcore", "timestamp": "2023-11-14T22:13:20+00:00", "message_type": "channel", "hop_count": 2, "snr": 4.5, "pubkey_prefix": "bbbbbbbbbbbb"},
+    {"message": "Hello", "sender_name": "Hub", "receiver_name": "Client", "pubkey_prefix": "bbbbbbbbbbbb", "entity_id": "binary_sensor.meshcore_cccccc_bbbbbb_messages", "domain": "meshcore", "timestamp": "2023-11-14T22:13:20+00:00", "outgoing": true, "message_type": "direct", "send_id": "12345678", "ack_received": true},
+    {"message": "Hello", "sender_name": "Hub", "channel": "Private", "channel_idx": 1, "entity_id": "binary_sensor.meshcore_cccccc_ch_1_messages", "domain": "meshcore", "timestamp": "2023-11-14T22:13:20+00:00", "outgoing": true, "message_type": "channel", "send_id": "12345678", "rx_log_data": [{"snr": 3.5, "rssi": -90, "path": "aa"}], "repeater_count": 1, "progressive": false}
+  ],
+  "meshcore_delivery_update": [
+    {"message": "Hello", "sender_name": "Hub", "channel": "Private", "channel_idx": 1, "entity_id": "binary_sensor.meshcore_cccccc_ch_1_messages", "domain": "meshcore", "timestamp": "2023-11-14T22:13:20+00:00", "outgoing": true, "message_type": "channel", "send_id": "12345678", "rx_log_data": [{"snr": 3.5, "rssi": -90, "path": "aa"}], "repeater_count": 1, "progressive": true},
+    {"message": "Hello", "sender_name": "Hub", "channel": "Private", "channel_idx": 1, "entity_id": "binary_sensor.meshcore_cccccc_ch_1_messages", "domain": "meshcore", "timestamp": "2023-11-14T22:13:20+00:00", "outgoing": true, "message_type": "channel", "send_id": "12345678", "rx_log_data": [{"snr": 3.5, "rssi": -90, "path": "aa"}], "repeater_count": 1, "progressive": true},
+    {"message": "Hello", "sender_name": "Hub", "channel": "Private", "channel_idx": 1, "entity_id": "binary_sensor.meshcore_cccccc_ch_1_messages", "domain": "meshcore", "timestamp": "2023-11-14T22:13:20+00:00", "outgoing": true, "message_type": "channel", "send_id": "12345678", "rx_log_data": [{"snr": 3.5, "rssi": -90, "path": "aa"}], "repeater_count": 1, "progressive": true},
+    {"entity_id": "binary_sensor.meshcore_cccccc_ch_1_messages", "domain": "meshcore", "rx_log_data": [{"snr": 3.5, "rssi": -90, "path": "aa"}], "repeater_count": 1, "progressive": true, "message_type": "channel", "sender_name": "Client", "message": "Hello", "timestamp": "2023-11-14T22:13:20+00:00"}
+  ],
+  "meshcore_message_sent": [
+    {"message": "Hello", "device": "contract", "message_type": "direct", "receiver": "Client", "timestamp": 1700000000, "contact_public_key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "ack_received": false, "send_id": "12345678"},
+    {"message": "Hello", "device": "contract", "message_type": "channel", "receiver": "channel_1", "timestamp": 1700000000, "channel_idx": 1, "send_timestamp": 1700000000, "send_id": "12345678", "scope": null}
+  ],
+  "meshcore_cli_response": [
+    {"command": "get_bat", "response": {"level": 50}, "is_error": false, "entry_id": "contract", "timestamp": 1700000000}
+  ],
+  "meshcore_connected": [{"connection_type": "tcp"}],
+  "meshcore_disconnected": [{"unexpected": true}, {}],
+  "meshcore_raw_event": [
+    {"event_type": "EventType.BATTERY", "payload": {"level": 50, "raw": "0102"}, "timestamp": 1700000000.0},
+    {"event_type": "EventType.BATTERY", "payload": null, "timestamp": 1700000000.0, "serialization_error": "fixture error"}
+  ]
+}

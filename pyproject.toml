@@ -13,8 +13,15 @@ asyncio_mode = "auto"
 [tool.ruff]
 target-version = "py313"
 line-length = 100
+extend-exclude = [".claude", ".venv"]
 
 [tool.ruff.lint]
 # E501 (line-too-long) is intentionally omitted; `ruff format` owns wrapping.
 select = ["E", "F", "I", "UP", "B"]
 ignore = ["E501"]
+
+[tool.pyright]
+include = ["custom_components"]
+exclude = [".claude", ".venv"]
+pythonVersion = "3.13"
+typeCheckingMode = "basic"

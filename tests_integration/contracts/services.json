@@ -1,0 +1,62 @@
+{
+  "send_message": {"response": "none", "schema": {"required": false, "extra": 0, "fields": {
+    "Exclusive:node_id": {"validator": "homeassistant.helpers.config_validation.string", "group": "target"},
+    "Exclusive:pubkey_prefix": {"validator": "homeassistant.helpers.config_validation.string", "group": "target"},
+    "Required:message": {"validator": "homeassistant.helpers.config_validation.string"},
+    "Optional:entry_id": {"validator": "homeassistant.helpers.config_validation.string"},
+    "type:Required": {"validator": {"Any": ["node_id", "pubkey_prefix"]}}
+  }}},
+  "send_channel_message": {"response": "none", "schema": {"required": false, "extra": 0, "fields": {
+    "Required:channel_idx": {"validator": {"All": [{"Coerce": "int"}, {"Range": [0, null, true, true]}]}},
+    "Required:message": {"validator": "homeassistant.helpers.config_validation.string"},
+    "Optional:entry_id": {"validator": "homeassistant.helpers.config_validation.string"},
+    "Optional:scope": {"validator": {"Any": [null, "homeassistant.helpers.config_validation.string"]}}
+  }}},
+  "execute_command": {"response": "optional", "schema": {"required": false, "extra": 0, "fields": {
+    "Required:command": {"validator": "homeassistant.helpers.config_validation.string"},
+    "Optional:entry_id": {"validator": "homeassistant.helpers.config_validation.string"},
+    "Optional:record_to_console": {"validator": "homeassistant.helpers.config_validation.boolean"}
+  }}},
+  "execute_command_ui": {"response": "optional", "schema": {"required": false, "extra": 0, "fields": {
+    "Optional:entry_id": {"validator": "homeassistant.helpers.config_validation.string"},
+    "Optional:record_to_console": {"validator": "homeassistant.helpers.config_validation.boolean"}
+  }}},
+  "cli_console_clear": {"response": "none", "schema": {"required": false, "extra": 0, "fields": {
+    "Optional:entry_id": {"validator": "homeassistant.helpers.config_validation.string"}
+  }}},
+  "send_ui_message": {"response": "optional", "schema": {"required": false, "extra": 0, "fields": {
+    "Optional:entry_id": {"validator": "homeassistant.helpers.config_validation.string"}
+  }}},
+  "add_selected_contact": {"response": "none", "schema": {"required": false, "extra": 0, "fields": {
+    "Optional:entry_id": {"validator": "homeassistant.helpers.config_validation.string"}
+  }}},
+  "remove_selected_contact": {"response": "none", "schema": {"required": false, "extra": 0, "fields": {
+    "Optional:entry_id": {"validator": "homeassistant.helpers.config_validation.string"}
+  }}},
+  "remove_discovered_contact": {"response": "none", "schema": {"required": false, "extra": 0, "fields": {
+    "Optional:entry_id": {"validator": "homeassistant.helpers.config_validation.string"},
+    "Optional:pubkey_prefix": {"validator": "homeassistant.helpers.config_validation.string"}
+  }}},
+  "cleanup_unavailable_contacts": {"response": "none", "schema": {"required": false, "extra": 0, "fields": {
+    "Optional:entry_id": {"validator": "homeassistant.helpers.config_validation.string"}
+  }}},
+  "clear_discovered_contacts": {"response": "none", "schema": {"required": false, "extra": 0, "fields": {
+    "Optional:entry_id": {"validator": "homeassistant.helpers.config_validation.string"},
+    "Optional:days_threshold": {"validator": {"All": [{"Coerce": "int"}, {"Range": [1, 365, true, true]}]}}
+  }}},
+  "get_contacts": {"response": "only", "schema": {"required": false, "extra": 0, "fields": {
+    "Optional:entry_id": {"validator": "homeassistant.helpers.config_validation.string"}
+  }}},
+  "get_discovered_contact": {"response": "only", "schema": {"required": false, "extra": 0, "fields": {
+    "Required:pubkey_prefix": {"validator": {"All": ["homeassistant.helpers.config_validation.string", {"Length": [2, null]}]}},
+    "Optional:entry_id": {"validator": "homeassistant.helpers.config_validation.string"}
+  }}},
+  "get_channels": {"response": "only", "schema": {"required": false, "extra": 0, "fields": {
+    "Optional:entry_id": {"validator": "homeassistant.helpers.config_validation.string"}
+  }}},
+  "trace": {"response": "only", "schema": {"required": false, "extra": 0, "fields": {
+    "Required:pubkey_prefix": {"validator": "homeassistant.helpers.config_validation.string"},
+    "Optional:entry_id": {"validator": "homeassistant.helpers.config_validation.string"},
+    "Optional:timeout": {"default": 15, "validator": {"All": [{"Coerce": "float"}, {"Range": [1, 120, true, true]}]}}
+  }}}
+}

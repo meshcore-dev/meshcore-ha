@@ -1,0 +1,22 @@
+{
+  "data": {
+    "connection_type": "tcp",
+    "tcp_host": "fixture.invalid",
+    "name": "Hub",
+    "pubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "contact_discovery_mode": "full",
+    "repeater_subscriptions": [{"name": "Repeater", "pubkey_prefix": "aaaaaaaaaaaa"}],
+    "tracked_clients": [{"name": "Client", "pubkey_prefix": "bbbbbbbbbbbb"}]
+  },
+  "contacts": [
+    {"adv_name": "Repeater", "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "type": 2},
+    {"adv_name": "Client", "public_key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "type": 1}
+  ],
+  "discovered_contacts": [
+    {"adv_name": "Discovered", "public_key": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "type": 1}
+  ],
+  "channels": [
+    {"channel_idx": 0, "channel_name": "Public"},
+    {"channel_idx": 1, "channel_name": "Private"}
+  ]
+}
