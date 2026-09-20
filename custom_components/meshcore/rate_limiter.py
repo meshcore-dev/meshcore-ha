@@ -24,7 +24,11 @@ class TokenBucket:
         self.capacity = capacity
         self.tokens = capacity
         self.refill_rate = refill_rate_seconds
-        self.last_refill = time.monotonic()
+        self.last_refill = self.now()
+
+    def now(self) -> float:
+        """Return the bucket's clock; restore paths must stamp with this, not their own."""
+        return time.monotonic()
 
     def _refill(self) -> None:
         """Refill tokens based on elapsed time since last refill.

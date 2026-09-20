@@ -259,4 +259,4 @@ class MeshBudget:
             bucket.tokens = min(
                 bucket.capacity, int(credits) + int(elapsed / bucket.refill_rate)
             )
-            bucket.last_refill = time.monotonic()
+            bucket.last_refill = bucket.now()
