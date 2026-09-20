@@ -15,6 +15,7 @@ from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import Event as HassEvent
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.device_registry import DeviceEntry
@@ -22,7 +23,15 @@ from homeassistant.helpers.storage import Store
 
 from meshcore.events import EventType
 
-from .config import SETTINGS_KEYS, Settings, normalise_prefix
+from .config import (
+    SCOPE_APPLY,
+    SCOPE_RELOAD,
+    SETTINGS_KEYS,
+    Settings,
+    apply_settings,
+    diff_settings,
+    normalise_prefix,
+)
 from .const import (
     CONF_BAUDRATE,
     CONF_BLE_ADDRESS,
@@ -144,6 +153,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
                 for record in mapping.get(key) or []:
                     if isinstance(record, dict) and record.get("pubkey_prefix"):
                         record["pubkey_prefix"] = normalise_prefix(record["pubkey_prefix"])
+        _move_firmware_to_device_registry(hass, config_entry, new_data, new_options)
 
         hass.config_entries.async_update_entry(
             config_entry,
@@ -156,6 +166,32 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
 
     _LOGGER.debug("Migration to configuration version %s successful", config_entry.version)
     return True
+
+
+
+def _move_firmware_to_device_registry(
+    hass: HomeAssistant, entry: ConfigEntry, *mappings: dict
+) -> None:
+    """Take observed firmware out of the entry, seeding the device registry.
+
+    A firmware version is an observation of the mesh, not a setting; the
+    device registry is where it survives a restart. Only an absent
+    ``sw_version`` is filled, so a newer observation is never overwritten.
+    """
+    device_registry = dr.async_get(hass)
+    for mapping in mappings:
+        for record in mapping.get(CONF_REPEATER_SUBSCRIPTIONS) or []:
+            if not isinstance(record, dict):
+                continue
+            version = record.pop("firmware_version", None)
+            prefix = record.get("pubkey_prefix")
+            if not version or not prefix:
+                continue
+            device = device_registry.async_get_device(
+                identifiers={(DOMAIN, f"{entry.entry_id}_repeater_{prefix}")}
+            )
+            if device is not None and not device.sw_version:
+                device_registry.async_update_device(device.id, sw_version=version)
 
 
 def _entry_unique_id(hass: HomeAssistant, entry: ConfigEntry) -> str | None:
@@ -614,6 +650,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # sensor.py can recreate neighbor sensor entities from the stored data.
         await coordinator.async_load_neighbor_data()
 
+        # Repeater firmware versions are runtime state; the device registry is
+        # where the last observation survived the restart.
+        coordinator.seed_repeater_firmware()
+
         # Restore node schedules so a restart does not re-poll the whole mesh
         # (governed policy only; legacy has never persisted schedule state).
         await coordinator.async_load_traffic_state()
@@ -855,9 +895,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Update options for a config entry."""
-    # Reload the entry to apply the new options
-    await hass.config_entries.async_reload(entry.entry_id)
+    """Apply an entry update, reloading only when the entry must be rebuilt.
+
+    Most edits are pushed into the running entry: a reload would reset the
+    traffic budget and zero every tracked node's schedule.
+    """
+    coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if coordinator is None:
+        await hass.config_entries.async_reload(entry.entry_id)
+        return
+
+    scope = diff_settings(coordinator.settings, Settings.from_entry(entry))
+    if scope == SCOPE_RELOAD:
+        await hass.config_entries.async_reload(entry.entry_id)
+    elif scope == SCOPE_APPLY:
+        await apply_settings(hass, entry, coordinator, Settings.from_entry(entry))
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

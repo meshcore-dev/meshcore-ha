@@ -6,6 +6,7 @@ import pytest
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers import device_registry as dr
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.meshcore import (
@@ -85,9 +86,27 @@ async def test_v3_entry_normalises_prefixes_and_claims_its_radio(
 
     repeaters = entry.options["repeater_subscriptions"]
     assert [item["pubkey_prefix"] for item in repeaters] == ["aabbccddeeff", "c0ffee"]
-    assert repeaters[0]["firmware_version"] == "1.14.2 (Build: x)"
     assert entry.options["tracked_clients"][0]["pubkey_prefix"] == "bbbbbbbbbbbb"
     assert entry.unique_id == PUBKEY
+
+
+async def test_migration_moves_firmware_to_the_device_registry(
+    hass: HomeAssistant,
+) -> None:
+    """The observed version leaves the entry and seeds the repeater device."""
+    entry = _v3_entry(hass, entry_id="hub-one")
+    registry = dr.async_get(hass)
+    device = registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, "hub-one_repeater_aabbccddeeff")},
+        name="Hilltop",
+    )
+
+    await async_migrate_entry(hass, entry)
+
+    assert registry.async_get(device.id).sw_version == "1.14.2 (Build: x)"
+    for mapping in (entry.data, entry.options):
+        assert "firmware_version" not in mapping["repeater_subscriptions"][0]
 
 
 async def test_migration_is_idempotent(hass: HomeAssistant) -> None:

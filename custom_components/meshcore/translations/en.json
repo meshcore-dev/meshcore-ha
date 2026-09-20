@@ -240,10 +240,12 @@
           "telemetry_enabled": "Enable Telemetry Polling",
           "neighbors_enabled": "Enable Neighbor Entities (creates SNR and activity sensors for each neighbor seen by the repeater)",
           "repeater_update_interval": "Telemetry Refresh Rate (seconds)",
-          "disable_path_reset": "Disable Path Reset"
+          "disable_path_reset": "Disable Path Reset",
+          "password": "Password"
         },
         "data_description": {
-          "neighbors_enabled": "Queries this repeater for its neighbor list on each poll cycle and exposes each neighbor as two sensors. Airtime cost is one direct request and response per cycle — at the default 2-hour `Update Interval` that's roughly one exchange every 2 hours per enabled repeater, comparable to one extra telemetry request. Requires MeshCore firmware \u2265 1.14.0."
+          "neighbors_enabled": "Queries this repeater for its neighbor list on each poll cycle and exposes each neighbor as two sensors. Airtime cost is one direct request and response per cycle — at the default 2-hour `Update Interval` that's roughly one exchange every 2 hours per enabled repeater, comparable to one extra telemetry request. Requires MeshCore firmware \u2265 1.14.0.",
+          "password": "Sent once to log in to the repeater. Leave blank for a repeater that grants access by ACL without a password."
         },
         "description": "Monitor a repeater for telemetry and status",
         "title": "Add Repeater Station"
@@ -272,10 +274,12 @@
           "neighbors_enabled": "Enable Neighbor Entities (creates SNR and activity sensors for each neighbor seen by the repeater)",
           "repeater_update_interval": "Telemetry Refresh Rate (seconds)",
           "disable_path_reset": "Disable Path Reset",
-          "disabled": "Disable Device"
+          "disabled": "Disable Device",
+          "password": "Update Password (leave blank to keep current)"
         },
         "data_description": {
-          "neighbors_enabled": "Queries this repeater for its neighbor list on each poll cycle and exposes each neighbor as two sensors. Airtime cost is one direct request and response per cycle — at the default 2-hour `Update Interval` that's roughly one exchange every 2 hours per enabled repeater, comparable to one extra telemetry request. Requires MeshCore firmware \u2265 1.14.0."
+          "neighbors_enabled": "Queries this repeater for its neighbor list on each poll cycle and exposes each neighbor as two sensors. Airtime cost is one direct request and response per cycle — at the default 2-hour `Update Interval` that's roughly one exchange every 2 hours per enabled repeater, comparable to one extra telemetry request. Requires MeshCore firmware \u2265 1.14.0.",
+          "password": "Stored passwords are never shown. Leave this blank to keep the saved password; type a new one to replace it."
         },
         "description": "Edit settings for {device_name}",
         "title": "Edit Repeater"
@@ -307,7 +311,8 @@
           "consume_incoming_messages": "Retrieve queued incoming messages",
           "adaptive_poll_wait": "Adaptive Channel Message Delivery",
           "flood_scopes": "Flood Scope Allowlist",
-          "traffic_policy": "Mesh Traffic Policy"
+          "traffic_policy": "Mesh Traffic Policy",
+          "messages_interval": "Message Poll Interval (seconds)"
         },
         "data_description": {
           "self_diagnostics_enabled": "Creates roughly 15 local diagnostic sensors for the companion node (uptime, TX queue length, noise floor, last RSSI/SNR, TX/RX airtime, and packet counters). Off by default. Adds no mesh traffic — these are local queries to the attached radio, not mesh requests. The interval controls how often the sensors refresh (60–3600 seconds).",
@@ -320,7 +325,8 @@
           "consume_incoming_messages": "Enabled by default. Turn off when another client, such as a phone over BLE, should retrieve queued channel and direct messages. Home Assistant keeps polling repeater status and telemetry and can still send commands. Messages delivered by the device may still appear in Home Assistant; this setting controls queue retrieval, not message visibility. Text replies to commands may also remain queued for the other client.",
           "adaptive_poll_wait": "When enabled, incoming channel messages fire as soon as RX_LOG data arrives (typically ~50ms) instead of always waiting the full 500ms. Late-arriving repeater data is delivered progressively. Disable if bots or automations depend on having all paths in the initial event.",
           "flood_scopes": "Comma-separated list of region scope names to match against incoming TC_FLOOD messages (e.g. pl-mz, pl-waw). When a match is found, rx_log_data will include a flood_scope field with the matched name. Leave empty to disable scope matching.",
-          "traffic_policy": "Legacy (default) keeps the schedule the integration has always used: a 20-request burst budget refilling one request every two minutes, one token per request whatever it costs the mesh, a budget refusal counted as a node failure, and auto-disable that only ever reaches repeaters. Governed sizes the budget to the number of nodes you track, charges flood-routed traffic more than direct traffic, keeps credit in reserve so your own service calls still get through, defers a poll instead of blaming the node when credit runs out, and auto-disables silent clients too. Change it only if your mesh is congested; saving reloads the integration."
+          "traffic_policy": "Legacy (default) keeps the schedule the integration has always used: a 20-request burst budget refilling one request every two minutes, one token per request whatever it costs the mesh, a budget refusal counted as a node failure, and auto-disable that only ever reaches repeaters. Governed sizes the budget to the number of nodes you track, charges flood-routed traffic more than direct traffic, keeps credit in reserve so your own service calls still get through, defers a poll instead of blaming the node when credit runs out, and auto-disables silent clients too. Change it only if your mesh is congested; saving reloads the integration.",
+          "messages_interval": "How often the integration polls the companion radio for queued messages and runs its scheduling tick. Local USB/BLE/TCP traffic only, no mesh airtime. Lower values make chat feel faster at the cost of more companion chatter."
         },
         "description": "Configure global integration settings",
         "title": "Global Settings"
@@ -388,7 +394,7 @@
         "message": {
           "name": "Message",
           "description": "The message to send to the channel.",
-	  "example": "Hello from Home Assistant!"
+          "example": "Hello from Home Assistant!"
         },
         "entry_id": {
           "name": "Config Entry ID",
@@ -404,8 +410,8 @@
           "name": "Config Entry ID",
           "description": "The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device."
         }
-        }
-      },
+      }
+    },
     "execute_command": {
       "name": "Execute MeshCore Command",
       "description": "Execute a command provided by the MeshCore Python library. This is an advanced feature that provides direct access to the underlying commands interface. CAUTION: Some commands will make PERMANENT CHANGES to your node's configuration. Use with care.",

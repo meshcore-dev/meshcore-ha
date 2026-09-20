@@ -14,6 +14,7 @@ from cachetools import TTLCache
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -183,6 +184,10 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self.cli_console_sensor: Any = None
 
         self._firmware_version = None
+        # Observed repeater firmware, keyed by pubkey prefix. A version is a
+        # radio observation, not a setting: it lives here and in the device
+        # registry, and never in the config entry.
+        self._repeater_firmware: dict[str, str] = {}
         self._hardware_model = None
         self._max_channels = 4  # updated from DEVICE_INFO
         self._channel_info = {}  # keyed by channel_idx
@@ -914,6 +919,41 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             self.logger.warning(f"Exception resetting path for {node_name}: {ex}")
             return False
     
+    def repeater_firmware(self, pubkey_prefix: str) -> str | None:
+        """Return the last firmware version observed for a repeater."""
+        return self._repeater_firmware.get(pubkey_prefix)
+
+    def set_repeater_firmware(self, pubkey_prefix: str, version: str) -> None:
+        """Record a repeater's reported firmware version."""
+        self._repeater_firmware[pubkey_prefix] = version
+
+    def seed_repeater_firmware(self) -> None:
+        """Seed observed firmware from the device registry after a restart."""
+        device_registry = dr.async_get(self.hass)
+        identifier_prefix = f"{self.config_entry.entry_id}_repeater_"
+        for device in dr.async_entries_for_config_entry(
+            device_registry, self.config_entry.entry_id
+        ):
+            if not device.sw_version:
+                continue
+            for domain, identifier in device.identifiers:
+                if domain == DOMAIN and identifier.startswith(identifier_prefix):
+                    prefix = identifier[len(identifier_prefix):]
+                    self._repeater_firmware.setdefault(prefix, device.sw_version)
+
+    def apply_traffic_policy(self, policy: TrafficPolicy) -> None:
+        """Switch the live traffic policy, keeping the node schedules in place."""
+        if policy == self._traffic_policy:
+            return
+        self._traffic_policy = policy
+        self._rate_limiter = MeshBudget(policy)
+        self._traffic_store = (
+            Store(self.hass, 1, f"{DOMAIN}.traffic_{self.config_entry.entry_id}")
+            if policy == POLICY_GOVERNED
+            else None
+        )
+        self._save_traffic_state()
+
     def update_telemetry_settings(self, config_entry: ConfigEntry) -> None:
         """Re-read the entry's settings into the live coordinator."""
         self.settings = Settings.from_entry(config_entry)

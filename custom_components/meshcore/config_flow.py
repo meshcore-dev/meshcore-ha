@@ -15,6 +15,9 @@ from homeassistant.helpers.selector import (
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
 )
 
 from meshcore.events import EventType
@@ -44,6 +47,7 @@ from .const import (
     CONF_LIMIT_DISCOVERED_CONTACTS,
     CONF_MAP_UPLOAD_ENABLED,
     CONF_MAX_DISCOVERED_CONTACTS,
+    CONF_MESSAGES_INTERVAL,
     CONF_MQTT_BROKERS,
     CONF_NAME,
     CONF_PUBKEY,
@@ -82,7 +86,13 @@ from .const import (
     NodeType,
 )
 from .radio import RadioSession
-from .traffic import OP_LOGIN, TRAFFIC_POLICIES, classify_lane, resolve_policy
+from .traffic import (
+    OP_FIRMWARE,
+    OP_LOGIN,
+    TRAFFIC_POLICIES,
+    classify_lane,
+    resolve_policy,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -139,6 +149,11 @@ def _contact_discovery_mode_selector() -> SelectSelector:
             translation_key="contact_discovery_mode",
         )
     )
+
+
+def _password_selector() -> TextSelector:
+    """Masked input for a repeater password; a blank field keeps the stored one."""
+    return TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD))
 
 
 def _traffic_policy_selector() -> SelectSelector:
@@ -589,6 +604,19 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         """Initialize options flow."""
         self._options_initialized = False
 
+    def _commit(self, changes: dict[str, Any]) -> None:
+        """Write user settings to entry options; connection identity stays in data.
+
+        The values are copied in: a record list the flow keeps editing must
+        never be the one stored on the entry, or the next edit would mutate
+        the entry in place and look unchanged.
+        """
+        options = dict(self.config_entry.options)
+        options.update(copy.deepcopy(changes))
+        self.hass.config_entries.async_update_entry(  # type: ignore[union-attr]
+            self.config_entry, options=options
+        )
+
     def _ensure_options_loaded(self) -> None:
         """Load repeater_subscriptions and tracked_clients from config_entry (provided by parent)."""
         if not self._options_initialized:
@@ -614,7 +642,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             elif action == "mqtt_brokers":
                 return await self.async_step_mqtt_brokers()
             else:
-                return self.async_create_entry(title="", data={})
+                # Finish with the options already saved by each sub-step;
+                # writing {} here would erase every setting.
+                return self.async_create_entry(
+                    title="", data=dict(self.config_entry.options)
+                )
 
         # Get device counts for display
         repeater_count = len(self.repeater_subscriptions)
@@ -642,6 +674,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 "manage_devices": "Manage Monitored Devices",
                 "global_settings": "Global Settings",
                 "mqtt_brokers": "Manage MQTT Brokers",
+                "done": "Done",
             })
         })
 
@@ -696,7 +729,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             step_id="add_repeater",
             data_schema=vol.Schema({
                 vol.Required(CONF_REPEATER_NAME): vol.In(repeater_dict.keys()),
-                vol.Optional(CONF_REPEATER_PASSWORD, default=default_password): str,
+                vol.Optional(CONF_REPEATER_PASSWORD, default=default_password): _password_selector(),
                 vol.Optional(CONF_REPEATER_TELEMETRY_ENABLED, default=default_telemetry): bool,
                 vol.Optional(CONF_REPEATER_NEIGHBORS_ENABLED, default=default_neighbors_enabled): bool,
                 vol.Optional(CONF_REPEATER_UPDATE_INTERVAL, default=default_interval): vol.All(cv.positive_int, vol.Range(min=MIN_UPDATE_INTERVAL)),
@@ -785,14 +818,18 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             return self._show_add_repeater_form(repeater_dict, errors, user_input)
             
             
-        # Login successful, now optionally check for version.
-        ver = await self._query_repeater_firmware(pubkey_prefix, authenticate=False)
-        
+        # Login succeeded; the version query is best effort, pays for its own
+        # send, and its answer is an observation kept on the coordinator
+        # rather than in the entry.
+        if not coordinator.check_interactive_budget(classify_lane(OP_FIRMWARE, contact)):
+            ver = await self._query_repeater_firmware(pubkey_prefix, authenticate=False)
+            if ver != "Unknown":
+                coordinator.set_repeater_firmware(pubkey_prefix, ver)
+
         # Add the new repeater subscription with pubkey_prefix
         self.repeater_subscriptions.append({
             "name": repeater_name,
             "pubkey_prefix": pubkey_prefix,
-            "firmware_version": ver,
             CONF_REPEATER_PASSWORD: password,
             CONF_REPEATER_TELEMETRY_ENABLED: telemetry_enabled,
             CONF_REPEATER_NEIGHBORS_ENABLED: neighbors_enabled,
@@ -800,14 +837,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             CONF_REPEATER_DISABLE_PATH_RESET: disable_path_reset,
         })
 
-        # Update the config entry data
-        new_data = copy.deepcopy(dict(self.config_entry.data))
-        new_data[CONF_REPEATER_SUBSCRIPTIONS] = copy.deepcopy(self.repeater_subscriptions)
-        self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
+        self._commit({CONF_REPEATER_SUBSCRIPTIONS: self.repeater_subscriptions})
 
         # Return to the init step
         return await self.async_step_init() # type: ignore
-        
+
     async def async_step_add_client(self, user_input=None):
         """Handle adding a tracked client."""
         errors = {}
@@ -875,14 +909,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             "disable_path_reset": disable_path_reset,
         })
 
-        # Update the config entry data
-        new_data = copy.deepcopy(dict(self.config_entry.data))
-        new_data[CONF_TRACKED_CLIENTS] = copy.deepcopy(self.tracked_clients)
-        self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
+        self._commit({CONF_TRACKED_CLIENTS: self.tracked_clients})
 
         # Return to the init step
         return await self.async_step_init() # type: ignore
-        
+
     async def async_step_manage_devices(self, user_input=None):
         """Handle device management."""
         if user_input is not None:
@@ -912,12 +943,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         if c.get("pubkey_prefix") != prefix
                     ]
                 
-                # Update config entry
-                new_data = copy.deepcopy(dict(self.config_entry.data))
-                new_data[CONF_REPEATER_SUBSCRIPTIONS] = copy.deepcopy(self.repeater_subscriptions)
-                new_data[CONF_TRACKED_CLIENTS] = copy.deepcopy(self.tracked_clients)
-                self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
-                
+                self._commit({
+                    CONF_REPEATER_SUBSCRIPTIONS: self.repeater_subscriptions,
+                    CONF_TRACKED_CLIENTS: self.tracked_clients,
+                })
+
                 return await self.async_step_manage_devices()
             
             else:
@@ -970,32 +1000,33 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_global_settings(self, user_input=None):
         """Handle global settings."""
         if user_input is not None:
-            new_data = copy.deepcopy(dict(self.config_entry.data))
-            new_data[CONF_CONTACT_DISCOVERY_MODE] = user_input[CONF_CONTACT_DISCOVERY_MODE]
-            new_data[CONF_LIMIT_DISCOVERED_CONTACTS] = user_input[CONF_LIMIT_DISCOVERED_CONTACTS]
-            new_data[CONF_MAX_DISCOVERED_CONTACTS] = user_input[CONF_MAX_DISCOVERED_CONTACTS]
-            new_data[CONF_SELF_TELEMETRY_ENABLED] = user_input[CONF_SELF_TELEMETRY_ENABLED]
-            new_data[CONF_SELF_TELEMETRY_INTERVAL] = user_input[CONF_SELF_TELEMETRY_INTERVAL]
-            new_data[CONF_SELF_DIAGNOSTICS_ENABLED] = user_input[CONF_SELF_DIAGNOSTICS_ENABLED]
-            new_data[CONF_SELF_DIAGNOSTICS_INTERVAL] = user_input[CONF_SELF_DIAGNOSTICS_INTERVAL]
-            new_data[CONF_CLI_CONSOLE_ENABLED] = user_input[CONF_CLI_CONSOLE_ENABLED]
-            new_data[CONF_MAP_UPLOAD_ENABLED] = user_input[CONF_MAP_UPLOAD_ENABLED]
-            new_data[CONF_AUTO_CLEANUP_STALE_CONTACTS] = user_input[CONF_AUTO_CLEANUP_STALE_CONTACTS]
-            new_data[CONF_STALE_CONTACT_DAYS] = user_input[CONF_STALE_CONTACT_DAYS]
-            new_data[CONF_CONSUME_INCOMING_MESSAGES] = user_input.get(CONF_CONSUME_INCOMING_MESSAGES, True)
-            new_data[CONF_ADAPTIVE_POLL_WAIT] = user_input[CONF_ADAPTIVE_POLL_WAIT]
-            new_data[CONF_FLOOD_SCOPES] = user_input.get(CONF_FLOOD_SCOPES, "")
-            new_data[CONF_AUTO_CLEANUP_STALE_NEIGHBORS] = user_input[CONF_AUTO_CLEANUP_STALE_NEIGHBORS]
-            new_data[CONF_STALE_NEIGHBOR_DAYS] = user_input[CONF_STALE_NEIGHBOR_DAYS]
-            new_data[CONF_TRAFFIC_POLICY] = user_input[CONF_TRAFFIC_POLICY]
-            self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
-
-            if new_data[CONF_LIMIT_DISCOVERED_CONTACTS]:
-                coordinator = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id)
-                if coordinator:
-                    await coordinator.async_evict_discovered_contacts(
-                        new_data[CONF_MAX_DISCOVERED_CONTACTS]
-                    )
+            changes = {
+                key: user_input[key]
+                for key in (
+                    CONF_CONTACT_DISCOVERY_MODE,
+                    CONF_LIMIT_DISCOVERED_CONTACTS,
+                    CONF_MAX_DISCOVERED_CONTACTS,
+                    CONF_MESSAGES_INTERVAL,
+                    CONF_SELF_TELEMETRY_ENABLED,
+                    CONF_SELF_TELEMETRY_INTERVAL,
+                    CONF_SELF_DIAGNOSTICS_ENABLED,
+                    CONF_SELF_DIAGNOSTICS_INTERVAL,
+                    CONF_CLI_CONSOLE_ENABLED,
+                    CONF_MAP_UPLOAD_ENABLED,
+                    CONF_AUTO_CLEANUP_STALE_CONTACTS,
+                    CONF_STALE_CONTACT_DAYS,
+                    CONF_ADAPTIVE_POLL_WAIT,
+                    CONF_AUTO_CLEANUP_STALE_NEIGHBORS,
+                    CONF_STALE_NEIGHBOR_DAYS,
+                    CONF_TRAFFIC_POLICY,
+                )
+                if key in user_input
+            }
+            changes[CONF_CONSUME_INCOMING_MESSAGES] = user_input.get(
+                CONF_CONSUME_INCOMING_MESSAGES, True
+            )
+            changes[CONF_FLOOD_SCOPES] = user_input.get(CONF_FLOOD_SCOPES, "")
+            self._commit(changes)
 
             return await self.async_step_init()
 
@@ -1005,6 +1036,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         return self.async_show_form(
             step_id="global_settings",
             data_schema=vol.Schema({
+                vol.Optional(CONF_MESSAGES_INTERVAL, default=settings.messages_interval): vol.All(cv.positive_int, vol.Range(min=1, max=300)),
                 vol.Optional(CONF_CONTACT_DISCOVERY_MODE, default=settings.contact_discovery_mode): _contact_discovery_mode_selector(),
                 vol.Optional(CONF_LIMIT_DISCOVERED_CONTACTS, default=settings.limit_discovered_contacts): cv.boolean,
                 vol.Optional(CONF_MAX_DISCOVERED_CONTACTS, default=settings.max_discovered_contacts): vol.All(cv.positive_int, vol.Range(min=1, max=10000)),
@@ -1073,9 +1105,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 return await self.async_step_mqtt_broker()
             elif action == "remove" and selected in brokers:
                 brokers.pop(selected, None)
-                new_data = copy.deepcopy(dict(self.config_entry.data))
-                new_data[CONF_MQTT_BROKERS] = brokers
-                self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
+                self._commit({CONF_MQTT_BROKERS: brokers})
             elif action == "back":
                 return await self.async_step_init()
 
@@ -1143,9 +1173,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 "token_ttl_seconds": user_input.get("token_ttl_seconds", legacy_global_ttl),
                 "payload_mode": user_input.get("payload_mode", "packet"),
             }
-            new_data = copy.deepcopy(dict(self.config_entry.data))
-            new_data[CONF_MQTT_BROKERS] = brokers
-            self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
+            self._commit({CONF_MQTT_BROKERS: brokers})
             return await self.async_step_mqtt_brokers()
 
         schema = vol.Schema({
@@ -1286,6 +1314,40 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
         return "Unknown"
 
+    async def _async_record_repeater_firmware(self, pubkey_prefix: str) -> None:
+        """Query an edited repeater's version, inside the mesh budget.
+
+        Best effort: a denial, a timeout or a missing device leaves the last
+        known version alone and never fails the edit.
+        """
+        from .repeater_firmware import (
+            RepeaterFirmwareRefreshError,
+            async_save_repeater_firmware_version,
+        )
+
+        coordinator = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id)
+        if coordinator is None or not coordinator.api.connected:
+            return
+
+        contact = coordinator.api.contact_by_prefix(pubkey_prefix)
+        wait = coordinator.check_interactive_budget(classify_lane(OP_FIRMWARE, contact))
+        if wait:
+            _LOGGER.info(
+                "Skipped firmware query for %s: mesh budget is short for %d seconds",
+                pubkey_prefix, int(wait),
+            )
+            return
+
+        version = await self._query_repeater_firmware(pubkey_prefix)
+        if version == "Unknown":
+            return
+        try:
+            async_save_repeater_firmware_version(
+                self.hass, self.config_entry, pubkey_prefix, version
+            )
+        except RepeaterFirmwareRefreshError as ex:
+            _LOGGER.debug("Could not record firmware for %s: %s", pubkey_prefix, ex)
+
     async def async_step_edit_repeater(self, user_input=None):
         """Handle editing a repeater."""
         prefix = self._edit_device_id[9:]  # Remove "repeater_" prefix
@@ -1316,30 +1378,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             repeater[CONF_REPEATER_DISABLE_PATH_RESET] = user_input[CONF_REPEATER_DISABLE_PATH_RESET]
             repeater[CONF_DEVICE_DISABLED] = user_input[CONF_DEVICE_DISABLED]
 
-            # Re-query firmware version from the repeater
-            ver = await self._query_repeater_firmware(prefix)
-            if ver != "Unknown":
-                repeater["firmware_version"] = ver
-
-                # Update device registry sw_version
-                from homeassistant.helpers.device_registry import (
-                    async_get as async_get_device_registry,
-                )
-                device_registry = async_get_device_registry(self.hass)
-                device_id = f"{self.config_entry.entry_id}_repeater_{prefix}"
-                for device in device_registry.devices.values():
-                    for identifier in device.identifiers:
-                        if identifier[0] == DOMAIN and identifier[1] == device_id:
-                            device_registry.async_update_device(
-                                device.id, sw_version=ver
-                            )
-                            break
-
-            # Update config entry - deep copy entire data to ensure HA detects changes
-            new_data = copy.deepcopy(dict(self.config_entry.data))
-            new_data[CONF_REPEATER_SUBSCRIPTIONS] = copy.deepcopy(self.repeater_subscriptions)
-            _LOGGER.debug("Updating repeater subscriptions: %s", new_data[CONF_REPEATER_SUBSCRIPTIONS])
-            self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
+            self._commit({CONF_REPEATER_SUBSCRIPTIONS: self.repeater_subscriptions})
 
             # If neighbors was just disabled, clean up existing entities
             now_neighbors_enabled = user_input.get(CONF_REPEATER_NEIGHBORS_ENABLED, False)
@@ -1352,16 +1391,19 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         repeater.get("name"), removed,
                     )
 
+            # The edit is saved before any mesh traffic: a silent or rate
+            # limited repeater can no longer lose it. A disabled repeater is
+            # not queried at all.
+            if not user_input[CONF_DEVICE_DISABLED]:
+                await self._async_record_repeater_firmware(prefix)
+
             return await self.async_step_init()
 
         # Show current settings
         return self.async_show_form(
             step_id="edit_repeater",
             data_schema=vol.Schema({
-                vol.Optional(
-                    CONF_REPEATER_PASSWORD,
-                    description={"suggested_value": repeater.get(CONF_REPEATER_PASSWORD, "")}
-                ): str,
+                vol.Optional(CONF_REPEATER_PASSWORD): _password_selector(),
                 vol.Optional(CONF_REPEATER_TELEMETRY_ENABLED, default=repeater.get(CONF_REPEATER_TELEMETRY_ENABLED, False)): bool,
                 vol.Optional(CONF_REPEATER_NEIGHBORS_ENABLED, default=repeater.get(CONF_REPEATER_NEIGHBORS_ENABLED, False)): bool,
                 vol.Optional(CONF_REPEATER_UPDATE_INTERVAL, default=repeater.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)): vol.All(cv.positive_int, vol.Range(min=MIN_UPDATE_INTERVAL)),
@@ -1393,10 +1435,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             client[CONF_CLIENT_DISABLE_PATH_RESET] = user_input[CONF_CLIENT_DISABLE_PATH_RESET]
             client[CONF_DEVICE_DISABLED] = user_input[CONF_DEVICE_DISABLED]
 
-            # Update config entry
-            new_data = copy.deepcopy(dict(self.config_entry.data))
-            new_data[CONF_TRACKED_CLIENTS] = copy.deepcopy(self.tracked_clients)
-            self.hass.config_entries.async_update_entry(self.config_entry, data=new_data) # type: ignore
+            self._commit({CONF_TRACKED_CLIENTS: self.tracked_clients})
 
             return await self.async_step_init()
 

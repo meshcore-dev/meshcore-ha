@@ -19,10 +19,12 @@
     "step": {
       "global_settings": {
         "data": {
-          "consume_incoming_messages": "Eingehende Nachrichten aus der Warteschlange abrufen"
+          "consume_incoming_messages": "Eingehende Nachrichten aus der Warteschlange abrufen",
+          "messages_interval": "Message Poll Interval (seconds)"
         },
         "data_description": {
-          "consume_incoming_messages": "Standardmäßig aktiviert. Deaktivieren, wenn ein anderer Client, etwa ein Smartphone über BLE, Kanal- und Direktnachrichten aus der Warteschlange abrufen soll. Home Assistant fragt weiterhin Repeater-Status und Telemetrie ab und kann Befehle senden. Vom Gerät zugestellte Nachrichten können weiterhin in Home Assistant erscheinen. Diese Einstellung steuert den Abruf der Warteschlange, nicht die Anzeige. Auch Textantworten auf Befehle können für den anderen Client in der Warteschlange verbleiben."
+          "consume_incoming_messages": "Standardmäßig aktiviert. Deaktivieren, wenn ein anderer Client, etwa ein Smartphone über BLE, Kanal- und Direktnachrichten aus der Warteschlange abrufen soll. Home Assistant fragt weiterhin Repeater-Status und Telemetrie ab und kann Befehle senden. Vom Gerät zugestellte Nachrichten können weiterhin in Home Assistant erscheinen. Diese Einstellung steuert den Abruf der Warteschlange, nicht die Anzeige. Auch Textantworten auf Befehle können für den anderen Client in der Warteschlange verbleiben.",
+          "messages_interval": "How often the integration polls the companion radio for queued messages and runs its scheduling tick. Local USB/BLE/TCP traffic only, no mesh airtime. Lower values make chat feel faster at the cost of more companion chatter."
         }
       }
     }

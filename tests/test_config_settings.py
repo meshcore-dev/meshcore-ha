@@ -181,3 +181,81 @@ def test_get_conf_prefers_options_membership():
     assert CONFIG.get_conf(entry({"k": 1}, {"k": 0}), "k", 9) == 0
     assert CONFIG.get_conf(entry({"k": 1}), "k", 9) == 1
     assert CONFIG.get_conf(entry(), "k", 9) == 9
+
+
+# --- Reload scope -------------------------------------------------------------
+
+def scopes(data=None, options=None, **changes):
+    """Classify the change between a base entry and the same entry edited."""
+    base = Settings.from_entry(entry(data, options))
+    edited = Settings.from_entry(
+        entry(data, {**(options or {}), **changes})
+    )
+    return CONFIG.diff_settings(base, edited)
+
+
+def test_an_equivalent_edit_needs_nothing():
+    """A write that changes no setting is not a reason to do anything."""
+    assert scopes({"stale_contact_days": 30}, {}, stale_contact_days=30) == "none"
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("self_telemetry_interval", 900),
+        ("messages_interval", 30),
+        ("contact_discovery_mode", "off"),
+        ("auto_cleanup_stale_contacts", True),
+        ("stale_neighbor_days", 3),
+        ("traffic_policy", "governed"),
+        ("map_upload_enabled", True),
+        ("adaptive_poll_wait", True),
+        ("flood_scopes", "pl-mz"),
+        ("mqtt_brokers", {"1": {"enabled": True, "server": "mqtt.example"}}),
+    ],
+)
+def test_ordinary_settings_apply_in_place(key, value):
+    """Intervals, toggles, policy and uploader settings never need a reload."""
+    assert scopes(None, None, **{key: value}) == "apply"
+
+
+def test_a_node_field_edit_applies_in_place():
+    """Editing a tracked node's own settings keeps the entry loaded."""
+    options = {
+        "repeater_subscriptions": [{"name": "R", "pubkey_prefix": "aabbccddeeff"}]
+    }
+    edited = [
+        {"name": "R", "pubkey_prefix": "aabbccddeeff", "update_interval": 1800}
+    ]
+    assert scopes(None, options, repeater_subscriptions=edited) == "apply"
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("cli_console_enabled", True),
+        ("self_diagnostics_enabled", True),
+    ],
+)
+def test_entity_shaping_settings_reload(key, value):
+    """A setting that decides which entities exist rebuilds the entry."""
+    assert scopes(None, None, **{key: value}) == "reload"
+
+
+def test_tracked_node_membership_reloads():
+    """Adding or removing a node reloads so its entities follow."""
+    options = {
+        "repeater_subscriptions": [{"name": "R", "pubkey_prefix": "aabbccddeeff"}]
+    }
+    assert scopes(None, options, repeater_subscriptions=[]) == "reload"
+    assert (
+        scopes(None, options, tracked_clients=[{"name": "C", "pubkey_prefix": "bb"}])
+        == "reload"
+    )
+
+
+def test_a_connection_change_reloads():
+    """The radio's identity is the one thing that must be rebuilt."""
+    old = Settings.from_entry(entry({"connection_type": "tcp", "tcp_host": "a"}))
+    new = Settings.from_entry(entry({"connection_type": "tcp", "tcp_host": "b"}))
+    assert CONFIG.diff_settings(old, new) == "reload"

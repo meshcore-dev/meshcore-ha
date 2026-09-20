@@ -163,10 +163,14 @@
           "repeater_password": "Repeater Wachtwoord",
           "telemetry_enabled": "Schakel Telemetrie-polling in",
           "repeater_update_interval": "Telemetrie-verversingsinterval (seconden)",
-          "disable_path_reset": "Schakel Pad-reset uit"
+          "disable_path_reset": "Schakel Pad-reset uit",
+          "password": "Password"
         },
         "description": "Monitor een repeater voor telemetrie en status",
-        "title": "Repeater-station Toevoegen"
+        "title": "Repeater-station Toevoegen",
+        "data_description": {
+          "password": "Sent once to log in to the repeater. Leave blank for a repeater that grants access by ACL without a password."
+        }
       },
       "add_client": {
         "data": {
@@ -191,10 +195,14 @@
           "telemetry_enabled": "Schakel Telemetrie-polling in",
           "repeater_update_interval": "Telemetrie-verversingsinterval (seconden)",
           "disable_path_reset": "Schakel Pad-reset uit",
-          "disabled": "Schakel Apparaat uit"
+          "disabled": "Schakel Apparaat uit",
+          "password": "Update Password (leave blank to keep current)"
         },
         "description": "Bewerk instellingen voor {device_name}",
-        "title": "Bewerk Repeater"
+        "title": "Bewerk Repeater",
+        "data_description": {
+          "password": "Stored passwords are never shown. Leave this blank to keep the saved password; type a new one to replace it."
+        }
       },
       "edit_client": {
         "data": {
@@ -213,11 +221,13 @@
           "self_telemetry_enabled": "Schakel Zelf-telemetrie in",
           "self_telemetry_interval": "Zelf-telemetrie-interval (seconden)",
           "map_upload_enabled": "Schakel Map Auto Uploader in (map.meshcore.io)",
-          "consume_incoming_messages": "Inkomende berichten uit de wachtrij ophalen"
+          "consume_incoming_messages": "Inkomende berichten uit de wachtrij ophalen",
+          "messages_interval": "Message Poll Interval (seconds)"
         },
         "data_description": {
           "map_upload_enabled": "Als dit is ingeschakeld, worden advertenties van repeaters en room servers die u ontvangt geüpload naar map.meshcore.io. Die knooppunten verschijnen op de officiële MeshCore-kaart voor de community. Vereist dat export van de privésleutel op de firmware is ingeschakeld (`ENABLE_PRIVATE_KEY_EXPORT=1`); anders kunnen uploads niet worden ondertekend.",
-          "consume_incoming_messages": "Standaard ingeschakeld. Schakel dit uit als een andere client, zoals een telefoon via BLE, kanaalberichten en privéberichten uit de wachtrij moet ophalen. Home Assistant blijft de status en telemetrie van repeaters opvragen en kan opdrachten versturen. Berichten die het apparaat doorstuurt, kunnen nog steeds in Home Assistant verschijnen. Deze instelling bepaalt het ophalen uit de wachtrij, niet de weergave. Tekstantwoorden op opdrachten kunnen ook voor de andere client in de wachtrij blijven staan."
+          "consume_incoming_messages": "Standaard ingeschakeld. Schakel dit uit als een andere client, zoals een telefoon via BLE, kanaalberichten en privéberichten uit de wachtrij moet ophalen. Home Assistant blijft de status en telemetrie van repeaters opvragen en kan opdrachten versturen. Berichten die het apparaat doorstuurt, kunnen nog steeds in Home Assistant verschijnen. Deze instelling bepaalt het ophalen uit de wachtrij, niet de weergave. Tekstantwoorden op opdrachten kunnen ook voor de andere client in de wachtrij blijven staan.",
+          "messages_interval": "How often the integration polls the companion radio for queued messages and runs its scheduling tick. Local USB/BLE/TCP traffic only, no mesh airtime. Lower values make chat feel faster at the cost of more companion chatter."
         },
         "description": "Configureer algemene integratie-instellingen",
         "title": "Algemene Instellingen"

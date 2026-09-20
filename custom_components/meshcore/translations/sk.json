@@ -391,10 +391,12 @@
     "step": {
       "global_settings": {
         "data": {
-          "consume_incoming_messages": "Preberať prichádzajúce správy z frontu"
+          "consume_incoming_messages": "Preberať prichádzajúce správy z frontu",
+          "messages_interval": "Message Poll Interval (seconds)"
         },
         "data_description": {
-          "consume_incoming_messages": "Predvolene zapnuté. Vypnite, ak má správy kanálov a súkromné správy z frontu preberať iný klient, napríklad telefón cez BLE. Home Assistant bude naďalej zisťovať stav a telemetriu opakovačov a odosielať príkazy. Správy doručené zariadením sa môžu naďalej zobrazovať v Home Assistant. Nastavenie riadi čítanie frontu, nie zobrazovanie správ. Vo fronte môžu pre druhého klienta zostať aj textové odpovede na príkazy."
+          "consume_incoming_messages": "Predvolene zapnuté. Vypnite, ak má správy kanálov a súkromné správy z frontu preberať iný klient, napríklad telefón cez BLE. Home Assistant bude naďalej zisťovať stav a telemetriu opakovačov a odosielať príkazy. Správy doručené zariadením sa môžu naďalej zobrazovať v Home Assistant. Nastavenie riadi čítanie frontu, nie zobrazovanie správ. Vo fronte môžu pre druhého klienta zostať aj textové odpovede na príkazy.",
+          "messages_interval": "How often the integration polls the companion radio for queued messages and runs its scheduling tick. Local USB/BLE/TCP traffic only, no mesh airtime. Lower values make chat feel faster at the cost of more companion chatter."
         }
       }
     }

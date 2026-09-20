@@ -1669,7 +1669,7 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
             "name": device_name,
             "manufacturer": "MeshCore",
             "model": "Mesh Repeater",
-            "sw_version": repeater.get("firmware_version"),
+            "sw_version": coordinator.repeater_firmware(self.public_key),
             "via_device": (DOMAIN, coordinator.config_entry.entry_id),  # Link to the main device
         }
 

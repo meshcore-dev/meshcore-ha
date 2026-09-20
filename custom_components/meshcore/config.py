@@ -9,17 +9,22 @@ setting: it stays in ``entry.data`` and is read directly by its owners.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Final
+from datetime import timedelta
+from typing import Any, ClassVar, Final, Literal
 
 from .const import (
     CONF_ADAPTIVE_POLL_WAIT,
     CONF_AUTO_CLEANUP_STALE_CONTACTS,
     CONF_AUTO_CLEANUP_STALE_NEIGHBORS,
+    CONF_BAUDRATE,
+    CONF_BLE_ADDRESS,
     CONF_CLI_CONSOLE_ENABLED,
     CONF_CLIENT_DISABLE_PATH_RESET,
     CONF_CLIENT_UPDATE_INTERVAL,
+    CONF_CONNECTION_TYPE,
     CONF_CONSUME_INCOMING_MESSAGES,
     CONF_CONTACT_DISCOVERY_MODE,
     CONF_DEVICE_DISABLED,
@@ -44,8 +49,11 @@ from .const import (
     CONF_SELF_TELEMETRY_INTERVAL,
     CONF_STALE_CONTACT_DAYS,
     CONF_STALE_NEIGHBOR_DAYS,
+    CONF_TCP_HOST,
+    CONF_TCP_PORT,
     CONF_TRACKED_CLIENTS,
     CONF_TRAFFIC_POLICY,
+    CONF_USB_PATH,
     DEFAULT_CLIENT_UPDATE_INTERVAL,
     DEFAULT_CONTACT_DISCOVERY_MODE,
     DEFAULT_MAX_DISCOVERED_CONTACTS,
@@ -57,6 +65,8 @@ from .const import (
     DEFAULT_TRAFFIC_POLICY,
     DEFAULT_UPDATE_TICK,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 # Hex characters of a public key used to identify a node in stored records.
 # Only applied when minting a new record; stored widths are left as they are.
@@ -138,6 +148,11 @@ def _as_bool(value: Any, default: bool) -> bool:
 def _as_str(value: Any, default: str) -> str:
     """Read a string setting, falling back to the default when unusable."""
     return value if isinstance(value, str) else default
+
+
+def _as_given(value: Any, default: Any) -> Any:
+    """Hand a setting through untouched, so its own owner can normalise it."""
+    return default if value is None else value
 
 
 def _records(value: Any) -> list[Mapping[str, Any]]:
@@ -331,6 +346,32 @@ class BrokerConfig:
 
 
 @dataclass(frozen=True)
+class Connection:
+    """How the entry reaches its radio; identity, read from entry data only."""
+
+    connection_type: str = ""
+    usb_path: Any = None
+    baudrate: Any = None
+    ble_address: Any = None
+    tcp_host: Any = None
+    tcp_port: Any = None
+
+    @classmethod
+    def from_entry(cls, entry: Any) -> Connection:
+        """Read the transport identity of a config entry."""
+        data = getattr(entry, "data", None)
+        data = data if isinstance(data, Mapping) else {}
+        return cls(
+            connection_type=_as_str(data.get(CONF_CONNECTION_TYPE), ""),
+            usb_path=data.get(CONF_USB_PATH),
+            baudrate=data.get(CONF_BAUDRATE),
+            ble_address=data.get(CONF_BLE_ADDRESS),
+            tcp_host=data.get(CONF_TCP_HOST),
+            tcp_port=data.get(CONF_TCP_PORT),
+        )
+
+
+@dataclass(frozen=True)
 class Settings:
     """Every user-owned setting of one entry, read options first."""
 
@@ -358,78 +399,59 @@ class Settings:
     repeaters: tuple[RepeaterConfig, ...] = ()
     clients: tuple[ClientConfig, ...] = ()
     brokers: Mapping[str, BrokerConfig] = field(default_factory=dict)
+    connection: Connection = field(default_factory=Connection)
+
+    # Which entry key each setting reads, and how it is coerced; the default
+    # is the field default above, so there is one place to change either.
+    READERS: ClassVar[dict[str, tuple[str, Any]]] = {
+        "messages_interval": (CONF_MESSAGES_INTERVAL, _as_int),
+        "contact_discovery_mode": (CONF_CONTACT_DISCOVERY_MODE, _as_str),
+        "limit_discovered_contacts": (CONF_LIMIT_DISCOVERED_CONTACTS, _as_bool),
+        "max_discovered_contacts": (CONF_MAX_DISCOVERED_CONTACTS, _as_int),
+        "self_telemetry_enabled": (CONF_SELF_TELEMETRY_ENABLED, _as_bool),
+        "self_telemetry_interval": (CONF_SELF_TELEMETRY_INTERVAL, _as_int),
+        "self_diagnostics_enabled": (CONF_SELF_DIAGNOSTICS_ENABLED, _as_bool),
+        "self_diagnostics_interval": (CONF_SELF_DIAGNOSTICS_INTERVAL, _as_int),
+        "cli_console_enabled": (CONF_CLI_CONSOLE_ENABLED, _as_bool),
+        "map_upload_enabled": (CONF_MAP_UPLOAD_ENABLED, _as_bool),
+        "auto_cleanup_stale_contacts": (CONF_AUTO_CLEANUP_STALE_CONTACTS, _as_bool),
+        "stale_contact_days": (CONF_STALE_CONTACT_DAYS, _as_int),
+        "auto_cleanup_stale_neighbors": (CONF_AUTO_CLEANUP_STALE_NEIGHBORS, _as_bool),
+        "stale_neighbor_days": (CONF_STALE_NEIGHBOR_DAYS, _as_int),
+        "consume_incoming_messages": (CONF_CONSUME_INCOMING_MESSAGES, _as_bool),
+        "adaptive_poll_wait": (CONF_ADAPTIVE_POLL_WAIT, _as_bool),
+        "flood_scopes": (CONF_FLOOD_SCOPES, _as_str),
+        "traffic_policy": (CONF_TRAFFIC_POLICY, _as_str),
+        # The uploader owns the normalisation of its own settings.
+        "mqtt_iata": (CONF_MQTT_IATA, _as_given),
+        "mqtt_decoder_cmd": (CONF_MQTT_DECODER_CMD, _as_given),
+        "mqtt_token_ttl_seconds": (CONF_MQTT_TOKEN_TTL_SECONDS, _as_given),
+    }
 
     @classmethod
     def from_entry(cls, entry: Any) -> Settings:
         """Build the effective settings of a config entry."""
-        brokers = get_conf(entry, CONF_MQTT_BROKERS, {}) or {}
+        defaults = cls()
+        brokers = get_conf(entry, CONF_MQTT_BROKERS, {})
         return cls(
-            messages_interval=_as_int(
-                get_conf(entry, CONF_MESSAGES_INTERVAL), DEFAULT_UPDATE_TICK
-            ),
-            contact_discovery_mode=_as_str(
-                get_conf(entry, CONF_CONTACT_DISCOVERY_MODE),
-                DEFAULT_CONTACT_DISCOVERY_MODE,
-            ),
-            limit_discovered_contacts=_as_bool(
-                get_conf(entry, CONF_LIMIT_DISCOVERED_CONTACTS), False
-            ),
-            max_discovered_contacts=_as_int(
-                get_conf(entry, CONF_MAX_DISCOVERED_CONTACTS),
-                DEFAULT_MAX_DISCOVERED_CONTACTS,
-            ),
-            self_telemetry_enabled=_as_bool(
-                get_conf(entry, CONF_SELF_TELEMETRY_ENABLED), False
-            ),
-            self_telemetry_interval=_as_int(
-                get_conf(entry, CONF_SELF_TELEMETRY_INTERVAL),
-                DEFAULT_SELF_TELEMETRY_INTERVAL,
-            ),
-            self_diagnostics_enabled=_as_bool(
-                get_conf(entry, CONF_SELF_DIAGNOSTICS_ENABLED), False
-            ),
-            self_diagnostics_interval=_as_int(
-                get_conf(entry, CONF_SELF_DIAGNOSTICS_INTERVAL),
-                DEFAULT_SELF_DIAGNOSTICS_INTERVAL,
-            ),
-            cli_console_enabled=_as_bool(get_conf(entry, CONF_CLI_CONSOLE_ENABLED), False),
-            map_upload_enabled=_as_bool(get_conf(entry, CONF_MAP_UPLOAD_ENABLED), False),
-            auto_cleanup_stale_contacts=_as_bool(
-                get_conf(entry, CONF_AUTO_CLEANUP_STALE_CONTACTS), False
-            ),
-            stale_contact_days=_as_int(
-                get_conf(entry, CONF_STALE_CONTACT_DAYS), DEFAULT_STALE_CONTACT_DAYS
-            ),
-            auto_cleanup_stale_neighbors=_as_bool(
-                get_conf(entry, CONF_AUTO_CLEANUP_STALE_NEIGHBORS), False
-            ),
-            stale_neighbor_days=_as_int(
-                get_conf(entry, CONF_STALE_NEIGHBOR_DAYS), DEFAULT_STALE_NEIGHBOR_DAYS
-            ),
-            consume_incoming_messages=_as_bool(
-                get_conf(entry, CONF_CONSUME_INCOMING_MESSAGES), True
-            ),
-            adaptive_poll_wait=_as_bool(get_conf(entry, CONF_ADAPTIVE_POLL_WAIT), False),
-            flood_scopes=_as_str(get_conf(entry, CONF_FLOOD_SCOPES), ""),
-            traffic_policy=_as_str(
-                get_conf(entry, CONF_TRAFFIC_POLICY), DEFAULT_TRAFFIC_POLICY
-            ),
-            mqtt_iata=get_conf(entry, CONF_MQTT_IATA, DEFAULT_MQTT_IATA),
-            mqtt_decoder_cmd=get_conf(entry, CONF_MQTT_DECODER_CMD, DEFAULT_MQTT_DECODER_CMD),
-            mqtt_token_ttl_seconds=get_conf(entry, CONF_MQTT_TOKEN_TTL_SECONDS),
+            **{
+                name: read(get_conf(entry, key), getattr(defaults, name))
+                for name, (key, read) in cls.READERS.items()
+            },
             repeaters=tuple(
                 RepeaterConfig.from_dict(raw)
-                for raw in _records(get_conf(entry, CONF_REPEATER_SUBSCRIPTIONS, []))
+                for raw in _records(get_conf(entry, CONF_REPEATER_SUBSCRIPTIONS))
             ),
             clients=tuple(
                 ClientConfig.from_dict(raw)
-                for raw in _records(get_conf(entry, CONF_TRACKED_CLIENTS, []))
+                for raw in _records(get_conf(entry, CONF_TRACKED_CLIENTS))
             ),
             brokers={
                 str(slot): BrokerConfig.from_dict(raw)
                 for slot, raw in (brokers.items() if isinstance(brokers, Mapping) else ())
                 if isinstance(raw, Mapping)
             },
+            connection=Connection.from_entry(entry),
         )
 
     @property
@@ -446,3 +468,98 @@ class Settings:
     def broker_records(self) -> dict[str, dict[str, Any]]:
         """MQTT broker slots in the stored mapping shape."""
         return {slot: broker.to_dict() for slot, broker in self.brokers.items()}
+
+
+ReloadScope = Literal["none", "apply", "reload"]
+SCOPE_NONE: Final[ReloadScope] = "none"
+SCOPE_APPLY: Final[ReloadScope] = "apply"
+SCOPE_RELOAD: Final[ReloadScope] = "reload"
+
+# Settings that decide which entities a platform builds at setup. Applying one
+# in place would mean inventing entities outside the platform that owns them,
+# so a change to these reloads the entry exactly as it always has.
+ENTITY_SHAPING_FIELDS: Final = ("cli_console_enabled", "self_diagnostics_enabled")
+
+
+def _tracked_keys(settings: Settings) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return the identities of the tracked nodes, in stored order."""
+    return (
+        tuple(repeater.pubkey_prefix for repeater in settings.repeaters),
+        tuple(client.pubkey_prefix for client in settings.clients),
+    )
+
+
+def diff_settings(old: Settings, new: Settings) -> ReloadScope:
+    """Classify a settings change: nothing to do, apply live, or reload.
+
+    Only the radio's identity, and the settings that decide which entities
+    exist, need the entry rebuilt; everything else is pushed into the running
+    entry so the traffic budget and every node's schedule survive the edit.
+    """
+    if old == new:
+        return SCOPE_NONE
+    if old.connection != new.connection:
+        return SCOPE_RELOAD
+    if any(getattr(old, name) != getattr(new, name) for name in ENTITY_SHAPING_FIELDS):
+        return SCOPE_RELOAD
+    if _tracked_keys(old) != _tracked_keys(new):
+        return SCOPE_RELOAD
+    return SCOPE_APPLY
+
+
+async def apply_settings(hass: Any, entry: Any, coordinator: Any, new: Settings) -> None:
+    """Push changed settings into a loaded entry without reloading the radio."""
+    old = coordinator.settings
+    coordinator.update_telemetry_settings(entry)
+
+    if new.messages_interval != old.messages_interval:
+        coordinator.update_interval = timedelta(seconds=new.messages_interval)
+    if new.traffic_policy != old.traffic_policy:
+        coordinator.apply_traffic_policy(new.traffic_policy)
+    if new.contact_discovery_mode != old.contact_discovery_mode:
+        await coordinator.async_reconcile_discovered_for_mode()
+    if new.limit_discovered_contacts and (
+        not old.limit_discovered_contacts
+        or new.max_discovered_contacts < old.max_discovered_contacts
+    ):
+        await coordinator.async_evict_discovered_contacts(new.max_discovered_contacts)
+
+    await _apply_uploaders(hass, entry, coordinator, old, new)
+    coordinator.async_update_listeners()
+
+
+async def _apply_uploaders(
+    hass: Any, entry: Any, coordinator: Any, old: Settings, new: Settings
+) -> None:
+    """Reconfigure the uploaders in place; a broker edit never touches the radio."""
+    if coordinator.map_uploader is not None:
+        coordinator.map_uploader.enabled = new.map_upload_enabled
+
+    if (
+        old.brokers == new.brokers
+        and old.mqtt_iata == new.mqtt_iata
+        and old.mqtt_decoder_cmd == new.mqtt_decoder_cmd
+        and old.mqtt_token_ttl_seconds == new.mqtt_token_ttl_seconds
+    ):
+        return
+
+    from .mqtt_uploader import MeshCoreMqttUploader
+
+    previous = coordinator.mqtt_uploader
+    version = getattr(previous, "integration_version", "unknown")
+    if previous is not None:
+        try:
+            await previous.async_stop()
+        except Exception as ex:
+            _LOGGER.warning("MQTT uploader did not stop cleanly: %s", ex)
+    coordinator.mqtt_uploader = None
+
+    try:
+        uploader = MeshCoreMqttUploader(
+            hass, coordinator.logger, entry, api=coordinator.api,
+            integration_version=version,
+        )
+        await uploader.async_start()
+        coordinator.mqtt_uploader = uploader
+    except Exception as ex:
+        _LOGGER.warning("MQTT uploader failed to restart: %s - continuing without it", ex)
