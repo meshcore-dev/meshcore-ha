@@ -22,11 +22,8 @@ from homeassistant.core import HomeAssistant
 
 from meshcore.events import EventType
 
+from .config import Settings
 from .const import (
-    CONF_MQTT_BROKERS,
-    CONF_MQTT_DECODER_CMD,
-    CONF_MQTT_IATA,
-    CONF_MQTT_TOKEN_TTL_SECONDS,
     CONF_NAME,
     CONF_PUBKEY,
 )
@@ -101,14 +98,15 @@ class MeshCoreMqttUploader:
         self.entry = entry
         self.api = api
         self.integration_version = (integration_version or "unknown").strip() or "unknown"
-        self.settings = entry.data.get(CONF_MQTT_BROKERS, {}) or {}
+        entry_settings = Settings.from_entry(entry)
+        self.settings = entry_settings.broker_records
         configured_name = str(entry.data.get(CONF_NAME, "meshcore") or "meshcore").strip()
         self.node_name = self._resolve_initial_node_name(configured_name)
         self.public_key = (entry.data.get(CONF_PUBKEY, "") or "").upper()
-        self.global_iata = str(entry.data.get(CONF_MQTT_IATA, "XYZ") or "XYZ").strip().upper()
-        self.decoder_cmd = str(entry.data.get(CONF_MQTT_DECODER_CMD, "meshcore-decoder") or "meshcore-decoder").strip()
+        self.global_iata = str(entry_settings.mqtt_iata or "XYZ").strip().upper()
+        self.decoder_cmd = str(entry_settings.mqtt_decoder_cmd or "meshcore-decoder").strip()
         self.default_token_ttl_seconds = _as_int(
-            entry.data.get(CONF_MQTT_TOKEN_TTL_SECONDS),
+            entry_settings.mqtt_token_ttl_seconds,
             3600,
         )
         # Auth token signing key is sourced from connected radio only.

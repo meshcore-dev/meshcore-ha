@@ -19,6 +19,13 @@ from homeassistant.helpers.selector import (
 
 from meshcore.events import EventType
 
+from .config import (
+    DEFAULT_MQTT_TOPIC_EVENTS,
+    DEFAULT_MQTT_TOPIC_STATUS,
+    MAX_MQTT_BROKERS,
+    PUBKEY_PREFIX_LENGTH,
+    Settings,
+)
 from .const import (
     CONF_ADAPTIVE_POLL_WAIT,
     CONF_AUTO_CLEANUP_STALE_CONTACTS,
@@ -38,8 +45,6 @@ from .const import (
     CONF_MAP_UPLOAD_ENABLED,
     CONF_MAX_DISCOVERED_CONTACTS,
     CONF_MQTT_BROKERS,
-    CONF_MQTT_IATA,
-    CONF_MQTT_TOKEN_TTL_SECONDS,
     CONF_NAME,
     CONF_PUBKEY,
     CONF_REPEATER_DISABLE_PATH_RESET,
@@ -68,17 +73,13 @@ from .const import (
     DEFAULT_BAUDRATE,
     DEFAULT_CLIENT_UPDATE_INTERVAL,
     DEFAULT_CONTACT_DISCOVERY_MODE,
-    DEFAULT_MAX_DISCOVERED_CONTACTS,
     DEFAULT_REPEATER_UPDATE_INTERVAL,
     DEFAULT_SELF_DIAGNOSTICS_INTERVAL,
     DEFAULT_SELF_TELEMETRY_INTERVAL,
-    DEFAULT_STALE_CONTACT_DAYS,
-    DEFAULT_STALE_NEIGHBOR_DAYS,
     DEFAULT_TCP_PORT,
     DOMAIN,
     MIN_UPDATE_INTERVAL,
     NodeType,
-    get_contact_discovery_mode,
 )
 from .radio import RadioSession
 from .traffic import OP_LOGIN, TRAFFIC_POLICIES, classify_lane, resolve_policy
@@ -88,10 +89,6 @@ _LOGGER = logging.getLogger(__name__)
 class CannotConnect(HomeAssistantError):
     """Error to indicate we cannot connect."""
 
-
-DEFAULT_MQTT_TOPIC_STATUS = "meshcore/{IATA}/{PUBLIC_KEY}/status"
-DEFAULT_MQTT_TOPIC_EVENTS = "meshcore/{IATA}/{PUBLIC_KEY}/packets"
-MAX_MQTT_BROKERS = 4
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
@@ -554,12 +551,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     def _ensure_options_loaded(self) -> None:
         """Load repeater_subscriptions and tracked_clients from config_entry (provided by parent)."""
         if not self._options_initialized:
-            self.repeater_subscriptions = copy.deepcopy(
-                self.config_entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, [])
-            )
-            self.tracked_clients = copy.deepcopy(
-                self.config_entry.data.get(CONF_TRACKED_CLIENTS, [])
-            )
+            settings = Settings.from_entry(self.config_entry)
+            self.repeater_subscriptions = settings.repeater_records
+            self.tracked_clients = settings.client_records
             self._options_initialized = True
 
     async def async_step_init(self, user_input=None):
@@ -626,7 +620,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             contact_type = self._normalize_contact_type(contact)
             contact_name = self._contact_name(contact)
             public_key = contact.get("public_key", "")
-            pubkey_prefix = public_key[:12] if public_key else ""
+            pubkey_prefix = public_key[:PUBKEY_PREFIX_LENGTH] if public_key else ""
 
             is_repeater_like = contact_type in {NodeType.REPEATER, NodeType.ROOM_SERVER, NodeType.SENSOR}
             if not is_repeater_like and isinstance(contact_name, str):
@@ -964,52 +958,35 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
             return await self.async_step_init()
 
-        current_contact_discovery_mode = get_contact_discovery_mode(self.config_entry)
-        current_limit_enabled = self.config_entry.data.get(CONF_LIMIT_DISCOVERED_CONTACTS, False)
-        current_max_contacts = self.config_entry.data.get(CONF_MAX_DISCOVERED_CONTACTS, DEFAULT_MAX_DISCOVERED_CONTACTS)
-        current_telemetry_enabled = self.config_entry.data.get(CONF_SELF_TELEMETRY_ENABLED, False)
-        current_telemetry_interval = self.config_entry.data.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL)
-        current_diagnostics_enabled = self.config_entry.data.get(CONF_SELF_DIAGNOSTICS_ENABLED, False)
-        current_diagnostics_interval = self.config_entry.data.get(CONF_SELF_DIAGNOSTICS_INTERVAL, DEFAULT_SELF_DIAGNOSTICS_INTERVAL)
-        current_cli_console_enabled = self.config_entry.data.get(CONF_CLI_CONSOLE_ENABLED, False)
-        current_map_upload_enabled = self.config_entry.data.get(CONF_MAP_UPLOAD_ENABLED, False)
-        current_auto_cleanup = self.config_entry.data.get(CONF_AUTO_CLEANUP_STALE_CONTACTS, False)
-        current_stale_days = self.config_entry.data.get(CONF_STALE_CONTACT_DAYS, DEFAULT_STALE_CONTACT_DAYS)
-        current_adaptive_poll_wait = self.config_entry.data.get(CONF_ADAPTIVE_POLL_WAIT, False)
-        current_auto_cleanup_neighbors = self.config_entry.data.get(CONF_AUTO_CLEANUP_STALE_NEIGHBORS, False)
-        current_stale_neighbor_days = self.config_entry.data.get(CONF_STALE_NEIGHBOR_DAYS, DEFAULT_STALE_NEIGHBOR_DAYS)
-        current_flood_scopes = self.config_entry.data.get(CONF_FLOOD_SCOPES, "")
+        settings = Settings.from_entry(self.config_entry)
         current_traffic_policy = resolve_policy(self.config_entry)
 
         return self.async_show_form(
             step_id="global_settings",
             data_schema=vol.Schema({
-                vol.Optional(CONF_CONTACT_DISCOVERY_MODE, default=current_contact_discovery_mode): _contact_discovery_mode_selector(),
-                vol.Optional(CONF_LIMIT_DISCOVERED_CONTACTS, default=current_limit_enabled): cv.boolean,
-                vol.Optional(CONF_MAX_DISCOVERED_CONTACTS, default=current_max_contacts): vol.All(cv.positive_int, vol.Range(min=1, max=10000)),
-                vol.Optional(CONF_SELF_TELEMETRY_ENABLED, default=current_telemetry_enabled): cv.boolean,
-                vol.Optional(CONF_SELF_TELEMETRY_INTERVAL, default=current_telemetry_interval): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
-                vol.Optional(CONF_SELF_DIAGNOSTICS_ENABLED, default=current_diagnostics_enabled): cv.boolean,
-                vol.Optional(CONF_SELF_DIAGNOSTICS_INTERVAL, default=current_diagnostics_interval): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
-                vol.Optional(CONF_CLI_CONSOLE_ENABLED, default=current_cli_console_enabled): cv.boolean,
-                vol.Optional(CONF_MAP_UPLOAD_ENABLED, default=current_map_upload_enabled): cv.boolean,
-                vol.Optional(CONF_AUTO_CLEANUP_STALE_CONTACTS, default=current_auto_cleanup): cv.boolean,
-                vol.Optional(CONF_STALE_CONTACT_DAYS, default=current_stale_days): vol.All(cv.positive_int, vol.Range(min=1, max=365)),
-                vol.Optional(CONF_CONSUME_INCOMING_MESSAGES, default=self.config_entry.data.get(CONF_CONSUME_INCOMING_MESSAGES, True)): cv.boolean,
-                vol.Optional(CONF_ADAPTIVE_POLL_WAIT, default=current_adaptive_poll_wait): cv.boolean,
-                vol.Optional(CONF_FLOOD_SCOPES, default=current_flood_scopes): str,
-                vol.Optional(CONF_AUTO_CLEANUP_STALE_NEIGHBORS, default=current_auto_cleanup_neighbors): cv.boolean,
-                vol.Optional(CONF_STALE_NEIGHBOR_DAYS, default=current_stale_neighbor_days): vol.All(cv.positive_int, vol.Range(min=1, max=365)),
+                vol.Optional(CONF_CONTACT_DISCOVERY_MODE, default=settings.contact_discovery_mode): _contact_discovery_mode_selector(),
+                vol.Optional(CONF_LIMIT_DISCOVERED_CONTACTS, default=settings.limit_discovered_contacts): cv.boolean,
+                vol.Optional(CONF_MAX_DISCOVERED_CONTACTS, default=settings.max_discovered_contacts): vol.All(cv.positive_int, vol.Range(min=1, max=10000)),
+                vol.Optional(CONF_SELF_TELEMETRY_ENABLED, default=settings.self_telemetry_enabled): cv.boolean,
+                vol.Optional(CONF_SELF_TELEMETRY_INTERVAL, default=settings.self_telemetry_interval): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
+                vol.Optional(CONF_SELF_DIAGNOSTICS_ENABLED, default=settings.self_diagnostics_enabled): cv.boolean,
+                vol.Optional(CONF_SELF_DIAGNOSTICS_INTERVAL, default=settings.self_diagnostics_interval): vol.All(cv.positive_int, vol.Range(min=60, max=3600)),
+                vol.Optional(CONF_CLI_CONSOLE_ENABLED, default=settings.cli_console_enabled): cv.boolean,
+                vol.Optional(CONF_MAP_UPLOAD_ENABLED, default=settings.map_upload_enabled): cv.boolean,
+                vol.Optional(CONF_AUTO_CLEANUP_STALE_CONTACTS, default=settings.auto_cleanup_stale_contacts): cv.boolean,
+                vol.Optional(CONF_STALE_CONTACT_DAYS, default=settings.stale_contact_days): vol.All(cv.positive_int, vol.Range(min=1, max=365)),
+                vol.Optional(CONF_CONSUME_INCOMING_MESSAGES, default=settings.consume_incoming_messages): cv.boolean,
+                vol.Optional(CONF_ADAPTIVE_POLL_WAIT, default=settings.adaptive_poll_wait): cv.boolean,
+                vol.Optional(CONF_FLOOD_SCOPES, default=settings.flood_scopes): str,
+                vol.Optional(CONF_AUTO_CLEANUP_STALE_NEIGHBORS, default=settings.auto_cleanup_stale_neighbors): cv.boolean,
+                vol.Optional(CONF_STALE_NEIGHBOR_DAYS, default=settings.stale_neighbor_days): vol.All(cv.positive_int, vol.Range(min=1, max=365)),
                 vol.Optional(CONF_TRAFFIC_POLICY, default=current_traffic_policy): _traffic_policy_selector(),
             }),
         )
 
     def _get_mqtt_brokers_data(self) -> dict[str, dict[str, Any]]:
         """Get MQTT broker settings from config entry data."""
-        brokers = self.config_entry.data.get(CONF_MQTT_BROKERS, {})
-        if isinstance(brokers, dict):
-            return copy.deepcopy(brokers)
-        return {}
+        return Settings.from_entry(self.config_entry).broker_records
 
     @staticmethod
     def _sorted_mqtt_broker_keys(brokers: dict[str, dict[str, Any]]) -> list[str]:
@@ -1100,8 +1077,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         broker_key = str(broker_num)
         brokers = self._get_mqtt_brokers_data()
         broker = brokers.get(broker_key, {})
-        legacy_global_iata = str(self.config_entry.data.get(CONF_MQTT_IATA, "XYZ") or "XYZ").upper()
-        legacy_global_ttl = self.config_entry.data.get(CONF_MQTT_TOKEN_TTL_SECONDS, 3600)
+        entry_settings = Settings.from_entry(self.config_entry)
+        legacy_global_iata = str(entry_settings.mqtt_iata or "XYZ").upper()
+        legacy_global_ttl = entry_settings.mqtt_token_ttl_seconds or 3600
 
         if user_input is not None:
             brokers[broker_key] = {
@@ -1174,7 +1152,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
             contact_name = self._contact_name(contact)
             public_key = contact.get("public_key", "")
-            pubkey_prefix = public_key[:12] if public_key else ""
+            pubkey_prefix = public_key[:PUBKEY_PREFIX_LENGTH] if public_key else ""
 
             if pubkey_prefix and contact_name:
                 client_contacts.append((pubkey_prefix, contact_name))

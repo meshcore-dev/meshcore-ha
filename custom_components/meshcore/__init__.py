@@ -20,15 +20,12 @@ from homeassistant.helpers.device_registry import DeviceEntry
 
 from meshcore.events import EventType
 
+from .config import Settings
 from .const import (
     CONF_BAUDRATE,
     CONF_BLE_ADDRESS,
     CONF_CONNECTION_TYPE,
     CONF_CONTACT_DISCOVERY_MODE,
-    CONF_FLOOD_SCOPES,
-    CONF_LIMIT_DISCOVERED_CONTACTS,
-    CONF_MAX_DISCOVERED_CONTACTS,
-    CONF_MESSAGES_INTERVAL,
     CONF_NAME,
     CONF_PUBKEY,
     CONF_REPEATER_SUBSCRIPTIONS,
@@ -37,8 +34,6 @@ from .const import (
     CONF_TCP_PORT,
     CONF_TRACKED_CLIENTS,
     CONF_USB_PATH,
-    DEFAULT_MAX_DISCOVERED_CONTACTS,
-    DEFAULT_UPDATE_TICK,
     DOMAIN,
     MODE_DATA_ONLY,
     MODE_FULL,
@@ -214,14 +209,10 @@ def _migrate_unique_ids_remove_name(
     names_raw: set[str] = set()
     if companion_name:
         names_raw.add(companion_name)
-    for sub in entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, []):
-        name = sub.get("name", "")
-        if name:
-            names_raw.add(name)
-    for sub in entry.data.get(CONF_TRACKED_CLIENTS, []):
-        name = sub.get("name", "")
-        if name:
-            names_raw.add(name)
+    settings = Settings.from_entry(entry)
+    for node in (*settings.repeaters, *settings.clients):
+        if node.name:
+            names_raw.add(node.name)
 
     names_to_strip = sorted(names_raw, key=len, reverse=True)
 
@@ -452,12 +443,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _migrate_unique_ids_scope_contact_diagnostics(hass, entry)
 
         # TODO: remove this with contact refresh interval migration?
-        # Get the messages interval for base update frequency
-        # Check options first, then data, then use default
-        messages_interval = entry.options.get(
-            CONF_MESSAGES_INTERVAL,
-            entry.data.get(CONF_MESSAGES_INTERVAL, DEFAULT_UPDATE_TICK)
-        )
+        # Base update frequency for the coordinator tick.
+        settings = Settings.from_entry(entry)
+        messages_interval = settings.messages_interval
     
         coordinator = MeshCoreDataUpdateCoordinator(
             hass,
@@ -483,8 +471,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.error(f"Error loading discovered contacts: {ex}")
 
         # Enforce discovered contacts limit on startup (trim dict + save only, no entity cleanup)
-        if entry.data.get(CONF_LIMIT_DISCOVERED_CONTACTS, False):
-            max_contacts = entry.data.get(CONF_MAX_DISCOVERED_CONTACTS, DEFAULT_MAX_DISCOVERED_CONTACTS)
+        if settings.limit_discovered_contacts:
+            max_contacts = settings.max_discovered_contacts
             if len(coordinator._discovered_contacts) > max_contacts:
                 evict_count = len(coordinator._discovered_contacts) - max_contacts
                 keys_to_evict = list(coordinator._discovered_contacts.keys())[:evict_count]
@@ -645,7 +633,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             pkt_payload = event.payload.get("pkt_payload", b"")
                             payload_type_int = event.payload.get("payload_type", 0)
                             scope_keys = load_flood_scope_keys(
-                                coordinator.config_entry.data.get(CONF_FLOOD_SCOPES, "")
+                                coordinator.settings.flood_scopes
                             )
                             if scope_keys and pkt_hex and pkt_payload:
                                 try:
@@ -755,9 +743,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 coordinator.mark_contact_dirty(public_key[:12])
 
                 # Evict oldest contacts if limit is enabled
-                limit_enabled = entry.data.get(CONF_LIMIT_DISCOVERED_CONTACTS, False)
-                if limit_enabled:
-                    max_contacts = entry.data.get(CONF_MAX_DISCOVERED_CONTACTS, DEFAULT_MAX_DISCOVERED_CONTACTS)
+                if coordinator.settings.limit_discovered_contacts:
+                    max_contacts = coordinator.settings.max_discovered_contacts
                     evicted = await coordinator.async_evict_discovered_contacts(max_contacts)
                     if evicted:
                         return  # eviction already saves and triggers async_set_updated_data
@@ -863,15 +850,12 @@ async def async_remove_config_entry_device(
         ):
             return True
 
+    settings = Settings.from_entry(config_entry)
     repeater_prefixes = {
-        r.get("pubkey_prefix")
-        for r in config_entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, [])
-        if r.get("pubkey_prefix")
+        repeater.pubkey_prefix for repeater in settings.repeaters if repeater.pubkey_prefix
     }
     client_prefixes = {
-        c.get("pubkey_prefix")
-        for c in config_entry.data.get(CONF_TRACKED_CLIENTS, [])
-        if c.get("pubkey_prefix")
+        client.pubkey_prefix for client in settings.clients if client.pubkey_prefix
     }
 
     # Build the set of live contact prefixes from the coordinator. Config

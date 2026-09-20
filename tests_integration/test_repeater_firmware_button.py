@@ -13,6 +13,7 @@ from custom_components.meshcore.button import (
     MeshCoreRepeaterFirmwareRefreshButton,
     async_setup_entry,
 )
+from custom_components.meshcore.config import Settings
 from custom_components.meshcore.const import CONF_REPEATER_SUBSCRIPTIONS, DOMAIN
 
 PREFIX_ONE = "aabbccddeeff"
@@ -123,6 +124,7 @@ async def _setup_buttons(hass, session):
 
     coordinator = MagicMock()
     coordinator.config_entry = entry
+    coordinator.settings = Settings.from_entry(entry)
     coordinator.api = session
     coordinator.pubkey = "hubpubkey"
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator

@@ -21,7 +21,6 @@ from meshcore.events import EventType
 
 from .const import (
     CHANNEL_PREFIX,
-    CONF_SELF_DIAGNOSTICS_ENABLED,
     CONTACT_SUFFIX,
     DOMAIN,
     ENTITY_DOMAIN_BINARY_SENSOR,
@@ -303,7 +302,7 @@ async def async_setup_entry(
     # opted in (default off). The STATS_CORE `errors` field is a latching
     # bitmask of radio dispatcher faults; each bit is decoded into its own
     # `problem` binary sensor.
-    if entry.data.get(CONF_SELF_DIAGNOSTICS_ENABLED, False):
+    if coordinator.settings.self_diagnostics_enabled:
         async_add_entities([
             MeshCoreSelfDiagnosticBinarySensor(coordinator, "err_pool_full", SELF_DIAG_ERR_POOL_FULL),
             MeshCoreSelfDiagnosticBinarySensor(coordinator, "err_cad_timeout", SELF_DIAG_ERR_CAD_TIMEOUT),

@@ -13,6 +13,7 @@ from homeassistant.helpers import device_registry as dr
 
 from meshcore.events import EventType
 
+from .config import Settings
 from .const import CONF_REPEATER_SUBSCRIPTIONS, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -136,10 +137,11 @@ async def async_refresh_repeater_firmware(
     timeout: float = 15,
 ) -> str:
     """Query and persist one configured repeater's firmware version."""
-    if not any(
-        repeater.get("pubkey_prefix") == pubkey_prefix
-        for repeater in config_entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, [])
-    ):
+    configured = Settings.from_entry(config_entry).repeaters
+    repeater = next(
+        (item for item in configured if item.pubkey_prefix == pubkey_prefix), None
+    )
+    if repeater is None:
         raise RepeaterFirmwareRefreshError("repeater is no longer configured")
 
     refresh_key = (config_entry.entry_id, pubkey_prefix)
@@ -148,15 +150,10 @@ async def async_refresh_repeater_firmware(
 
     _ACTIVE_REFRESHES.add(refresh_key)
     try:
-        repeater = next(
-            repeater
-            for repeater in config_entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, [])
-            if repeater.get("pubkey_prefix") == pubkey_prefix
-        )
         version = await async_query_repeater_firmware(
             session,
             pubkey_prefix,
-            password=repeater.get("password", ""),
+            password=repeater.password,
             timeout=timeout,
         )
         if not async_save_repeater_firmware_version(

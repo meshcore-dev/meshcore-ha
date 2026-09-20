@@ -20,11 +20,10 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from meshcore.events import Event, EventType
 
+from .config import Settings, get_conf
 from .const import (
     AUTO_DISABLE_HOURS,
     CLI_CONSOLE_MAX_LINES,
-    CONF_AUTO_CLEANUP_STALE_CONTACTS,
-    CONF_AUTO_CLEANUP_STALE_NEIGHBORS,
     CONF_CLIENT_DISABLE_PATH_RESET,
     CONF_CLIENT_UPDATE_INTERVAL,
     CONF_CONSUME_INCOMING_MESSAGES,
@@ -34,22 +33,10 @@ from .const import (
     CONF_REPEATER_DISABLE_PATH_RESET,
     CONF_REPEATER_NEIGHBORS_ENABLED,
     CONF_REPEATER_PASSWORD,
-    CONF_REPEATER_SUBSCRIPTIONS,
     CONF_REPEATER_TELEMETRY_ENABLED,
     CONF_REPEATER_UPDATE_INTERVAL,
-    CONF_SELF_DIAGNOSTICS_ENABLED,
-    CONF_SELF_DIAGNOSTICS_INTERVAL,
-    CONF_SELF_TELEMETRY_ENABLED,
-    CONF_SELF_TELEMETRY_INTERVAL,
-    CONF_STALE_CONTACT_DAYS,
-    CONF_STALE_NEIGHBOR_DAYS,
-    CONF_TRACKED_CLIENTS,
     DEFAULT_CLIENT_UPDATE_INTERVAL,
     DEFAULT_REPEATER_UPDATE_INTERVAL,
-    DEFAULT_SELF_DIAGNOSTICS_INTERVAL,
-    DEFAULT_SELF_TELEMETRY_INTERVAL,
-    DEFAULT_STALE_CONTACT_DAYS,
-    DEFAULT_STALE_NEIGHBOR_DAYS,
     DOMAIN,
     MAX_RANDOM_DELAY,
     MODE_FULL,
@@ -183,6 +170,10 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self.name = config_entry.data.get(CONF_NAME)
         self.pubkey = config_entry.data.get(CONF_PUBKEY)
 
+        # Every user setting this coordinator reads, options first. Refreshed
+        # in place by update_telemetry_settings when the entry changes.
+        self.settings = Settings.from_entry(config_entry)
+
         # Rolling transcript for the CLI console sensor, bounded so the sensor's
         # attribute payload stays small. The sensor registers itself here (when
         # CONF_CLI_CONSOLE_ENABLED) so record_cli_console() can push state.
@@ -207,8 +198,8 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
 
         # Tracked nodes: schedules, in-flight tasks and failure counters, all
         # keyed by pubkey_prefix and kept separate for status and telemetry.
-        self._tracked_repeaters = self.config_entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, [])
-        self._tracked_clients = self.config_entry.data.get(CONF_TRACKED_CLIENTS, [])
+        self._tracked_repeaters = self.settings.repeater_records
+        self._tracked_clients = self.settings.client_records
         self._repeater_login_times = {}
         self._next_repeater_update_times = {}
         self._active_repeater_tasks = {}
@@ -245,28 +236,20 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         # cannot answer is named once rather than on every cycle; cleared on
         # the next success.
         self._self_telemetry_error_reported = False
-        self._self_telemetry_enabled = config_entry.data.get(CONF_SELF_TELEMETRY_ENABLED, False)
-        self._self_telemetry_interval = config_entry.data.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL)
+        self._self_telemetry_enabled = self.settings.self_telemetry_enabled
+        self._self_telemetry_interval = self.settings.self_telemetry_interval
 
         # Local get_stats_core/radio/packets -- no mesh traffic
         self._last_self_diagnostics_update = 0
-        self._self_diagnostics_enabled = config_entry.data.get(CONF_SELF_DIAGNOSTICS_ENABLED, False)
-        self._self_diagnostics_interval = config_entry.data.get(CONF_SELF_DIAGNOSTICS_INTERVAL, DEFAULT_SELF_DIAGNOSTICS_INTERVAL)
+        self._self_diagnostics_enabled = self.settings.self_diagnostics_enabled
+        self._self_diagnostics_interval = self.settings.self_diagnostics_interval
 
         # Daily auto-cleanup of stale discovered contacts and neighbours
-        self._auto_cleanup_stale_contacts = config_entry.data.get(
-            CONF_AUTO_CLEANUP_STALE_CONTACTS, False
-        )
-        self._stale_contact_days = config_entry.data.get(
-            CONF_STALE_CONTACT_DAYS, DEFAULT_STALE_CONTACT_DAYS
-        )
+        self._auto_cleanup_stale_contacts = self.settings.auto_cleanup_stale_contacts
+        self._stale_contact_days = self.settings.stale_contact_days
         self._last_stale_cleanup: float = 0.0
-        self._auto_cleanup_stale_neighbors = config_entry.data.get(
-            CONF_AUTO_CLEANUP_STALE_NEIGHBORS, False
-        )
-        self._stale_neighbor_days = config_entry.data.get(
-            CONF_STALE_NEIGHBOR_DAYS, DEFAULT_STALE_NEIGHBOR_DAYS
-        )
+        self._auto_cleanup_stale_neighbors = self.settings.auto_cleanup_stale_neighbors
+        self._stale_neighbor_days = self.settings.stale_neighbor_days
         self._last_stale_neighbor_cleanup = 0.0
 
         # Serializes get_msg() between the MESSAGES_WAITING flush and the poll
@@ -932,25 +915,18 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             return False
     
     def update_telemetry_settings(self, config_entry: ConfigEntry) -> None:
-        """Update telemetry settings from config entry."""
-        self._self_telemetry_enabled = config_entry.data.get(CONF_SELF_TELEMETRY_ENABLED, False)
-        self._self_telemetry_interval = config_entry.data.get(CONF_SELF_TELEMETRY_INTERVAL, DEFAULT_SELF_TELEMETRY_INTERVAL)
-        self._self_diagnostics_enabled = config_entry.data.get(CONF_SELF_DIAGNOSTICS_ENABLED, False)
-        self._self_diagnostics_interval = config_entry.data.get(CONF_SELF_DIAGNOSTICS_INTERVAL, DEFAULT_SELF_DIAGNOSTICS_INTERVAL)
-        self._tracked_repeaters = config_entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, [])
-        self._tracked_clients = config_entry.data.get(CONF_TRACKED_CLIENTS, [])
-        self._auto_cleanup_stale_contacts = config_entry.data.get(
-            CONF_AUTO_CLEANUP_STALE_CONTACTS, False
-        )
-        self._stale_contact_days = config_entry.data.get(
-            CONF_STALE_CONTACT_DAYS, DEFAULT_STALE_CONTACT_DAYS
-        )
-        self._auto_cleanup_stale_neighbors = config_entry.data.get(
-            CONF_AUTO_CLEANUP_STALE_NEIGHBORS, False
-        )
-        self._stale_neighbor_days = config_entry.data.get(
-            CONF_STALE_NEIGHBOR_DAYS, DEFAULT_STALE_NEIGHBOR_DAYS
-        )
+        """Re-read the entry's settings into the live coordinator."""
+        self.settings = Settings.from_entry(config_entry)
+        self._self_telemetry_enabled = self.settings.self_telemetry_enabled
+        self._self_telemetry_interval = self.settings.self_telemetry_interval
+        self._self_diagnostics_enabled = self.settings.self_diagnostics_enabled
+        self._self_diagnostics_interval = self.settings.self_diagnostics_interval
+        self._tracked_repeaters = self.settings.repeater_records
+        self._tracked_clients = self.settings.client_records
+        self._auto_cleanup_stale_contacts = self.settings.auto_cleanup_stale_contacts
+        self._stale_contact_days = self.settings.stale_contact_days
+        self._auto_cleanup_stale_neighbors = self.settings.auto_cleanup_stale_neighbors
+        self._stale_neighbor_days = self.settings.stale_neighbor_days
         _LOGGER.debug(f"Updated telemetry settings - Enabled: {self._self_telemetry_enabled}, Interval: {self._self_telemetry_interval}, Tracked clients: {len(self._tracked_clients)}")
 
     def _current_time(self) -> int:
@@ -1531,7 +1507,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
     @property
     def consume_incoming_messages(self) -> bool:
         """Whether HA may drain the Companion chat queue."""
-        return self.config_entry.data.get(CONF_CONSUME_INCOMING_MESSAGES, True)
+        return get_conf(self.config_entry, CONF_CONSUME_INCOMING_MESSAGES, True)
 
     async def async_flush_messages(self) -> dict[str, Any]:
         """Immediately flush pending messages from the device queue.

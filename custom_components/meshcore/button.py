@@ -12,8 +12,6 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
-    CONF_CLI_CONSOLE_ENABLED,
-    CONF_REPEATER_SUBSCRIPTIONS,
     DOMAIN,
     ENTITY_DOMAIN_BUTTON,
     SERVICE_EXECUTE_COMMAND_UI,
@@ -34,14 +32,15 @@ async def async_setup_entry(
     """Set up MeshCore button entities from a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
 
+    settings = coordinator.settings
     entities: list[ButtonEntity] = []
-    if entry.data.get(CONF_CLI_CONSOLE_ENABLED, False):
+    if settings.cli_console_enabled:
         entities.append(MeshCoreCLIRunButton(coordinator))
         entities.append(MeshCoreCLIClearButton(coordinator))
 
     entities.extend(
         MeshCoreRepeaterFirmwareRefreshButton(coordinator, repeater)
-        for repeater in entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, [])
+        for repeater in settings.repeater_records
     )
 
     if entities:

@@ -25,6 +25,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any, Final, Literal
 
+from .config import get_conf
 from .const import (
     CONF_TRAFFIC_POLICY,
     DEFAULT_TRAFFIC_POLICY,
@@ -86,10 +87,7 @@ SECONDS_PER_HOUR: Final = 3600
 
 def resolve_policy(config_entry: Any) -> TrafficPolicy:
     """Return the entry's traffic policy, reading options before data."""
-    value = config_entry.options.get(
-        CONF_TRAFFIC_POLICY,
-        config_entry.data.get(CONF_TRAFFIC_POLICY, DEFAULT_TRAFFIC_POLICY),
-    )
+    value = get_conf(config_entry, CONF_TRAFFIC_POLICY, DEFAULT_TRAFFIC_POLICY)
     return POLICY_GOVERNED if value == POLICY_GOVERNED else POLICY_LEGACY
 
 

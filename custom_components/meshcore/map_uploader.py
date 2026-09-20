@@ -11,7 +11,8 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import CONF_MAP_UPLOAD_ENABLED, CONF_PUBKEY
+from .config import Settings
+from .const import CONF_PUBKEY
 
 try:
     import nacl.bindings
@@ -118,7 +119,7 @@ class MeshCoreMapUploader:
         self.logger = logger
         self.entry = entry
         self.api = api
-        self.enabled = bool(entry.data.get(CONF_MAP_UPLOAD_ENABLED, False))
+        self.enabled = Settings.from_entry(entry).map_upload_enabled
         self.public_key = (entry.data.get(CONF_PUBKEY, "") or "").lower()
         self.private_key = ""
         self._seen_adverts: TTLCache = TTLCache(

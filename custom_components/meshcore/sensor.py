@@ -28,14 +28,7 @@ from meshcore.events import Event
 
 from .const import (
     CLI_CONSOLE_MAX_LINES,
-    CONF_CLI_CONSOLE_ENABLED,
-    CONF_LIMIT_DISCOVERED_CONTACTS,
-    CONF_MAX_DISCOVERED_CONTACTS,
     CONF_REPEATER_NEIGHBORS_ENABLED,
-    CONF_REPEATER_SUBSCRIPTIONS,
-    CONF_SELF_DIAGNOSTICS_ENABLED,
-    CONF_TRACKED_CLIENTS,
-    DEFAULT_MAX_DISCOVERED_CONTACTS,
     DOMAIN,
     ENTITY_DOMAIN_SENSOR,
     NEIGHBOR_STALE_THRESHOLD,
@@ -511,7 +504,7 @@ async def async_setup_entry(
     # Create self-diagnostic sensors only when opted in (default off). These
     # subscribe to the STATS_CORE/RADIO/PACKETS events emitted by the local
     # get_stats_* polling added to the coordinator.
-    if entry.data.get(CONF_SELF_DIAGNOSTICS_ENABLED, False):
+    if coordinator.settings.self_diagnostics_enabled:
         for description in SELF_DIAGNOSTIC_SENSORS:
             entities.append(MeshCoreSensor(coordinator, description))
 
@@ -524,7 +517,7 @@ async def async_setup_entry(
     # Add the CLI console transcript sensor only when opted in (default off).
     # execute_command / execute_command_ui with record_to_console record
     # command/response pairs into this entity so the output is visible in the UI.
-    if entry.data.get(CONF_CLI_CONSOLE_ENABLED, False):
+    if coordinator.settings.cli_console_enabled:
         entities.append(MeshCoreCLIConsoleSensor(coordinator))
 
     # Store the async_add_entities function for later use
@@ -539,7 +532,7 @@ async def async_setup_entry(
     device_registry = async_get_device_registry(hass)
 
     # Add repeater stat sensors if any repeaters are configured
-    repeater_subscriptions = entry.data.get(CONF_REPEATER_SUBSCRIPTIONS, [])
+    repeater_subscriptions = coordinator.settings.repeater_records
 
     # Create a set of device IDs for active repeaters - using pubkey_prefix for more stable IDs
     active_repeater_device_ids = set()
@@ -620,7 +613,7 @@ async def async_setup_entry(
                     _LOGGER.error(f"Error creating neighbor count sensor for repeater: {ex}")
 
     # Add path sensors for tracked clients
-    client_subscriptions = entry.data.get(CONF_TRACKED_CLIENTS, [])
+    client_subscriptions = coordinator.settings.client_records
     if client_subscriptions:
         for client in client_subscriptions:
             _LOGGER.info(f"Creating path sensors for client: {client.get('name')} ({client.get('pubkey_prefix')})")
@@ -2350,10 +2343,8 @@ class MeshCoreDiscoveredSummarySensor(CoordinatorEntity, SensorEntity):
 
         # Capacity headroom: only meaningful when the discovered-contact limit
         # is enabled; otherwise the set is unbounded by count.
-        if self.coordinator.config_entry.data.get(CONF_LIMIT_DISCOVERED_CONTACTS, False):
-            max_contacts = self.coordinator.config_entry.data.get(
-                CONF_MAX_DISCOVERED_CONTACTS, DEFAULT_MAX_DISCOVERED_CONTACTS
-            )
+        if self.coordinator.settings.limit_discovered_contacts:
+            max_contacts = self.coordinator.settings.max_discovered_contacts
             capacity: Any = max_contacts
             capacity_used_pct: Any = (
                 round(100.0 * total / max_contacts, 1) if max_contacts else None
