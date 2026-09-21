@@ -5,7 +5,6 @@ import asyncio
 import copy
 import json
 import logging
-import time
 from datetime import timedelta
 from pathlib import Path
 
@@ -53,6 +52,7 @@ from .const import (
     get_contact_discovery_mode,
 )
 from .coordinator import MeshCoreDataUpdateCoordinator
+from .events import fire_raw_event, is_secret_event, sanitize_event_data
 from .map_uploader import MeshCoreMapUploader
 from .mqtt_uploader import MeshCoreMqttUploader
 from .radio import RadioSession
@@ -63,7 +63,6 @@ from .utils import (
     match_flood_scope,
     parse_and_decrypt_rx_log,
     parse_rx_log_data,
-    sanitize_event_data,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -448,7 +447,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Create API instance based on connection type
     api_kwargs = {
         "hass": hass,
-        "connection_type": connection_type
+        "connection_type": connection_type,
+        "entry": entry,
     }
     
     if CONF_USB_PATH in entry.data:
@@ -707,8 +707,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Convert event type to string if possible
             event_type_str = str(event.type) if hasattr(event, "type") else "UNKNOWN"
 
+            # A private-key export is the node's identity, not telemetry: unless
+            # the entry opts in, it reaches neither the bus nor MQTT.
+            expose_secrets = coordinator.settings.expose_secrets
+            if not expose_secrets and is_secret_event(event_type_str):
+                _LOGGER.debug("Withholding %s from the event bus", event_type_str)
+                return
+
             try:
-                sanitized_payload = sanitize_event_data(event.payload)
+                sanitized_payload = sanitize_event_data(
+                    event.payload, redact=not expose_secrets
+                )
 
                 # Special handling for RX_LOG events
                 if hasattr(event, "type") and event.type == EventType.RX_LOG_DATA:
@@ -781,11 +790,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
                 # Fire event to HA event bus with sanitized payload
                 _LOGGER.debug(f"Firing event to HA event bus: {event}")
-                hass.bus.async_fire(f"{DOMAIN}_raw_event", {
-                    "event_type": event_type_str,
-                    "payload": sanitized_payload,
-                    "timestamp": time.time()
-                })
+                fire_raw_event(
+                    hass, entry, event_type=event_type_str, payload=sanitized_payload
+                )
                 if getattr(coordinator, "mqtt_uploader", None):
                     hass.async_create_task(
                         coordinator.mqtt_uploader.async_publish_raw_event(event_type_str, sanitized_payload)
@@ -793,12 +800,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             except Exception as ex:
                 _LOGGER.error(f"Error serializing event payload: {ex}")
                 # Fire event without payload to ensure delivery
-                hass.bus.async_fire(f"{DOMAIN}_raw_event", {
-                    "event_type": event_type_str,
-                    "payload": None,
-                    "timestamp": time.time(),
-                    "serialization_error": str(ex)
-                })
+                fire_raw_event(
+                    hass, entry, event_type=event_type_str, payload=None, error=str(ex)
+                )
         
         # Add the all-events listener
         session = coordinator.api

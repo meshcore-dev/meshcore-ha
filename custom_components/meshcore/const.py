@@ -224,6 +224,10 @@ CONF_ADAPTIVE_POLL_WAIT: Final = "adaptive_poll_wait"
 # Flood scope allowlist (comma-separated region names, e.g. "pl-mz, pl-waw")
 CONF_FLOOD_SCOPES: Final = "flood_scopes"
 
+# Forward node secrets (private key export, channel secrets) to the event bus
+# and to MQTT instead of redacting them. Off unless the user opts in.
+CONF_EXPOSE_SECRETS: Final = "expose_secrets"
+
 # Sensor availability timeout multiplier
 SENSOR_AVAILABILITY_TIMEOUT_MULTIPLIER: Final = 3
 

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Final
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from meshcore import MeshCore
@@ -26,6 +27,7 @@ from .const import (
     DEFAULT_TCP_PORT,
     DOMAIN,
 )
+from .events import fire_connected, fire_disconnected
 from .radio_commands import MeshCommands
 
 _LOGGER = logging.getLogger(__name__)
@@ -69,9 +71,15 @@ class RadioSession(MeshCommands):
         ble_address: str | None = None,
         tcp_host: str | None = None,
         tcp_port: int = DEFAULT_TCP_PORT,
+        entry: ConfigEntry | None = None,
     ) -> None:
-        """Record the transport configuration without touching hardware."""
+        """Record the transport configuration without touching hardware.
+
+        ``entry`` is the config entry this link belongs to, so its lifecycle
+        events can name the radio; a setup-time probe owns no entry yet.
+        """
         self.hass = hass
+        self.entry = entry
         self.connection_type = connection_type
         self.usb_path = usb_path
         self.baudrate = baudrate
@@ -134,7 +142,7 @@ class RadioSession(MeshCommands):
         self._detach_all()
         if not self._started:
             return
-        self.hass.bus.async_fire(f"{DOMAIN}_disconnected", {})
+        fire_disconnected(self.hass, self.entry)
         if mesh_core is not None:
             await self._shutdown_instance(mesh_core, deadline)
         _LOGGER.info("Disconnection complete")
@@ -471,9 +479,7 @@ class RadioSession(MeshCommands):
             except Exception as ex:
                 _LOGGER.error("Connect hook failed: %s", ex)
 
-        self.hass.bus.async_fire(
-            f"{DOMAIN}_connected", {"connection_type": self.connection_type}
-        )
+        fire_connected(self.hass, self.entry, connection_type=self.connection_type)
         _LOGGER.info("Successfully connected to MeshCore device")
         return True
 
@@ -487,7 +493,7 @@ class RadioSession(MeshCommands):
             return
         self._connected = False
         _LOGGER.warning("MeshCore link lost (%s); starting recovery", reason)
-        self.hass.bus.async_fire(f"{DOMAIN}_disconnected", {"unexpected": True})
+        fire_disconnected(self.hass, self.entry, unexpected=True)
         if self._reconnect_task is None or self._reconnect_task.done():
             self._reconnect_task = self.hass.async_create_background_task(
                 self._reconnect_loop(), f"{DOMAIN}_reconnect", eager_start=False

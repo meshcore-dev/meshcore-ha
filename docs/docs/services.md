@@ -23,7 +23,8 @@ Send a direct message to a specific node in the mesh network.
 | `message` | string | Yes | The message text to send |
 | `entry_id` | string | No | Config entry ID for multiple devices |
 
-*Either `node_id` or `pubkey_prefix` is required, not both.
+*Either `node_id` or `pubkey_prefix` is required, not both. A call that names
+neither is refused with an error rather than failing silently.
 
 **Examples:**
 
@@ -100,9 +101,20 @@ Execute Meshcore SDK commands directly for advanced control.
 - `set_tx_power 20` - Set transmit power (dBm)
 - `send_msg "NodeName" "Message"` - Send direct message
 - `send_chan_msg 0 "Message"` - Send channel message
-- `reboot` - Reboot the node
 
 For a complete list of available commands and their parameters, see the [Meshcore Python SDK documentation](https://github.com/meshcore-dev/meshcore_py).
+
+**Commands that are not available:**
+
+These are refused before they reach the radio, because each one either
+destroys the node's identity, wipes its configuration, or hands the radio raw
+frames that bypass every check the integration makes:
+
+`request_factory_reset`, `confirm_factory_reset`,
+`import_private_key`, `send_raw_packet`, `send_raw_data`, and any name
+starting with `_`.
+
+Use the node's own console (USB/BLE) for these.
 
 **Syntax Formats:**
 
@@ -204,6 +216,25 @@ data:
 
 Use `meshcore.cli_console_clear` to empty the transcript (no `entry_id` clears
 every configured device's console).
+
+### Query Services
+
+These return structured responses (`response_variable`) instead of text to
+parse. Full field-by-field shapes are in the
+[companion integration API](./companion-integration-api).
+
+| Service | Returns |
+|---|---|
+| `meshcore.get_contacts` | `{contacts: [...]}` — the device's contacts as the SDK stores them, each with `adv_name`, `public_key`, `pubkey_prefix`, `type`, `added_to_node`, `out_path_len`, `out_path`, `out_path_hash_mode` |
+| `meshcore.get_discovered_contact` | `{contact: {...}}` — one discovered contact, same keys |
+| `meshcore.get_channels` | `{channels: [{channel_idx, channel_name, shared_secret_present}]}` — the secret itself is never returned |
+| `meshcore.trace` | `{trace: {hops, path, round_trip_ms, final_snr, tag}}`, or `{trace: null, error: "..."}` |
+
+`trace` accepts a `pubkey_prefix` of 6 characters or more; it waits for the
+reply the firmware actually sends back, so a short prefix traces the same
+contact a full key does. Its `timeout` is a request, not a promise: the
+effective wait is at least the firmware's suggested timeout and is capped at
+60 seconds.
 
 ## Usage in Automations
 

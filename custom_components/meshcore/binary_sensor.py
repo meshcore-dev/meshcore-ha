@@ -159,24 +159,30 @@ def handle_contact_message(event, coordinator, async_add_entities):
     if pubkey_prefix not in coordinator.tracked_contacts:
         # Get contact information from MeshCore
         contact = coordinator.api.contact_by_prefix(pubkey_prefix)
-        if not contact:
-            return
-            
-        contact_name = contact.get("adv_name", "Unknown")
-        
-        # Create message entity for this contact
-        message_entity = MeshCoreMessageEntity(
-            coordinator, pubkey_prefix, f"{contact_name} Messages", 
-            public_key=pubkey_prefix
-        )
-        
-        # Track this contact
-        coordinator.tracked_contacts.add(pubkey_prefix)
-        
-        # Add the entity
-        _LOGGER.info(f"Adding message entity for {contact_name} after receiving message")
-        async_add_entities([message_entity])
-        
+        if contact:
+            contact_name = contact.get("adv_name", "Unknown")
+
+            # Create message entity for this contact
+            message_entity = MeshCoreMessageEntity(
+                coordinator, pubkey_prefix, f"{contact_name} Messages",
+                public_key=pubkey_prefix
+            )
+
+            # Track this contact
+            coordinator.tracked_contacts.add(pubkey_prefix)
+
+            # Add the entity
+            _LOGGER.info(f"Adding message entity for {contact_name} after receiving message")
+            async_add_entities([message_entity])
+        else:
+            # A sender this node has no contact for gets no conversation entity,
+            # but the message is still published: dropping it silently loses the
+            # only record that someone reached us.
+            _LOGGER.info(
+                "Message from unknown sender %s: event only, no entity",
+                (pubkey_prefix or "")[:6],
+            )
+
     # Log message to the logbook
     log_contact_message(event, coordinator)
 
@@ -379,7 +385,13 @@ async def async_setup_entry(
                     coordinator.tracked_channels.add(channel_idx)
                     _LOGGER.info(f"Adding message entity for channel {channel_idx} after sending message")
                     async_add_entities([channel_entity])
-        
+
+        # A progressive send has only been handed to the radio: its conversation
+        # entity is created above so the UI reacts at once, but the logbook
+        # entry waits for the event that knows how the send ended.
+        if event.data.get("progressive"):
+            return
+
         # Log the message to the logbook using our dedicated handler
         await handle_outgoing_message(event.data, coordinator)
     

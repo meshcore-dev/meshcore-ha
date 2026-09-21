@@ -120,34 +120,6 @@ def extract_channel_idx(entity_key: str) -> int:
     return 0  # Default to channel 0 on error
 
 
-def sanitize_event_data(data: Any) -> Any:
-    """Make event data JSON serializable by converting bytes to hex strings.
-
-    This function recursively processes dictionaries, lists and other data types
-    to ensure they're safe for serialization in Home Assistant events.
-
-    Args:
-        data: The event data to sanitize
-
-    Returns:
-        JSON-serializable version of the data with bytes converted to hex strings
-    """
-    if isinstance(data, dict):
-        return {k: sanitize_event_data(v) for k, v in data.items()}
-    elif isinstance(data, list):
-        return [sanitize_event_data(v) for v in data]
-    elif isinstance(data, tuple):
-        return tuple(sanitize_event_data(v) for v in data)
-    elif isinstance(data, bytes):
-        return data.hex()
-    elif hasattr(data, "__dict__") and not isinstance(data, type):
-        # For objects with __dict__, convert to a sanitized dict
-        # Skip for class objects (they have __dict__ but we don't want to process them)
-        return sanitize_event_data(vars(data))
-    else:
-        return data
-
-
 def calculate_battery_percentage(voltage_mv: float) -> float:
     """Calculate battery percentage using generic battery discharge curve.
 

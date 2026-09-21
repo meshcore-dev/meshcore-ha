@@ -6,7 +6,7 @@ import re
 import shlex
 import time
 import uuid
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import voluptuous as vol
 from homeassistant.const import MAJOR_VERSION, STATE_UNAVAILABLE, STATE_UNKNOWN
@@ -28,8 +28,9 @@ from .const import (
     ATTR_PUBKEY_PREFIX,
     ATTR_RECORD_TO_CONSOLE,
     ATTR_SCOPE,
+    CONTACT_SUFFIX,
     DOMAIN,
-    EVENT_CLI_RESPONSE,
+    ENTITY_DOMAIN_BINARY_SENSOR,
     MODE_DATA_ONLY,
     SELECT_NO_ADDED,
     SELECT_NO_CONTACTS,
@@ -51,6 +52,7 @@ from .const import (
     SERVICE_TRACE,
     get_contact_discovery_mode,
 )
+from .events import fire_cli_response, fire_message_sent, fire_send_failed
 from .traffic import (
     OP_ADVERT,
     OP_CHANNEL_MESSAGE,
@@ -84,6 +86,19 @@ _SELF_INFO_COMMANDS = frozenset({
     "set_telemetry_mode_env",
     "set_manual_add_contacts",
     "import_private_key",
+})
+
+
+# Commands the integration refuses to run for anyone. Each either destroys the
+# node's identity, wipes its configuration, or hands the radio raw frames that
+# bypass every gate above; none of them has a legitimate caller here. The gate
+# also refuses private SDK attributes, which is what a leading underscore is.
+DENIED_COMMANDS: Final = frozenset({
+    "request_factory_reset",
+    "confirm_factory_reset",
+    "import_private_key",
+    "send_raw_packet",
+    "send_raw_data",
 })
 
 
@@ -181,33 +196,79 @@ def _ui_service_error(code: str, message: str, **details: Any) -> dict[str, Any]
     return {"error": code, "message": message, **details}
 
 
-def _resolve_ui_entry_id(hass: HomeAssistant, entry_id: str | None) -> tuple[str | None, dict | None]:
-    """Resolve one config entry for a UI-helper service call."""
-    coordinators = {
-        candidate_id: coordinator
-        for candidate_id, coordinator in hass.data.get(DOMAIN, {}).items()
+def _entries(hass: HomeAssistant) -> dict[str, Any]:
+    """Return the loaded coordinators by entry id, ignoring bookkeeping keys."""
+    return {
+        entry_id: coordinator
+        for entry_id, coordinator in hass.data.get(DOMAIN, {}).items()
         if hasattr(coordinator, "api")
     }
+
+
+def _connected(coordinator: Any) -> bool:
+    """Whether a coordinator's radio can carry a command right now."""
+    api = getattr(coordinator, "api", None)
+    return bool(api and api.connected)
+
+
+def resolve_target(
+    hass: HomeAssistant,
+    call: ServiceCall,
+    *,
+    prefer_connected: bool = False,
+    refuse_ambiguous: bool = False,
+) -> tuple[str | None, Any, dict | None]:
+    """Pick the entry a service call runs against: (entry_id, coordinator, error).
+
+    A named ``entry_id`` always wins, and a single configured radio answers
+    everything. With several radios and no name, the UI helpers refuse rather
+    than message the wrong mesh, while every other service keeps taking the
+    first candidate it always took — but the choice is logged, because picking
+    someone's radio for them is worth saying out loud.
+    """
+    entry_id = call.data.get(ATTR_ENTRY_ID)
+    coordinators = _entries(hass)
+
     if entry_id:
-        if entry_id not in coordinators:
-            return None, _ui_service_error(
+        coordinator = coordinators.get(entry_id)
+        if coordinator is None:
+            return None, None, _ui_service_error(
                 "config_entry_not_found",
                 f"MeshCore config entry not found: {entry_id}",
                 entry_id=entry_id,
             )
-        return entry_id, None
+        return entry_id, coordinator, None
+
     if not coordinators:
-        return None, _ui_service_error(
+        return None, None, _ui_service_error(
             "config_entry_not_found",
             "No MeshCore config entry is available",
         )
-    if len(coordinators) > 1:
-        return None, _ui_service_error(
+
+    if len(coordinators) == 1:
+        entry_id = next(iter(coordinators))
+        return entry_id, coordinators[entry_id], None
+
+    if refuse_ambiguous:
+        return None, None, _ui_service_error(
             "ambiguous_config_entry",
             "Multiple MeshCore config entries are available; entry_id is required",
             entry_ids=sorted(coordinators),
         )
-    return next(iter(coordinators)), None
+
+    entry_id = next(
+        (
+            candidate
+            for candidate, coordinator in coordinators.items()
+            if not prefer_connected or _connected(coordinator)
+        ),
+        next(iter(coordinators)),
+    )
+    _LOGGER.info(
+        "%s.%s named no entry; using %s of %s",
+        call.domain, call.service, entry_id, sorted(coordinators),
+    )
+    return entry_id, coordinators[entry_id], None
 
 
 def _resolve_ui_helper_state(
@@ -330,6 +391,46 @@ def _contact_error(arg: str, command_name: str, api: Any) -> dict:
     }
 
 
+def _error_detail(result: Any) -> str:
+    """Describe a refused send the way the firmware reported it."""
+    payload = getattr(result, "payload", None)
+    if isinstance(payload, dict):
+        return str(
+            payload.get("code_string")
+            or payload.get("reason")
+            or payload.get("error_code")
+            or payload
+        )
+    return "unknown"
+
+
+def _fire_send_failed(
+    hass: HomeAssistant, coordinator: Any, *, reason: str, message_type: str, **details: Any
+) -> None:
+    """Announce a message that never left this radio.
+
+    A failed send used to be a log line and nothing else, so an automation
+    could not tell a delivered message from one that was never transmitted.
+    """
+    fire_send_failed(
+        hass,
+        getattr(coordinator, "config_entry", None),
+        reason=reason,
+        message_type=message_type,
+        **details,
+    )
+
+
+def _is_contact_sensor(entity: Any) -> bool:
+    """Whether a registry entry is one entry's per-contact diagnostic sensor."""
+    return (
+        entity.platform == DOMAIN
+        and entity.domain == ENTITY_DOMAIN_BINARY_SENSOR
+        and entity.config_entry_id is not None
+        and entity.unique_id.startswith(f"{entity.config_entry_id}_{CONTACT_SUFFIX}_")
+    )
+
+
 def _node_has_tracked_subscription(coordinator, pubkey_prefix: str) -> bool:
     """True when the node has a repeater/client tracking subscription.
 
@@ -351,31 +452,26 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     async def async_send_message_service(call: ServiceCall) -> None:
         """Handle sending a message service call."""
         message = call.data[ATTR_MESSAGE]
-        entry_id = call.data.get(ATTR_ENTRY_ID)
-        
-        # Check which target identifier was provided
-        if ATTR_NODE_ID in call.data:
-            # Sending by node_id (friendly name)
-            node_id = call.data[ATTR_NODE_ID]
-            pubkey_prefix = None
+
+        # Check which target identifier was provided. The schema cannot express
+        # "one of these two", so a call naming neither is refused here rather
+        # than raising KeyError from inside the send.
+        node_id = call.data.get(ATTR_NODE_ID)
+        pubkey_prefix = call.data.get(ATTR_PUBKEY_PREFIX)
+        if node_id is not None:
             target_identifier = f"node_id '{node_id}'"
-        else:
-            # Sending by public key
-            node_id = None
-            pubkey_prefix = call.data[ATTR_PUBKEY_PREFIX]
+        elif pubkey_prefix is not None:
             target_identifier = f"public key '{pubkey_prefix}'"
-        
-        # Iterate through all registered config entries
-        for config_entry_id, coordinator in hass.data[DOMAIN].items():
-            # Skip non-coordinator entries (like event listener flags)
-            if not hasattr(coordinator, 'api'):
-                continue
-                
-            _LOGGER.debug("Entry ID: %s, coordinator: %s", config_entry_id, coordinator)
-            # If entry_id is specified, only use the matching entry
-            if entry_id and entry_id != config_entry_id:
-                continue
-                
+        else:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="send_message_target_required",
+            )
+
+        config_entry_id, coordinator, _error = resolve_target(
+            hass, call, prefer_connected=True
+        )
+        if coordinator is not None:
             # Get the API from coordinator
             api = coordinator.api
             if api and api.connected:
@@ -390,23 +486,46 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     if node_id is not None:
                         # Find contact by name
                         contact = api.contact_by_name(node_id)
-                        if not contact:
-                            _LOGGER.error(f"Contact with name '{node_id}' not found")
-                            continue
                     else:
                         # Find contact by pubkey prefix
                         contact = api.contact_by_prefix(pubkey_prefix)
-                        if not contact:
-                            _LOGGER.error(f"Contact with pubkey prefix '{pubkey_prefix}' not found")
-                            continue
+                    if not contact:
+                        _LOGGER.error("Contact not found: %s", target_identifier)
+                        _fire_send_failed(
+                            hass,
+                            coordinator,
+                            reason="contact_not_found",
+                            message_type="direct",
+                            target=target_identifier,
+                        )
+                        return
 
-                    coordinator.require_mesh_budget(classify_lane(OP_MESSAGE, contact))
-                    
+                    try:
+                        coordinator.require_mesh_budget(classify_lane(OP_MESSAGE, contact))
+                    except HomeAssistantError as ex:
+                        _fire_send_failed(
+                            hass,
+                            coordinator,
+                            reason="traffic_policy",
+                            message_type="direct",
+                            target=target_identifier,
+                            detail=str(ex),
+                        )
+                        raise
+
                     result = await api.exchange("send_msg", contact, message)
 
                     if result.type == EventType.ERROR:
                         _LOGGER.warning(
                             "Failed to send message to %s: %s", target_identifier, result.payload
+                        )
+                        _fire_send_failed(
+                            hass,
+                            coordinator,
+                            reason="rejected",
+                            message_type="direct",
+                            target=target_identifier,
+                            detail=_error_detail(result),
                         )
                     else:
                         # Use the actual contact name for logging when available
@@ -417,6 +536,29 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                         # Fire-and-forget: wait for ACK in background so the
                         # service call returns immediately after sending.
                         send_id = uuid.uuid4().hex[:8]
+                        sent = {
+                            "message": message,
+                            "device": config_entry_id,
+                            "message_type": "direct",
+                            "receiver": contact.get("adv_name") or contact.get("name"),
+                            "contact_public_key": pubkey,
+                            "send_id": send_id,
+                        }
+
+                        # The radio has taken the message: say so now rather
+                        # than after the ACK wait, which may last ten seconds
+                        # and may end in nothing. ``progressive`` marks this as
+                        # the interim word; the post-ACK event below is final.
+                        fire_message_sent(
+                            hass,
+                            coordinator.config_entry,
+                            {
+                                **sent,
+                                "timestamp": int(time.time()),
+                                "ack_received": False,
+                                "progressive": True,
+                            },
+                        )
 
                         # Bind every loop-scoped value this background task reads
                         # by value at task-creation time. Without this, the deferred
@@ -426,13 +568,11 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                         # the sending coordinator to a trailing non-coordinator key,
                         # corrupting ``device``.
                         async def _wait_for_ack_and_notify(
-                            sender_entry_id=config_entry_id,
+                            entry=coordinator.config_entry,
                             api=api,
                             result=result,
-                            contact=contact,
-                            pubkey=pubkey,
                             display_name=display_name,
-                            send_id=send_id,
+                            sent=sent,
                         ):
                             """Background: wait for ACK then fire delivery event."""
                             ack_received = False
@@ -459,17 +599,15 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                             except Exception as ack_ex:
                                 _LOGGER.debug("Error waiting for ACK: %s", ack_ex)
 
-                            outgoing_msg = {
-                                "message": message,
-                                "device": sender_entry_id,
-                                "message_type": "direct",
-                                "receiver": contact.get("adv_name") or contact.get("name"),
-                                "timestamp": int(time.time()),
-                                "contact_public_key": pubkey,
-                                "ack_received": ack_received,
-                                "send_id": send_id,
-                            }
-                            hass.bus.async_fire(f"{DOMAIN}_message_sent", outgoing_msg)
+                            fire_message_sent(
+                                hass,
+                                entry,
+                                {
+                                    **sent,
+                                    "timestamp": int(time.time()),
+                                    "ack_received": ack_received,
+                                },
+                            )
 
                         # Retain the task reference (HA-native; ties it to the event
                         # loop so it cannot be GC'd before the ACK resolves).
@@ -483,28 +621,37 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     _LOGGER.error(
                         "Error sending message to %s: %s", target_identifier, ex
                     )
-                # Only attempt with the first available API if no entry_id specified
-                if not entry_id:
-                    return
-    
+                    _fire_send_failed(
+                        hass,
+                        coordinator,
+                        reason="send_failed",
+                        message_type="direct",
+                        target=target_identifier,
+                        detail=str(ex),
+                    )
+            else:
+                _LOGGER.error(
+                    "Cannot send to %s: %s is not connected",
+                    target_identifier, config_entry_id,
+                )
+                _fire_send_failed(
+                    hass,
+                    coordinator,
+                    reason="not_connected",
+                    message_type="direct",
+                    target=target_identifier,
+                )
+
     async def async_send_channel_message_service(call: ServiceCall) -> None:
         """Handle sending a channel message service call."""
         channel_idx = call.data[ATTR_CHANNEL_IDX]
         message = call.data[ATTR_MESSAGE]
-        entry_id = call.data.get(ATTR_ENTRY_ID)
         scope = call.data.get(ATTR_SCOPE)
 
-        # Iterate through all registered config entries
-        for config_entry_id, coordinator in hass.data[DOMAIN].items():
-            # Skip non-coordinator entries (like event listener flags)
-            if not hasattr(coordinator, 'api'):
-                continue
-
-            _LOGGER.debug("Entry ID: %s, coordinator: %s", config_entry_id, coordinator.name)
-            # If entry_id is specified, only use the matching entry
-            if entry_id and entry_id != config_entry_id:
-                continue
-
+        config_entry_id, coordinator, _error = resolve_target(
+            hass, call, prefer_connected=True
+        )
+        if coordinator is not None:
             # Get the API from coordinator
             api = coordinator.api
             if api and api.connected:
@@ -513,7 +660,18 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                         "Sending message to channel %s: %s", channel_idx, message
                     )
 
-                    coordinator.require_mesh_budget(classify_lane(OP_CHANNEL_MESSAGE))
+                    try:
+                        coordinator.require_mesh_budget(classify_lane(OP_CHANNEL_MESSAGE))
+                    except HomeAssistantError as ex:
+                        _fire_send_failed(
+                            hass,
+                            coordinator,
+                            reason="traffic_policy",
+                            message_type="channel",
+                            channel_idx=channel_idx,
+                            detail=str(ex),
+                        )
+                        raise
 
                     # Set flood scope before sending if requested, then always reset.
                     async with api.transaction():
@@ -544,6 +702,14 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     if result.type == EventType.ERROR:
                         _LOGGER.warning(
                             "Failed to send message to channel %s: %s", channel_idx, result.payload
+                        )
+                        _fire_send_failed(
+                            hass,
+                            coordinator,
+                            reason="rejected",
+                            message_type="channel",
+                            channel_idx=channel_idx,
+                            detail=_error_detail(result),
                         )
                     else:
                         _LOGGER.info(
@@ -577,21 +743,38 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                             "scope": scope,
                         }
                         # Fire event for outgoing message to update message-related entities
-                        hass.bus.async_fire(f"{DOMAIN}_message_sent", outgoing_msg)
+                        fire_message_sent(hass, coordinator.config_entry, outgoing_msg)
                 except HomeAssistantError:
                     raise
                 except Exception as ex:
                     _LOGGER.error(
                         "Error sending message to channel %s: %s", channel_idx, ex
                     )
-                # Only attempt with the first available API if no entry_id specified
-                if not entry_id:
-                    return
+                    _fire_send_failed(
+                        hass,
+                        coordinator,
+                        reason="send_failed",
+                        message_type="channel",
+                        channel_idx=channel_idx,
+                        detail=str(ex),
+                    )
+            else:
+                _LOGGER.error(
+                    "Cannot send to channel %s: %s is not connected",
+                    channel_idx, config_entry_id,
+                )
+                _fire_send_failed(
+                    hass,
+                    coordinator,
+                    reason="not_connected",
+                    message_type="channel",
+                    channel_idx=channel_idx,
+                )
 
     # Create combined message script service
     async def async_message_script_service(call: ServiceCall) -> dict[str, Any] | None:
         """Handle the combined messaging script service that works with UI helpers."""
-        entry_id, error = _resolve_ui_entry_id(hass, call.data.get(ATTR_ENTRY_ID))
+        entry_id, _coordinator, error = resolve_target(hass, call, refuse_ambiguous=True)
         if error:
             return error
 
@@ -706,7 +889,6 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         layered on by async_execute_command_service, not here.
         """
         command_str = call.data[ATTR_COMMAND]
-        entry_id = call.data.get(ATTR_ENTRY_ID)
 
         # Support both functional: cmd(arg1, kw=val) and positional: cmd arg1 arg2
         functional = _parse_functional_command(command_str)
@@ -728,355 +910,352 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             kw_literals = {}
         
         _LOGGER.debug("Executing command: %s with arguments: %s", command_name, arguments)
-        
-        # Iterate through all registered config entries
-        for config_entry_id, coordinator in hass.data[DOMAIN].items():
-            # Skip non-coordinator entries (like event listener flags)
-            if not hasattr(coordinator, 'api'):
-                continue
-                
-            # If entry_id is specified, only use the matching entry
-            if entry_id and entry_id != config_entry_id:
-                continue
-                
-            # Get the API from coordinator
-            api = coordinator.api
-            if api and api.connected:
-                try:
-                    # Resolve the command by name through the session's gate
-                    sig_params = api.command_parameters(command_name)
 
-                    if sig_params is None:
-                        _LOGGER.error("Command not found: %s", command_name)
-                        continue
-                    
-                    # Define known command parameter types
-                    # Format: {command_name: [param1_type, param2_type, ...]}
-                    command_param_types = {
-                        # Device commands with no parameters
-                        "send_appstart": [],
-                        "send_device_query": [],
-                        "reboot": [],
-                        "get_bat": [],
-                        "get_time": [],
-                        "get_self_telemetry": [],
-                        "get_custom_vars": [],
-                        "export_private_key": [],
-                        "sign_start": [],
-                        "sign_finish": [],
-                        "get_stats_core": [],
-                        "get_stats_radio": [],
-                        "get_stats_packets": [],
-                        "get_allowed_repeat_freq": [],
-                        "get_path_hash_mode": [],
+        if command_name in DENIED_COMMANDS or command_name.startswith("_"):
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="command_denied",
+                translation_placeholders={"command": command_name},
+            )
 
-                        # Contact commands
-                        "get_contacts": ["int"],  # lastmod parameter (optional, defaults to 0)
-                        "reset_path": ["contact"],
-                        "share_contact": ["contact"],
-                        "export_contact": ["contact"],
-                        "remove_contact": ["contact"],
-                        "import_contact": ["bytes"],
-                        "update_contact": ["contact", "str", "str"],  # contact, path, flags
-                        "add_contact": ["contact"],
-                        "change_contact_path": ["contact", "int"],
-                        "change_contact_flags": ["contact", "int"],
-                        "set_autoadd_config": ["int"],
-                        "get_autoadd_config": [],
+        config_entry_id, coordinator, _error = resolve_target(
+            hass, call, prefer_connected=True
+        )
+        if coordinator is None or not _connected(coordinator):
+            _LOGGER.error("Failed to execute command on any device: %s", command_name)
+            return
 
-                        # Messaging commands
-                        "get_msg": ["float"],  # timeout (optional)
-                        "send_login": ["contact", "str"],
-                        "send_logout": ["contact"],
-                        "send_statusreq": ["contact"],
-                        "send_telemetry_req": ["contact"],
-                        "send_msg": ["contact", "str", "int"],  # contact, message, timestamp (optional)
-                        "send_msg_with_retry": ["contact", "str"],  # contact, message (many optional params)
-                        "send_chan_msg": ["int", "str", "int"],  # channel, message, timestamp
-                        "send_cmd": ["contact", "str", "int"],  # contact, command, timestamp (optional)
-                        "send_binary_req": ["contact", "int"],  # contact, BinaryReqType (int enum)
-                        "send_path_discovery": ["contact"],
-                        "send_trace": ["int", "int", "int", "bytes"],  # auth_code, tag, flags, path
-                        "set_flood_scope": ["str"],
+        api = coordinator.api
+        try:
+            # Resolve the command by name through the session's gate
+            sig_params = api.command_parameters(command_name)
 
-                        # Binary commands
-                        "req_telemetry": ["contact", "int"],  # contact, timeout
-                        "req_telemetry_sync": ["contact", "int"],
-                        "req_mma": ["contact", "int", "int"],  # contact, timeout, min_timeout
-                        "req_mma_sync": ["contact", "int", "int", "int"],  # contact, start, end, timeout
-                        "req_acl": ["contact", "int"],  # contact, timeout
-                        "req_acl_sync": ["contact", "int"],
-                        "req_status": ["contact"],
-                        "req_status_sync": ["contact"],
-                        "req_neighbours_async": ["contact"],
-                        "req_neighbours_sync": ["contact"],
-                        "fetch_all_neighbours": ["contact"],
-                        "req_regions_async": ["contact"],
-                        "req_regions_sync": ["contact"],
-                        "req_owner_async": ["contact"],
-                        "req_owner_sync": ["contact"],
-                        "req_basic_async": ["contact"],
-                        "req_basic_sync": ["contact"],
+            if sig_params is None:
+                _LOGGER.error("Command not found: %s", command_name)
+                return
+            
+            # Define known command parameter types
+            # Format: {command_name: [param1_type, param2_type, ...]}
+            command_param_types = {
+                # Device commands with no parameters
+                "send_appstart": [],
+                "send_device_query": [],
+                "reboot": [],
+                "get_bat": [],
+                "get_time": [],
+                "get_self_telemetry": [],
+                "get_custom_vars": [],
+                "export_private_key": [],
+                "sign_start": [],
+                "sign_finish": [],
+                "get_stats_core": [],
+                "get_stats_radio": [],
+                "get_stats_packets": [],
+                "get_allowed_repeat_freq": [],
+                "get_path_hash_mode": [],
 
-                        # Control data commands
-                        "send_control_data": ["int", "bytes"],  # control_type, payload
-                        "send_node_discover_req": ["int", "bool"],  # filter, prefix_only (tag/since optional)
+                # Contact commands
+                "get_contacts": ["int"],  # lastmod parameter (optional, defaults to 0)
+                "reset_path": ["contact"],
+                "share_contact": ["contact"],
+                "export_contact": ["contact"],
+                "remove_contact": ["contact"],
+                "import_contact": ["bytes"],
+                "update_contact": ["contact", "str", "str"],  # contact, path, flags
+                "add_contact": ["contact"],
+                "change_contact_path": ["contact", "int"],
+                "change_contact_flags": ["contact", "int"],
+                "set_autoadd_config": ["int"],
+                "get_autoadd_config": [],
 
-                        # Device configuration commands
-                        "send_advert": ["bool"],
-                        "set_name": ["str"],
-                        "set_time": ["int"],
-                        "set_tx_power": ["int"],
-                        "set_devicepin": ["int"],
-                        "set_multi_acks": ["int"],
-                        "set_coords": ["float", "float"],
-                        "set_radio": ["float", "float", "int", "int"],
-                        "set_tuning": ["int", "int"],
-                        "set_telemetry_mode_base": ["int"],
-                        "set_telemetry_mode_loc": ["int"],
-                        "set_telemetry_mode_env": ["int"],
-                        "set_manual_add_contacts": ["bool"],
-                        "set_advert_loc_policy": ["int"],
-                        "set_other_params": ["bool", "int", "int", "int", "int"],  # 5 parameters
-                        "set_custom_var": ["str", "str"],  # key, value
-                        "set_path_hash_mode": ["int"],
-                        "import_private_key": ["bytes"],
-                        "sign_data": ["bytes"],
-                        "sign": ["bytes", "int"],  # data, chunk_size (timeout optional)
-                        "get_channel": ["int"],
-                        "set_channel": ["int", "str", "bytes"],
-                    }
-                    
-                    param_types = command_param_types.get(command_name, [])
-                    prepared_args = []
-                    prepared_kwargs = {}
+                # Messaging commands
+                "get_msg": ["float"],  # timeout (optional)
+                "send_login": ["contact", "str"],
+                "send_logout": ["contact"],
+                "send_statusreq": ["contact"],
+                "send_telemetry_req": ["contact"],
+                "send_msg": ["contact", "str", "int"],  # contact, message, timestamp (optional)
+                "send_msg_with_retry": ["contact", "str"],  # contact, message (many optional params)
+                "send_chan_msg": ["int", "str", "int"],  # channel, message, timestamp
+                "send_cmd": ["contact", "str", "int"],  # contact, command, timestamp (optional)
+                "send_binary_req": ["contact", "int"],  # contact, BinaryReqType (int enum)
+                "send_path_discovery": ["contact"],
+                "send_trace": ["int", "int", "int", "bytes"],  # auth_code, tag, flags, path
+                "set_flood_scope": ["str"],
 
-                    if pos_literals is not None:
-                        # Functional format: values are already-typed Python literals
-                        for i, val in enumerate(pos_literals):
-                            ptype = param_types[i] if i < len(param_types) else None
-                            if ptype == "contact":
-                                contact = _resolve_contact(str(val), command_name, api, coordinator)
-                                if contact is None:
-                                    return _contact_error(str(val), command_name, api)
-                                prepared_args.append(contact)
-                            else:
-                                prepared_args.append(val)
-                        if kw_literals:
-                            for kw_name, kw_val in kw_literals.items():
-                                if kw_name not in sig_params:
-                                    _LOGGER.error("Unknown keyword '%s' for command '%s'", kw_name, command_name)
-                                    return {"error": "unknown_keyword", "command": command_name, "argument": kw_name}
-                                idx = sig_params.index(kw_name)
-                                ptype = param_types[idx] if idx < len(param_types) else None
-                                if ptype == "contact":
-                                    original_kw = str(kw_val)
-                                    kw_val = _resolve_contact(original_kw, command_name, api, coordinator)
-                                    if kw_val is None:
-                                        return _contact_error(original_kw, command_name, api)
-                                prepared_kwargs[kw_name] = kw_val
+                # Binary commands
+                "req_telemetry": ["contact", "int"],  # contact, timeout
+                "req_telemetry_sync": ["contact", "int"],
+                "req_mma": ["contact", "int", "int"],  # contact, timeout, min_timeout
+                "req_mma_sync": ["contact", "int", "int", "int"],  # contact, start, end, timeout
+                "req_acl": ["contact", "int"],  # contact, timeout
+                "req_acl_sync": ["contact", "int"],
+                "req_status": ["contact"],
+                "req_status_sync": ["contact"],
+                "req_neighbours_async": ["contact"],
+                "req_neighbours_sync": ["contact"],
+                "fetch_all_neighbours": ["contact"],
+                "req_regions_async": ["contact"],
+                "req_regions_sync": ["contact"],
+                "req_owner_async": ["contact"],
+                "req_owner_sync": ["contact"],
+                "req_basic_async": ["contact"],
+                "req_basic_sync": ["contact"],
+
+                # Control data commands
+                "send_control_data": ["int", "bytes"],  # control_type, payload
+                "send_node_discover_req": ["int", "bool"],  # filter, prefix_only (tag/since optional)
+
+                # Device configuration commands
+                "send_advert": ["bool"],
+                "set_name": ["str"],
+                "set_time": ["int"],
+                "set_tx_power": ["int"],
+                "set_devicepin": ["int"],
+                "set_multi_acks": ["int"],
+                "set_coords": ["float", "float"],
+                "set_radio": ["float", "float", "int", "int"],
+                "set_tuning": ["int", "int"],
+                "set_telemetry_mode_base": ["int"],
+                "set_telemetry_mode_loc": ["int"],
+                "set_telemetry_mode_env": ["int"],
+                "set_manual_add_contacts": ["bool"],
+                "set_advert_loc_policy": ["int"],
+                "set_other_params": ["bool", "int", "int", "int", "int"],  # 5 parameters
+                "set_custom_var": ["str", "str"],  # key, value
+                "set_path_hash_mode": ["int"],
+                "import_private_key": ["bytes"],
+                "sign_data": ["bytes"],
+                "sign": ["bytes", "int"],  # data, chunk_size (timeout optional)
+                "get_channel": ["int"],
+                "set_channel": ["int", "str", "bytes"],
+            }
+            
+            param_types = command_param_types.get(command_name, [])
+            prepared_args = []
+            prepared_kwargs = {}
+
+            if pos_literals is not None:
+                # Functional format: values are already-typed Python literals
+                for i, val in enumerate(pos_literals):
+                    ptype = param_types[i] if i < len(param_types) else None
+                    if ptype == "contact":
+                        contact = _resolve_contact(str(val), command_name, api, coordinator)
+                        if contact is None:
+                            return _contact_error(str(val), command_name, api)
+                        prepared_args.append(contact)
                     else:
-                        # Space-separated format: convert string arguments by declared type
-                        for i, arg in enumerate(arguments or []):
-                            param_type = param_types[i] if i < len(param_types) else "str"
-                            if param_type == "contact":
-                                contact = _resolve_contact(arg, command_name, api, coordinator)
-                                if contact is None:
-                                    return _contact_error(arg, command_name, api)
-                                prepared_args.append(contact)
-                            elif param_type == "int":
-                                try:
-                                    prepared_args.append(int(arg))
-                                except ValueError:
-                                    _LOGGER.error("Could not convert '%s' to integer", arg)
-                                    return
-                            elif param_type == "float":
-                                try:
-                                    prepared_args.append(float(arg))
-                                except ValueError:
-                                    _LOGGER.error("Could not convert '%s' to float", arg)
-                                    return
-                            elif param_type == "bool":
-                                if arg.lower() in ("true", "yes", "y", "1"):
-                                    prepared_args.append(True)
-                                elif arg.lower() in ("false", "no", "n", "0"):
-                                    prepared_args.append(False)
-                                else:
-                                    _LOGGER.error("Could not convert '%s' to boolean", arg)
-                                    return
-                            elif param_type == "bytes":
-                                try:
-                                    prepared_args.append(bytes.fromhex(arg))
-                                except ValueError:
-                                    _LOGGER.error("Could not convert '%s' to bytes - invalid hex string", arg)
-                                    return
-                            else:
-                                prepared_args.append(arg)
-
-                    # get_msg and raw SYNC_NEXT_MESSAGE consume the shared chat queue.
-                    raw_data = prepared_args[0] if prepared_args else prepared_kwargs.get("data")
-                    drains_messages = command_name == "get_msg" or (
-                        command_name == "send"
-                        and isinstance(raw_data, (bytes, bytearray))
-                        and raw_data[:1] == b"\x0a"
-                    )
-                    if drains_messages and not coordinator.consume_incoming_messages:
-                        return {"error": "Incoming message consumption is disabled"}
-
-                    _LOGGER.debug("Executing %s args=%s kwargs=%s", command_name, prepared_args, prepared_kwargs)
-                    needs_lease, waits_remote = _mesh_routing(command_name)
-                    run = api.invoke if waits_remote else api.exchange
-                    if needs_lease:
-                        target = next(
-                            (arg for arg in prepared_args if isinstance(arg, dict)), None
-                        )
-                        coordinator.require_mesh_budget(
-                            classify_lane(_COMMAND_OPS.get(command_name, OP_STATUS), target)
-                        )
-                        async with api.mesh_lease():
-                            result = await run(command_name, *prepared_args, **prepared_kwargs)
-                    else:
-                        result = await run(command_name, *prepared_args, **prepared_kwargs)
-
-                    # Refresh SELF_INFO after commands that modify config values
-                    # so HA sensors immediately reflect the new state.
-                    if command_name in _SELF_INFO_COMMANDS and result.type != EventType.ERROR:
+                        prepared_args.append(val)
+                if kw_literals:
+                    for kw_name, kw_val in kw_literals.items():
+                        if kw_name not in sig_params:
+                            _LOGGER.error("Unknown keyword '%s' for command '%s'", kw_name, command_name)
+                            return {"error": "unknown_keyword", "command": command_name, "argument": kw_name}
+                        idx = sig_params.index(kw_name)
+                        ptype = param_types[idx] if idx < len(param_types) else None
+                        if ptype == "contact":
+                            original_kw = str(kw_val)
+                            kw_val = _resolve_contact(original_kw, command_name, api, coordinator)
+                            if kw_val is None:
+                                return _contact_error(original_kw, command_name, api)
+                        prepared_kwargs[kw_name] = kw_val
+            else:
+                # Space-separated format: convert string arguments by declared type
+                for i, arg in enumerate(arguments or []):
+                    param_type = param_types[i] if i < len(param_types) else "str"
+                    if param_type == "contact":
+                        contact = _resolve_contact(arg, command_name, api, coordinator)
+                        if contact is None:
+                            return _contact_error(arg, command_name, api)
+                        prepared_args.append(contact)
+                    elif param_type == "int":
                         try:
-                            appstart_result = await api.exchange("send_appstart")
-                            api.cache_self_info_event(appstart_result)
-                        except Exception as ex:
-                            _LOGGER.warning(
-                                "Failed to refresh SELF_INFO after %s: %s",
-                                command_name, ex,
-                            )
+                            prepared_args.append(int(arg))
+                        except ValueError:
+                            _LOGGER.error("Could not convert '%s' to integer", arg)
+                            return
+                    elif param_type == "float":
+                        try:
+                            prepared_args.append(float(arg))
+                        except ValueError:
+                            _LOGGER.error("Could not convert '%s' to float", arg)
+                            return
+                    elif param_type == "bool":
+                        if arg.lower() in ("true", "yes", "y", "1"):
+                            prepared_args.append(True)
+                        elif arg.lower() in ("false", "no", "n", "0"):
+                            prepared_args.append(False)
+                        else:
+                            _LOGGER.error("Could not convert '%s' to boolean", arg)
+                            return
+                    elif param_type == "bytes":
+                        try:
+                            prepared_args.append(bytes.fromhex(arg))
+                        except ValueError:
+                            _LOGGER.error("Could not convert '%s' to bytes - invalid hex string", arg)
+                            return
+                    else:
+                        prepared_args.append(arg)
 
-                    # Update coordinator channel info after set_channel
-                    if command_name == "set_channel" and result.type != EventType.ERROR:
-                        channel_idx = prepared_args[0]
-                        # Fetch updated channel info
-                        channel_info_result = await api.exchange("get_channel", channel_idx)
-                        if channel_info_result.type != EventType.ERROR:
-                            coordinator._channel_info[channel_idx] = channel_info_result.payload
-                            _LOGGER.info(f"Updated channel {channel_idx} info: {channel_info_result.payload}")
-                            # Trigger coordinator update to refresh select entities
-                            coordinator.async_update_listeners()
+            # get_msg and raw SYNC_NEXT_MESSAGE consume the shared chat queue.
+            raw_data = prepared_args[0] if prepared_args else prepared_kwargs.get("data")
+            drains_messages = command_name == "get_msg" or (
+                command_name == "send"
+                and isinstance(raw_data, (bytes, bytearray))
+                and raw_data[:1] == b"\x0a"
+            )
+            if drains_messages and not coordinator.consume_incoming_messages:
+                return {"error": "Incoming message consumption is disabled"}
 
-                    # Mark contacts as dirty after add_contact or remove_contact so next ensure_contacts() will sync
-                    if command_name == "add_contact" and result.type != EventType.ERROR:
-                        api.mark_contacts_dirty()
-                        # Also add to coordinator and trigger immediate update
-                        contact_to_add = prepared_args[0]
-                        if contact_to_add and isinstance(contact_to_add, dict):
-                            pubkey = contact_to_add.get("public_key")
-                            if pubkey:
-                                # Mark as added to node
-                                contact_to_add["added_to_node"] = True
+            _LOGGER.debug("Executing %s args=%s kwargs=%s", command_name, prepared_args, prepared_kwargs)
+            needs_lease, waits_remote = _mesh_routing(command_name)
+            run = api.invoke if waits_remote else api.exchange
+            if needs_lease:
+                target = next(
+                    (arg for arg in prepared_args if isinstance(arg, dict)), None
+                )
+                coordinator.require_mesh_budget(
+                    classify_lane(_COMMAND_OPS.get(command_name, OP_STATUS), target)
+                )
+                async with api.mesh_lease():
+                    result = await run(command_name, *prepared_args, **prepared_kwargs)
+            else:
+                result = await run(command_name, *prepared_args, **prepared_kwargs)
 
-                                # Add to coordinator if not already present
-                                prefix = pubkey[:12]
-                                if prefix not in coordinator._contacts:
-                                    coordinator._contacts[prefix] = contact_to_add
-
-                                # Mark contact as dirty so binary sensors update
-                                coordinator.mark_contact_dirty(prefix)
-
-                                # Create binary sensor entity if one doesn't exist yet
-                                try:
-                                    add_entities_cb = getattr(coordinator, "binary_sensor_async_add_entities", None)
-                                    if add_entities_cb:
-                                        sensor = create_contact_sensor(coordinator, contact_to_add)
-                                        if sensor:
-                                            add_entities_cb([sensor])
-                                except Exception as sensor_ex:
-                                    _LOGGER.warning("Failed to create binary sensor for contact %s: %s", prefix, sensor_ex)
-
-                                coordinator._publish_contacts()
-                    elif command_name == "remove_contact" and result.type != EventType.ERROR:
-                        api.mark_contacts_dirty()
-                        # Also remove from SDK's internal contacts dict and coordinator
-                        contact_to_remove = prepared_args[0]
-                        if contact_to_remove and isinstance(contact_to_remove, dict):
-                            pubkey = contact_to_remove.get("public_key")
-                            if pubkey:
-                                # Remove from the node's cached contact table
-                                api.forget_contact(pubkey)
-
-                                # Remove from coordinator and trigger immediate update
-                                prefix = pubkey[:12]
-                                if prefix in coordinator._contacts:
-                                    del coordinator._contacts[prefix]
-
-                                # Mark contact as dirty so binary sensors update
-                                coordinator.mark_contact_dirty(prefix)
-
-                                # Data-only mode is exactly when a demoted
-                                # contact (added -> discovered) must lose its
-                                # per-contact entities: nothing else deletes
-                                # them, and waiting for eviction or stale
-                                # cleanup is too late. In full mode the contact
-                                # stays a valid discovered entity, so this is
-                                # gated off. The coordinator owns the teardown.
-                                if (
-                                    get_contact_discovery_mode(coordinator.config_entry)
-                                    == MODE_DATA_ONLY
-                                ):
-                                    _LOGGER.info(
-                                        "Data-only mode: removing entities for demoted contact %s",
-                                        prefix,
-                                    )
-                                    coordinator._remove_discovered_contact_entities(pubkey)
-
-                                coordinator._publish_contacts()
-
-                    # Normalize the SDK return value into a JSON-safe response.
-                    # Possible shapes:
-                    #   * Event with .payload dict — send_* / set_* commands
-                    #   * Plain dict — req_*_sync (awaited response payload)
-                    #   * list / scalar / str — wrapped as {"result": <value>}
-                    #   * None — req_*_sync on timeout / no response
-                    if hasattr(result, "payload") and isinstance(result.payload, dict):
-                        response = {
-                            k: (v.hex() if isinstance(v, bytes) else v)
-                            for k, v in result.payload.items()
-                        }
-                        _LOGGER.info(
-                            "Command result: %s with payload: %s",
-                            result.type, response,
-                        )
-                        if response:
-                            return response
-                        return
-                    if isinstance(result, dict):
-                        response = {
-                            k: (v.hex() if isinstance(v, bytes) else v)
-                            for k, v in result.items()
-                        }
-                        _LOGGER.info("Command result: %s", response)
-                        return response
-                    if result is None:
-                        _LOGGER.info(
-                            "Command %s returned no response", command_name,
-                        )
-                        return {"error": "no_response", "command": command_name}
-                    # Any other non-None shape (list / scalar / string) returned by
-                    # req_*_sync helpers — e.g. req_telemetry_sync (lpp list),
-                    # req_mma_sync / req_acl_sync, req_regions_sync (str). These are
-                    # primitives-only by construction, so wrap as-is for the caller.
-                    _LOGGER.info("Command result: %s", result)
-                    return {"result": result}
-
-                except HomeAssistantError:
-                    raise
+            # Refresh SELF_INFO after commands that modify config values
+            # so HA sensors immediately reflect the new state.
+            if command_name in _SELF_INFO_COMMANDS and result.type != EventType.ERROR:
+                try:
+                    appstart_result = await api.exchange("send_appstart")
+                    api.cache_self_info_event(appstart_result)
                 except Exception as ex:
-                    _LOGGER.error("Error executing command %s: %s", command_name, ex)
+                    _LOGGER.warning(
+                        "Failed to refresh SELF_INFO after %s: %s",
+                        command_name, ex,
+                    )
 
-                # Only attempt with the first available API if no entry_id specified
-                if not entry_id:
-                    return
+            # Update coordinator channel info after set_channel
+            if command_name == "set_channel" and result.type != EventType.ERROR:
+                channel_idx = prepared_args[0]
+                # Fetch updated channel info
+                channel_info_result = await api.exchange("get_channel", channel_idx)
+                if channel_info_result.type != EventType.ERROR:
+                    coordinator._channel_info[channel_idx] = channel_info_result.payload
+                    _LOGGER.info(f"Updated channel {channel_idx} info: {channel_info_result.payload}")
+                    # Trigger coordinator update to refresh select entities
+                    coordinator.async_update_listeners()
 
-        _LOGGER.error("Failed to execute command on any device: %s", command_name)
+            # Mark contacts as dirty after add_contact or remove_contact so next ensure_contacts() will sync
+            if command_name == "add_contact" and result.type != EventType.ERROR:
+                api.mark_contacts_dirty()
+                # Also add to coordinator and trigger immediate update
+                contact_to_add = prepared_args[0]
+                if contact_to_add and isinstance(contact_to_add, dict):
+                    pubkey = contact_to_add.get("public_key")
+                    if pubkey:
+                        # Mark as added to node
+                        contact_to_add["added_to_node"] = True
 
-    def _record_cli_console(command_str: str, response: Any, entry_id: "str | None") -> None:
+                        # Add to coordinator if not already present
+                        prefix = pubkey[:12]
+                        if prefix not in coordinator._contacts:
+                            coordinator._contacts[prefix] = contact_to_add
+
+                        # Mark contact as dirty so binary sensors update
+                        coordinator.mark_contact_dirty(prefix)
+
+                        # Create binary sensor entity if one doesn't exist yet
+                        try:
+                            add_entities_cb = getattr(coordinator, "binary_sensor_async_add_entities", None)
+                            if add_entities_cb:
+                                sensor = create_contact_sensor(coordinator, contact_to_add)
+                                if sensor:
+                                    add_entities_cb([sensor])
+                        except Exception as sensor_ex:
+                            _LOGGER.warning("Failed to create binary sensor for contact %s: %s", prefix, sensor_ex)
+
+                        coordinator._publish_contacts()
+            elif command_name == "remove_contact" and result.type != EventType.ERROR:
+                api.mark_contacts_dirty()
+                # Also remove from SDK's internal contacts dict and coordinator
+                contact_to_remove = prepared_args[0]
+                if contact_to_remove and isinstance(contact_to_remove, dict):
+                    pubkey = contact_to_remove.get("public_key")
+                    if pubkey:
+                        # Remove from the node's cached contact table
+                        api.forget_contact(pubkey)
+
+                        # Remove from coordinator and trigger immediate update
+                        prefix = pubkey[:12]
+                        if prefix in coordinator._contacts:
+                            del coordinator._contacts[prefix]
+
+                        # Mark contact as dirty so binary sensors update
+                        coordinator.mark_contact_dirty(prefix)
+
+                        # Data-only mode is exactly when a demoted
+                        # contact (added -> discovered) must lose its
+                        # per-contact entities: nothing else deletes
+                        # them, and waiting for eviction or stale
+                        # cleanup is too late. In full mode the contact
+                        # stays a valid discovered entity, so this is
+                        # gated off. The coordinator owns the teardown.
+                        if (
+                            get_contact_discovery_mode(coordinator.config_entry)
+                            == MODE_DATA_ONLY
+                        ):
+                            _LOGGER.info(
+                                "Data-only mode: removing entities for demoted contact %s",
+                                prefix,
+                            )
+                            coordinator._remove_discovered_contact_entities(pubkey)
+
+                        coordinator._publish_contacts()
+
+            # Normalize the SDK return value into a JSON-safe response.
+            # Possible shapes:
+            #   * Event with .payload dict — send_* / set_* commands
+            #   * Plain dict — req_*_sync (awaited response payload)
+            #   * list / scalar / str — wrapped as {"result": <value>}
+            #   * None — req_*_sync on timeout / no response
+            if hasattr(result, "payload") and isinstance(result.payload, dict):
+                response = {
+                    k: (v.hex() if isinstance(v, bytes) else v)
+                    for k, v in result.payload.items()
+                }
+                _LOGGER.info(
+                    "Command result: %s with payload: %s",
+                    result.type, response,
+                )
+                if response:
+                    return response
+                return
+            if isinstance(result, dict):
+                response = {
+                    k: (v.hex() if isinstance(v, bytes) else v)
+                    for k, v in result.items()
+                }
+                _LOGGER.info("Command result: %s", response)
+                return response
+            if result is None:
+                _LOGGER.info(
+                    "Command %s returned no response", command_name,
+                )
+                return {"error": "no_response", "command": command_name}
+            # Any other non-None shape (list / scalar / string) returned by
+            # req_*_sync helpers — e.g. req_telemetry_sync (lpp list),
+            # req_mma_sync / req_acl_sync, req_regions_sync (str). These are
+            # primitives-only by construction, so wrap as-is for the caller.
+            _LOGGER.info("Command result: %s", result)
+            return {"result": result}
+
+        except HomeAssistantError:
+            raise
+        except Exception as ex:
+            _LOGGER.error("Error executing command %s: %s", command_name, ex)
+            return
+
+    def _record_cli_console(call: ServiceCall, response: Any) -> None:
         """Record a command/response pair to the console and fire the event.
 
         Shared by execute_command / execute_command_ui when record_to_console is
@@ -1087,16 +1266,18 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         is_error = response is None or (
             isinstance(response, dict) and "error" in response
         )
-        coordinator = _resolve_console_coordinator(entry_id)
+        command_str = call.data[ATTR_COMMAND]
+        coordinator = _resolve_console_coordinator(call)
         if coordinator is not None:
             coordinator.record_cli_console(command_str, response, is_error)
-        hass.bus.async_fire(EVENT_CLI_RESPONSE, {
-            "command": command_str,
-            "response": response,
-            "is_error": is_error,
-            "entry_id": entry_id,
-            "timestamp": int(time.time()),
-        })
+        fire_cli_response(
+            hass,
+            getattr(coordinator, "config_entry", None),
+            command=command_str,
+            response=response,
+            is_error=is_error,
+            requested_entry_id=call.data.get(ATTR_ENTRY_ID),
+        )
 
     async def async_execute_command_service(call: ServiceCall):
         """Handle execute command service call.
@@ -1108,9 +1289,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         """
         response = await _async_run_command(call)
         if call.data.get(ATTR_RECORD_TO_CONSOLE):
-            _record_cli_console(
-                call.data[ATTR_COMMAND], response, call.data.get(ATTR_ENTRY_ID)
-            )
+            _record_cli_console(call, response)
         return response
 
     async def async_execute_command_ui_service(call: ServiceCall):
@@ -1120,7 +1299,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         record_to_console through so the CLI Console Run button (which sets the
         flag) captures the response in the transcript.
         """
-        entry_id, error = _resolve_ui_entry_id(hass, call.data.get(ATTR_ENTRY_ID))
+        entry_id, _coordinator, error = resolve_target(hass, call, refuse_ambiguous=True)
         if error:
             return error
         record_to_console = call.data.get(ATTR_RECORD_TO_CONSOLE, False)
@@ -1170,25 +1349,10 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
         return response
 
-    def _resolve_console_coordinator(entry_id: "str | None") -> Any:
-        """Pick the coordinator a CLI console command should record against.
-
-        Mirrors execute_command's target selection: the entry_id coordinator
-        when specified, otherwise the first connected one. Returns None when no
-        suitable coordinator is found.
-        """
-        first_connected = None
-        for config_entry_id, coordinator in hass.data[DOMAIN].items():
-            if not hasattr(coordinator, "api"):
-                continue
-            if entry_id and entry_id != config_entry_id:
-                continue
-            if entry_id:
-                return coordinator
-            api = coordinator.api
-            if first_connected is None and api and api.connected:
-                first_connected = coordinator
-        return first_connected
+    def _resolve_console_coordinator(call: ServiceCall) -> Any:
+        """Pick the coordinator a CLI console command recorded against."""
+        _entry_id, coordinator, _error = resolve_target(hass, call, prefer_connected=True)
+        return coordinator
 
     async def async_cli_clear_service(call: ServiceCall) -> None:
         """Clear the CLI console transcript.
@@ -1452,15 +1616,19 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             _LOGGER.info(f"Removing binary sensor entity: {entity_id}")
             entity_registry.async_remove(entity_id)
 
-    # Register the contact management services
-    hass.services.async_register(
+    # Register the contact management services. Both run add_contact /
+    # remove_contact on the radio, so they are admin services like the
+    # execute_command they delegate to.
+    async_register_admin_service(
+        hass,
         DOMAIN,
         SERVICE_ADD_SELECTED_CONTACT,
         async_add_selected_contact_service,
         schema=UI_MESSAGE_SCHEMA,
     )
 
-    hass.services.async_register(
+    async_register_admin_service(
+        hass,
         DOMAIN,
         SERVICE_REMOVE_SELECTED_CONTACT,
         async_remove_selected_contact_service,
@@ -1478,24 +1646,30 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     )
 
     async def async_cleanup_unavailable_contacts_service(call: ServiceCall) -> None:
-        """Remove all unavailable MeshCore contact binary sensors."""
+        """Remove unavailable per-contact binary sensors.
+
+        Only the per-contact diagnostic sensors, identified by their registry
+        owner and unique_id: a message entity, a fault flag or a broker sensor
+        is not a contact, and an unavailable one is not rubbish to sweep up.
+        Without an entry_id every entry is cleaned, as it always has been.
+        """
         entry_id = call.data.get(ATTR_ENTRY_ID)
 
         entity_registry = er.async_get(hass)
         removed_count = 0
 
         for entity in list(entity_registry.entities.values()):
-            if entity.platform == DOMAIN and entity.domain == "binary_sensor":
-                # If entry_id specified, only clean for that device
-                if entry_id and not entity.unique_id.startswith(entry_id):
-                    continue
+            if entry_id and entity.config_entry_id != entry_id:
+                continue
+            if not _is_contact_sensor(entity):
+                continue
 
-                # Check if entity is unavailable
-                state = hass.states.get(entity.entity_id)
-                if state and state.state == "unavailable":
-                    _LOGGER.info(f"Removing unavailable entity: {entity.entity_id}")
-                    entity_registry.async_remove(entity.entity_id)
-                    removed_count += 1
+            # Check if entity is unavailable
+            state = hass.states.get(entity.entity_id)
+            if state and state.state == "unavailable":
+                _LOGGER.info(f"Removing unavailable entity: {entity.entity_id}")
+                entity_registry.async_remove(entity.entity_id)
+                removed_count += 1
 
         _LOGGER.info(f"Removed {removed_count} unavailable MeshCore contact sensors")
 
@@ -1589,17 +1763,10 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     # companion integrations don't have to string-scrape execute_command output.
     # See docs/docs/companion-integration-api.md for the published surface.
 
-    def _resolve_coordinator(entry_id: str | None) -> Any:
-        """Locate a MeshCore coordinator by entry_id, or the first available one."""
-        if entry_id:
-            coord = hass.data[DOMAIN].get(entry_id)
-            if coord is not None and hasattr(coord, "api"):
-                return coord
-            return None
-        for _eid, coord in hass.data[DOMAIN].items():
-            if hasattr(coord, "api"):
-                return coord
-        return None
+    def _resolve_coordinator(call: ServiceCall) -> Any:
+        """Locate the coordinator a query service should read from."""
+        _entry_id, coordinator, _error = resolve_target(hass, call)
+        return coordinator
 
     async def async_get_contacts_service(call: ServiceCall) -> dict:
         """Return the device's known contacts as a structured list.
@@ -1610,8 +1777,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         the coordinator; ``out_path_hash_mode`` is backfilled for older
         records via ``_ensure_contact_compat``.
         """
-        entry_id = call.data.get(ATTR_ENTRY_ID)
-        coordinator = _resolve_coordinator(entry_id)
+        coordinator = _resolve_coordinator(call)
         if coordinator is None:
             return {"contacts": [], "error": "no_coordinator"}
 
@@ -1655,7 +1821,6 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         via ``get_contacts`` and the dropdown -- pubkeys are mesh-advertised,
         not secret -- so this opens no new data-exposure surface.
         """
-        entry_id = call.data.get(ATTR_ENTRY_ID)
         pubkey_prefix = call.data.get(ATTR_PUBKEY_PREFIX)
         # Defense-in-depth for direct / non-schema callers: an empty or 1-char
         # prefix would match an arbitrary contact (str.startswith("") is always
@@ -1663,7 +1828,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         # this inline guard protects callers that bypass schema validation.
         if not pubkey_prefix or len(pubkey_prefix) < 2:
             return {"contact": None, "error": "invalid_prefix"}
-        coordinator = _resolve_coordinator(entry_id)
+        coordinator = _resolve_coordinator(call)
         if coordinator is None:
             return {"contact": None, "error": "no_coordinator"}
 
@@ -1709,8 +1874,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         (empty name or ``(unused)``) are filtered out. The shared secret is
         never returned — only its presence via ``shared_secret_present``.
         """
-        entry_id = call.data.get(ATTR_ENTRY_ID)
-        coordinator = _resolve_coordinator(entry_id)
+        coordinator = _resolve_coordinator(call)
         if coordinator is None:
             return {"channels": [], "error": "no_coordinator"}
 
@@ -1774,11 +1938,10 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             The one exception is the governed traffic policy refusing the
             send, which raises like every other metered service call.
         """
-        entry_id = call.data.get(ATTR_ENTRY_ID)
         pubkey_prefix = call.data[ATTR_PUBKEY_PREFIX]
         requested_timeout_s = float(call.data.get("timeout", 15))
 
-        coordinator = _resolve_coordinator(entry_id)
+        coordinator = _resolve_coordinator(call)
         if coordinator is None:
             return {"trace": None, "error": "no_coordinator"}
 
@@ -1826,15 +1989,14 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                 _LOGGER.error("trace: bad pubkey hex for path discovery: %s", ex)
                 return {"trace": None, "error": "contact_missing_pubkey"}
 
-            # The session arms the PATH_RESPONSE listener before it sends, and
-            # filters on the caller's pubkey_pre so concurrent path-discovery
-            # traffic for other contacts cannot satisfy this wait. The 15s
-            # floor is kept: two-hop flood round-trips routinely run 5-12s
-            # under real LoRa conditions.
+            # The session arms the PATH_RESPONSE listener before it sends and
+            # filters on the resolved contact's own 12-hex prefix -- the form
+            # the firmware echoes back -- so a 6-character request matches its
+            # reply instead of timing out. The 15s floor is kept: two-hop flood
+            # round-trips routinely run 5-12s under real LoRa conditions.
             try:
                 send_result, path_event = await api.path_discovery(
                     contact,
-                    identity=pubkey_prefix,
                     min_timeout=15.0,
                     max_timeout=30.0,
                 )

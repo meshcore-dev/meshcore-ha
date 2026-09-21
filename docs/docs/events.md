@@ -15,6 +15,40 @@ The integration provides three levels of events:
 2. **Raw SDK Events** - Direct access to all Meshcore SDK events
 3. **Connection Events** - Integration status events
 
+### Which radio fired the event
+
+Every `meshcore_*` event carries two extra fields:
+
+- `entry_id` - The config entry (radio) that produced the event
+- `device_id` - That radio's device ID in the Home Assistant device registry, or `null` before the device is registered
+
+Use them to filter automations when you run more than one MeshCore radio:
+
+```yaml
+triggers:
+  - trigger: event
+    event_type: meshcore_message
+    event_data:
+      entry_id: 01J0ABCDEFGHJKMNPQRSTVWXYZ
+```
+
+On `meshcore_cli_response`, `entry_id` keeps its original meaning — the entry the
+service call named, which is `null` when the call named none. The entry the
+command actually ran on is the additional `resolved_entry_id`.
+
+### Secrets in events
+
+Raw events reach both the Home Assistant event bus and any MQTT broker
+configured for raw payload mode, so node secrets are withheld by default:
+
+- `EventType.PRIVATE_KEY` events are not forwarded at all
+- `channel_secret` and `secret` values are replaced with `"<redacted>"`
+
+Channel decryption inside the integration is unaffected. To forward the real
+values, turn on **Expose Node Secrets in Events** in the integration's Global
+Settings, and be aware that anyone who can read your event bus or your MQTT
+broker can then read them.
+
 ## First-Class Message Events
 
 These events are designed for easy use in automations, with simplified field structures.
@@ -52,12 +86,24 @@ Fired when any message is received. Ideal for notifications and message logging.
 
 **Direct Message Fields:**
 - `message` - Message text
-- `sender_name` - Name of sender
+- `sender_name` - Name of sender, or `null` when the sender is not a contact this node knows. An unknown sender gets no conversation entity, but the message is still published — identify them by `pubkey_prefix`.
 - `pubkey_prefix` - Sender's public key prefix
 - `receiver_name` - Name of receiver
 - `entity_id` - Related binary sensor entity
 - `timestamp` - When received
 - `message_type` - "direct"
+
+**Outgoing Channel Message Fields:**
+
+An outgoing channel message is logged as soon as the radio accepts it, so the
+entry is never lost to a restart during collection. It carries the fields above
+plus:
+
+- `outgoing` - `true`
+- `send_id` - Correlates the delivery updates that follow
+- `rx_log_data` / `repeater_count` - Empty and `0`: nothing has been heard back yet
+- `progressive` - `false` (this is the message event; reception counts arrive as `meshcore_delivery_update`)
+- `collecting` - `true` while reception data may still arrive for this send, `false` when no correlation was possible
 
 **Example Automation:**
 ```yaml
@@ -97,6 +143,16 @@ Fired when a message is successfully sent via integration services.
 - `receiver` - Receiver name (may be null)
 - `timestamp` - Unix timestamp
 - `contact_public_key` - Full public key of recipient
+- `ack_received` - Whether the recipient acknowledged the message
+- `send_id` - 8-character hex identifier for correlating delivery updates
+- `progressive` - `true` on the first of the two events (see below); absent on the second
+
+A direct message fires this event **twice**: once as soon as the radio accepts
+the message (`progressive: true`, `ack_received: false`) so a UI can react
+immediately, and once when the acknowledgement arrives or its wait expires
+(no `progressive` field, `ack_received` set to the outcome). Automations that
+only want the outcome should ignore events with `progressive: true`. The
+outcome also arrives as a terminal `meshcore_delivery_update`.
 
 **Example Automation:**
 ```yaml
@@ -111,15 +167,32 @@ action:
       message: "{{ trigger.event.data.message_type }}: {{ trigger.event.data.message }}"
 ```
 
+### meshcore_message_send_failed
+Fired when a message never left the radio. The service still raises for a
+caller that blocks on it; this event is how an automation hears about the
+failure.
+
+**Event data:**
+
+- `reason` - `contact_not_found`, `rejected` (the firmware refused it), `send_failed` (the send raised) or `traffic_policy` (the mesh budget refused it)
+- `message_type` - `"direct"` or `"channel"`
+- `target` - The requested recipient (direct messages)
+- `channel_idx` - The requested channel (channel messages)
+- `detail` - What the radio or the policy reported, when there is more to say
+- `timestamp` - Unix epoch seconds
+- `entry_id` / `device_id` - Which radio refused
+
 ### meshcore_delivery_update
 
 Fired progressively as RX_LOG radio reception data arrives for a message. This event delivers repeater path information that was not yet available when the initial `meshcore_message` or `meshcore_message_sent` event fired.
 
-This event fires in two scenarios:
+This event fires in three scenarios:
 
-1. **Outgoing channel messages** — After sending a channel message, the integration collects repeater reception data over 4 passes (1 second apart). A `meshcore_delivery_update` fires after each intermediate pass. The final result fires as `meshcore_message` instead.
+1. **Outgoing channel messages** — The message itself is logged immediately as `meshcore_message`. The integration then collects repeater reception data over 4 passes (1 second apart) and fires a `meshcore_delivery_update` after each; the last one carries `progressive: false`. If Home Assistant shuts down mid-collection, the count collected so far is published as that terminal update rather than lost.
 
-2. **Incoming channel messages (adaptive mode only)** — When [Adaptive Channel Message Delivery](./messaging#rx_log-correlation) is enabled, the initial `meshcore_message` event fires as soon as the first RX_LOG data arrives. Background collection passes then deliver late-arriving repeater data via this event.
+2. **Outgoing direct messages** — One terminal update (`progressive: false`) carrying `ack_received`, fired when the acknowledgement arrives or its wait expires.
+
+3. **Incoming channel messages (adaptive mode only)** — When [Adaptive Channel Message Delivery](./messaging#rx_log-correlation) is enabled, the initial `meshcore_message` event fires as soon as the first RX_LOG data arrives. Background collection passes then deliver late-arriving repeater data via this event.
 
 **Outgoing Message Fields:**
 - `message` - The message text that was sent
@@ -134,7 +207,7 @@ This event fires in two scenarios:
 - `send_id` - (Optional) Send identifier from the service call
 - `rx_log_data` - Cumulative array of all RX_LOG entries collected so far (same structure as `rx_log_data` on `meshcore_message`)
 - `repeater_count` - Number of repeaters that received the message
-- `progressive` - `true` (always). The terminal `progressive: false` result arrives on `meshcore_message`.
+- `progressive` - `true` on each intermediate pass, `false` on the terminal update that closes the send.
 
 **Incoming Message Fields (Adaptive Mode):**
 - `entity_id` - Source entity
@@ -152,7 +225,7 @@ This event fires in two scenarios:
 alias: Track Message Delivery
 triggers:
   - trigger: event
-    event_type: meshcore_message
+    event_type: meshcore_delivery_update
     event_data:
       outgoing: true
       message_type: channel
@@ -189,7 +262,7 @@ action:
 
 **Example Terminal Event Data — Outgoing (Final Pass):**
 ```yaml
-event_type: meshcore_message
+event_type: meshcore_delivery_update
 data:
   message: "Good morning mesh!"
   sender_name: "PonyBot"
@@ -345,7 +418,9 @@ automations without polling the console sensor.
 - `command` - The command string that was run
 - `response` - The normalized response (see [execute_command Response Shapes](#execute_command-response-shapes)), or `null` on failure
 - `is_error` - `true` when the command failed or returned no response
-- `entry_id` - The config entry the command ran against (may be `null`)
+- `entry_id` - The config entry named in the service call (`null` when none was named)
+- `resolved_entry_id` - The config entry the command actually ran against
+- `device_id` - That entry's device ID in the device registry
 - `timestamp` - Unix epoch seconds when the response was recorded
 
 **Example:**
@@ -369,8 +444,14 @@ action:
 ### meshcore_connected
 Fired when the Meshcore device connects.
 
+- `connection_type` - `usb`, `ble` or `tcp`
+- `entry_id` / `device_id` - Which radio connected
+
 ### meshcore_disconnected  
 Fired when the Meshcore device disconnects.
+
+- `unexpected` - `true` when the link was lost rather than closed; absent on a normal teardown
+- `entry_id` / `device_id` - Which radio disconnected
 
 **Example:**
 ```yaml

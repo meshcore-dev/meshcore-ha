@@ -64,3 +64,10 @@ def _async_register_admin_service(
 sys.modules[
     "homeassistant.helpers.service"
 ].async_register_admin_service = _async_register_admin_service
+
+
+# events.py is the only module that puts anything on the HA bus, so it is loaded
+# for real: a MagicMock stub would swallow the events these tests assert on.
+from tests.support.modules import load_module  # noqa: E402
+
+load_module("events")

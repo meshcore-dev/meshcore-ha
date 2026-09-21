@@ -1,0 +1,37 @@
+{
+  "meshcore_message": [
+    "entry_id",
+    "device_id"
+  ],
+  "meshcore_delivery_update": [
+    "entry_id",
+    "device_id"
+  ],
+  "meshcore_message_sent": [
+    "entry_id",
+    "device_id"
+  ],
+  "meshcore_cli_response": [
+    "device_id",
+    "resolved_entry_id"
+  ],
+  "meshcore_raw_event": [
+    "entry_id",
+    "device_id"
+  ],
+  "meshcore_connected": [
+    "entry_id",
+    "device_id"
+  ],
+  "meshcore_disconnected": [
+    "entry_id",
+    "device_id"
+  ],
+  "meshcore_message_send_failed": [
+    "entry_id",
+    "device_id",
+    "reason",
+    "message_type",
+    "timestamp"
+  ]
+}
