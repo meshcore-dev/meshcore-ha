@@ -1,6 +1,7 @@
 """Map Auto Uploader for MeshCore integration — uploads repeater and room server adverts to map.meshcore.io."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from typing import Any
@@ -27,6 +28,9 @@ ADV_TYPE_CHAT = 1
 
 REPLAY_COOLDOWN_SECONDS = 3600
 _SEEN_ADVERTS_MAX_SIZE = 1000
+
+# Seconds the private-key export may take before the uploader gives up on it.
+KEY_EXPORT_DEADLINE = 15.0
 
 
 def _extract_advert_payload_from_raw(raw_hex: str) -> bytes | None:
@@ -127,31 +131,64 @@ class MeshCoreMapUploader:
             ttl=REPLAY_COOLDOWN_SECONDS,
         )
         self._self_info: dict[str, Any] = {}
+        # Key export is off by default in firmware. A refusal is remembered
+        # for the life of the connection so a busy mesh does not re-ask on
+        # every advert; the lock keeps two exports off the radio at once.
+        self._key_export_refused = False
+        self._key_export_lock = asyncio.Lock()
+        if api is not None:
+            api.add_connect_hook(self._on_radio_connected)
+
+    def _on_radio_connected(self) -> None:
+        """Let the next advert try the key export again after a reconnect."""
+        self._key_export_refused = False
 
     async def _ensure_private_key(self) -> bool:
-        """Fetch private key from device if not yet available."""
+        """Fetch the node's private key once, caching a refusal per connect."""
         if self.private_key:
             return True
-        if not self.api:
+        if not self.api or self._key_export_refused:
             return False
+
+        async with self._key_export_lock:
+            if self.private_key:
+                return True
+            if self._key_export_refused:
+                return False
+            fetched = await self._export_private_key()
+            if fetched:
+                self.private_key = fetched
+                self.logger.info("Map Auto Uploader: private key fetched from device")
+                return True
+            self._key_export_refused = True
+            self.logger.warning(
+                "Map Auto Uploader: cannot sign, the node did not supply its "
+                "private key (firmware needs ENABLE_PRIVATE_KEY_EXPORT=1). Not "
+                "asking again until the next connection."
+            )
+            return False
+
+    async def _export_private_key(self) -> str | None:
+        """Ask the node for its private key; None when it does not supply one."""
+        if not self.api:
+            return None
         try:
-            result = await self.api.exchange("export_private_key")
+            result = await self.api.exchange(
+                "export_private_key", deadline=KEY_EXPORT_DEADLINE
+            )
         except Exception as ex:
             self.logger.debug("Private key export failed: %s", ex)
-            return False
+            return None
         from meshcore.events import EventType
         if not result or getattr(result, "type", None) != EventType.PRIVATE_KEY:
-            return False
-        payload = getattr(result, "payload", {}) or {}
-        pk = payload.get("private_key")
+            return None
+        pk = (getattr(result, "payload", {}) or {}).get("private_key")
         if isinstance(pk, (bytes, bytearray)):
             pk = pk.hex()
         pk = str(pk or "").strip()
         if len(pk) == 128 and all(c in "0123456789abcdefABCDEF" for c in pk):
-            self.private_key = pk
-            self.logger.info("Map Auto Uploader: private key fetched from device")
-            return True
-        return False
+            return pk
+        return None
 
     @staticmethod
     def _ed25519_sign_supercop(message: bytes, scalar: bytes, prefix: bytes, pubkey: bytes) -> bytes:
@@ -306,7 +343,7 @@ class MeshCoreMapUploader:
                 self.logger.debug("Map Auto Uploader: too soon to reupload %s", adv_key[:12])
                 return
         if not await self._ensure_private_key():
-            self.logger.warning("Map Auto Uploader: cannot sign (private key export disabled?)")
+            self.logger.debug("Map Auto Uploader: no signing key, skipping upload")
             return
         params = {
             "freq": self._self_info.get("radio_freq", 0),

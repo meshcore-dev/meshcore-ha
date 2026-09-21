@@ -29,9 +29,10 @@ class _Uploader:
     def __init__(self) -> None:
         self.published: list[tuple[str, Any]] = []
 
-    async def async_publish_raw_event(self, event_type: str, payload: Any) -> None:
-        """Record one publication instead of talking to a broker."""
+    def queue_raw_event(self, event_type: str, payload: Any) -> bool:
+        """Record one publication instead of queueing it for a broker."""
         self.published.append((event_type, payload))
+        return True
 
 
 @pytest.fixture

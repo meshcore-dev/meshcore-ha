@@ -617,15 +617,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         integration_version = await hass.async_add_executor_job(_read_integration_version)
         try:
-            mqtt_uploader = MeshCoreMqttUploader(
+            # Built here so the broker status sensors can enumerate the brokers
+            # during platform setup; the device probes, key export and broker
+            # connects it needs run in the background once platforms are up.
+            coordinator.mqtt_uploader = MeshCoreMqttUploader(
                 hass,
                 _LOGGER,
                 entry,
                 api=coordinator.api,
                 integration_version=integration_version,
             )
-            await mqtt_uploader.async_start()
-            coordinator.mqtt_uploader = mqtt_uploader
         except Exception as ex:
             _LOGGER.warning("MQTT uploader failed to start: %s - continuing without it", ex)
             coordinator.mqtt_uploader = None
@@ -653,6 +654,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Set up all platforms for this device
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+        # Brokers are reached after platforms are up: setup must finish whether
+        # or not any of them answers.
+        if coordinator.mqtt_uploader is not None:
+            entry.async_create_background_task(
+                hass,
+                coordinator.mqtt_uploader.async_start(),
+                f"{DOMAIN}_mqtt_start",
+                eager_start=False,
+            )
 
         # Bring the EXISTING discovered-contact population into line with the
         # configured contact discovery mode now that platforms are up (entities,
@@ -786,10 +797,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 fire_raw_event(
                     hass, entry, event_type=event_type_str, payload=sanitized_payload
                 )
-                if getattr(coordinator, "mqtt_uploader", None):
-                    hass.async_create_task(
-                        coordinator.mqtt_uploader.async_publish_raw_event(event_type_str, sanitized_payload)
-                    )
+                # Hands the event to the uploader's single publish queue, and
+                # returns False without scheduling anything when no broker is
+                # connected -- the common case, and one task plus one executor
+                # hop per radio event is not free.
+                uploader = getattr(coordinator, "mqtt_uploader", None)
+                if uploader is not None:
+                    uploader.queue_raw_event(event_type_str, sanitized_payload)
             except Exception as ex:
                 _LOGGER.error(f"Error serializing event payload: {ex}")
                 # Fire event without payload to ensure delivery
