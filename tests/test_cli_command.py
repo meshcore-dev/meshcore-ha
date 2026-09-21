@@ -166,7 +166,7 @@ async def test_record_flag_marks_error_on_no_response():
 
     result = await handler(_call("definitely_not_a_command"))
 
-    assert result is None
+    assert result is None or result.get("error")
     coord.record_cli_console.assert_called_once()
     args, _ = coord.record_cli_console.call_args
     assert args[2] is True  # is_error

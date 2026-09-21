@@ -980,6 +980,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                 "send_cmd": ["contact", "str", "int"],  # contact, command, timestamp (optional)
                 "send_binary_req": ["contact", "int"],  # contact, BinaryReqType (int enum)
                 "send_path_discovery": ["contact"],
+                "send_login_sync": ["contact", "str"],
+                "send_path_discovery_sync": ["contact"],
                 "send_trace": ["int", "int", "int", "bytes"],  # auth_code, tag, flags, path
                 "set_flood_scope": ["str"],
 
@@ -1256,7 +1258,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             raise
         except Exception as ex:
             _LOGGER.error("Error executing command %s: %s", command_name, ex)
-            return
+            return {"error": "exception", "command": command_name, "detail": str(ex)}
 
     def _record_cli_console(call: ServiceCall, response: Any) -> None:
         """Record a command/response pair to the console and fire the event.

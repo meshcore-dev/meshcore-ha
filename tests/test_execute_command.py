@@ -131,6 +131,23 @@ async def test_event_with_empty_payload_still_returns_a_dict():
 
 
 @pytest.mark.asyncio
+async def test_sdk_exception_returns_an_error_dict(monkeypatch):
+    """A command that raises inside the SDK reports the failure instead of None."""
+    monkeypatch.setitem(async_setup_services.__globals__, "HomeAssistantError", RuntimeError)
+    coord = _build_coordinator("get_time", None)
+    coord.api.commands.get_time = AsyncMock(
+        side_effect=ValueError("Invalid public key hex string: abc")
+    )
+    handler = await _get_execute_handler(coord)
+
+    result = await handler(_call("get_time"))
+
+    assert result["error"] == "exception"
+    assert result["command"] == "get_time"
+    assert "Invalid public key" in result["detail"]
+
+
+@pytest.mark.asyncio
 async def test_event_with_bytes_in_payload_is_hex_encoded():
     """Bytes inside an Event payload are converted to hex strings."""
     payload = {"key": b"\x01\x02\xff", "name": "node"}
