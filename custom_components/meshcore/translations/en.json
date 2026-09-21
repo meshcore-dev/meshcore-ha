@@ -42,11 +42,13 @@
       "ble": {
         "data": {
           "ble_address": "Bluetooth Device",
+          "ble_pin": "Bluetooth PIN (optional)",
           "self_diagnostics_enabled": "Enable Self Diagnostics",
           "self_diagnostics_interval": "Self Diagnostics Interval (seconds)",
           "contact_discovery_mode": "Contact Discovery Mode"
         },
         "data_description": {
+          "ble_pin": "Pairing PIN/passkey for the radio's Bluetooth, if one is set on the device. Leave blank if the radio has no PIN. Required for radios configured with a BLE PIN — without it the connection drops during pairing.",
           "self_diagnostics_enabled": "Creates roughly 15 local diagnostic sensors for the companion node (uptime, TX queue length, noise floor, last RSSI/SNR, TX/RX airtime, and packet counters). Off by default. Adds no mesh traffic — these are local queries to the attached radio, not mesh requests. The interval controls how often the sensors refresh (60–3600 seconds).",
           "contact_discovery_mode": "Entity per contact: every discovered contact gets its own entity (best for small meshes). Data only: discovered contacts are tracked as data only with no per-contact entity -- inspect them via the dropdown or the Get Discovered Contact service. Disabled: contact discovery is turned off entirely and any existing discovered contacts are cleared."
         },
@@ -85,7 +87,11 @@
       },
       "reconfigure_ble": {
         "data": {
-          "ble_address": "Bluetooth Device"
+          "ble_address": "Bluetooth Device",
+          "ble_pin": "Bluetooth PIN (optional)"
+        },
+        "data_description": {
+          "ble_pin": "Pairing PIN/passkey for the radio's Bluetooth, if one is set. Leave blank if the radio has no PIN."
         },
         "description": "Update Bluetooth connection settings",
         "title": "Reconfigure Bluetooth Connection"
