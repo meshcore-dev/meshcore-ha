@@ -17,8 +17,17 @@ OWNERS = frozenset({"radio.py", "radio_commands.py"})
 
 # Enums, event and packet types are data the whole integration speaks in; the
 # MeshCore instance, its dispatcher and its command surface are not.
+# ``my_lpp_types`` is the decoder's own type table: reading it is how the
+# telemetry sensors stay in step with the types the library actually emits.
 SHARED_SDK_NAMES = frozenset(
-    {"Event", "EventType", "BinaryReqType", "Subscription", "EventDispatcher"}
+    {
+        "Event",
+        "EventType",
+        "BinaryReqType",
+        "Subscription",
+        "EventDispatcher",
+        "my_lpp_types",
+    }
 )
 
 # ``_contacts`` is left out: the coordinator keeps its own dict under that name.

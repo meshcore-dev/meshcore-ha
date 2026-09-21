@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime
-from typing import Any
+from typing import Any, Final
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -150,6 +150,17 @@ SENSORS = [
         icon="mdi:radio"
     ),
 ]
+
+# Main-device sensors filled from the node's SELF_INFO payload, mapped to the
+# field each one reads.
+SELF_INFO_FIELDS: Final[dict[str, str]] = {
+    "tx_power": "tx_power",
+    "latitude": "adv_lat",
+    "longitude": "adv_lon",
+    "frequency": "radio_freq",
+    "bandwidth": "radio_bw",
+    "spreading_factor": "radio_sf",
+}
 
 # Self-diagnostic sensors for the local companion node.
 # Created only when CONF_SELF_DIAGNOSTICS_ENABLED is set (default off). Sourced
@@ -1079,53 +1090,31 @@ class MeshCoreSensor(CoordinatorEntity, SensorEntity):
             self.async_on_remove(session.subscribe(EventType.CONTACTS, update_count))
             self.async_on_remove(session.subscribe(EventType.NEW_CONTACT, update_count))
 
-        elif key == "tx_power":
-            def update_tx(event: Event):
-                if self.hass is None:
-                    return
-                self._native_value = event.payload.get("tx_power")
-                self.async_write_ha_state()
-            self.async_on_remove(session.subscribe(EventType.SELF_INFO, update_tx))
+        elif key in SELF_INFO_FIELDS:
+            field = SELF_INFO_FIELDS[key]
 
-        elif key == "latitude":
-            def update_lat(event: Event):
+            def update_self_info(event: Event):
+                """Track the radio identity the node advertises."""
                 if self.hass is None:
                     return
-                self._native_value = event.payload.get("adv_lat")
+                self._native_value = event.payload.get(field)
                 self.async_write_ha_state()
-            self.async_on_remove(session.subscribe(EventType.SELF_INFO, update_lat))
 
-        elif key == "longitude":
-            def update_lon(event: Event):
-                if self.hass is None:
-                    return
-                self._native_value = event.payload.get("adv_lon")
-                self.async_write_ha_state()
-            self.async_on_remove(session.subscribe(EventType.SELF_INFO, update_lon))
+            def seed_self_info() -> None:
+                """Re-read the session's cached SELF_INFO after a connect."""
+                self._native_value = (session.self_info or {}).get(field)
+                if self.hass is not None:
+                    self.async_write_ha_state()
 
-        elif key == "frequency":
-            def update_freq(event: Event):
-                if self.hass is None:
-                    return
-                self._native_value = event.payload.get("radio_freq")
-                self.async_write_ha_state()
-            self.async_on_remove(session.subscribe(EventType.SELF_INFO, update_freq))
-
-        elif key == "bandwidth":
-            def update_bw(event: Event):
-                if self.hass is None:
-                    return
-                self._native_value = event.payload.get("radio_bw")
-                self.async_write_ha_state()
-            self.async_on_remove(session.subscribe(EventType.SELF_INFO, update_bw))
-
-        elif key == "spreading_factor":
-            def update_sf(event: Event):
-                if self.hass is None:
-                    return
-                self._native_value = event.payload.get("radio_sf")
-                self.async_write_ha_state()
-            self.async_on_remove(session.subscribe(EventType.SELF_INFO, update_sf))
+            self.async_on_remove(
+                session.subscribe(EventType.SELF_INFO, update_self_info)
+            )
+            # SELF_INFO fires during the appstart handshake, before this entity
+            # subscribes, so the sensors stayed blank until the node happened to
+            # re-advertise. The session caches that same payload on every
+            # connect, so seed from it now and again on each connect edge.
+            self.async_on_remove(session.add_connect_hook(seed_self_info))
+            self._native_value = (session.self_info or {}).get(field)
 
         # --- Self-diagnostic sensors (local get_stats_* polling) ---
         # STATS_CORE

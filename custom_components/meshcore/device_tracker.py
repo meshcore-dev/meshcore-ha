@@ -26,6 +26,7 @@ from .utils import (
     format_entity_id,
     get_device_model,
     sanitize_name,
+    telemetry_pubkey_prefix,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -55,7 +56,7 @@ class DeviceTrackerManager:
             _LOGGER.debug("No LPP data in telemetry event")
             return
 
-        pubkey_prefix = event.payload.get("pubkey_prefix", "")
+        pubkey_prefix = telemetry_pubkey_prefix(event)
         lpp_data = event.payload.get("lpp", [])
         
         # If no pubkey_prefix, this might be self telemetry

@@ -170,9 +170,16 @@ class RadioSession(MeshCommands):
 
         return unsubscribe
 
-    def add_connect_hook(self, hook: Callable[[], None]) -> None:
-        """Register a callback run after every successful (re)connect."""
+    def add_connect_hook(self, hook: Callable[[], None]) -> Callable[[], None]:
+        """Register a callback run after every (re)connect; returns its remover."""
         self._connect_hooks.append(hook)
+
+        def remove() -> None:
+            """Stop running this hook on later connects."""
+            if hook in self._connect_hooks:
+                self._connect_hooks.remove(hook)
+
+        return remove
 
     def pause_forwarding(self) -> None:
         """Silence registered handlers without dropping their registrations."""

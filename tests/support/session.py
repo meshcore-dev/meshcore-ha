@@ -86,6 +86,10 @@ class StubSession:
         """Drop one contact from the scripted table."""
         return self.contacts.pop(public_key, None) is not None
 
+    def add_connect_hook(self, hook: Any) -> Any:
+        """Register a connect hook the way the session does; returns a remover."""
+        return lambda: None
+
     def cache_self_info_event(self, event: Any) -> None:
         """Refresh cached identity the way the session does."""
         payload = getattr(event, "payload", None)
