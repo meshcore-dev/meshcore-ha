@@ -40,6 +40,26 @@ def extract_pubkey_hex(contact: dict[str, Any]) -> str:
     return pk or ""
 
 
+def telemetry_pubkey_prefix(event: Any) -> str:
+    """Return the node a TELEMETRY_RESPONSE belongs to, or "" when unstated.
+
+    A polled response carries ``pubkey_prefix`` in its payload, but a frame
+    the node pushes names the sender as ``pubkey_pre`` in the payload and
+    ``pubkey_prefix`` in the event attributes only. Reading the payload alone
+    made every push frame look like the companion's own telemetry.
+    """
+    payload = getattr(event, "payload", None)
+    attributes = getattr(event, "attributes", None)
+    for source, key in (
+        (payload, "pubkey_prefix"),
+        (attributes, "pubkey_prefix"),
+        (payload, "pubkey_pre"),
+    ):
+        if isinstance(source, dict) and source.get(key):
+            return str(source[key])
+    return ""
+
+
 def get_node_type_str(node_type: str | None) -> str:
     """Convert NodeType to a human-readable string."""
     if node_type == NodeType.CLIENT:

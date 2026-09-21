@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import logging
+import re
+from collections.abc import Callable
 from typing import Any
 
 from homeassistant.components.select import SelectEntity
@@ -24,6 +26,44 @@ from .utils import extract_pubkey_from_selection
 
 _LOGGER = logging.getLogger(__name__)
 
+
+class MeshCoreHelperSelect(CoordinatorEntity, SelectEntity):
+    """Base for the local UI pickers, which hold the user's own choice.
+
+    A picker's value is local state, so it stays readable and editable while
+    the radio is down: a failed coordinator tick used to make every helper
+    unavailable and ``send_ui_message`` refuse.
+    """
+
+    _attr_available = True
+
+    @property
+    def available(self) -> bool:
+        """Report always available; only transmission needs a live link."""
+        return True
+
+    def _retarget(self, options: list[str], identity: Callable[[str], Any]) -> None:
+        """Adopt a new option list, keeping the selection on the same target.
+
+        Options are display labels, so a rename or a new contact reshuffles
+        them. The selection follows its identity -- channel index or pubkey
+        prefix -- and falls back to the list's first entry only when that
+        identity is gone, which is why every picker that can fall back puts a
+        placeholder first.
+        """
+        self._attr_options = options
+        current = self._attr_current_option
+        if current in options:
+            return
+        target = identity(current) if current else None
+        if target is not None:
+            for option in options:
+                if identity(option) == target:
+                    self._attr_current_option = option
+                    return
+        self._attr_current_option = options[0]
+
+
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
@@ -45,7 +85,18 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class MeshCoreChannelSelect(CoordinatorEntity, SelectEntity):
+def _channel_index(option: str) -> int | None:
+    """Return the channel index an option label ends with, else None."""
+    match = re.search(r"\((\d+)\)$", option or "")
+    return int(match.group(1)) if match else None
+
+
+def _contact_prefix(option: str) -> str | None:
+    """Return the pubkey prefix an option label ends with, else None."""
+    return extract_pubkey_from_selection(option or "")
+
+
+class MeshCoreChannelSelect(MeshCoreHelperSelect):
     """Helper entity for selecting MeshCore channels with actual channel names."""
 
     def __init__(self, coordinator: DataUpdateCoordinator) -> None:
@@ -87,13 +138,8 @@ class MeshCoreChannelSelect(CoordinatorEntity, SelectEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        # Update channel options when coordinator data changes
-        self._attr_options = self._get_channel_options()
-
-        # If current option is not in the new options, reset to first option
-        if self._attr_current_option not in self._attr_options:
-            self._attr_current_option = self._attr_options[0]
-
+        # A channel rename rewrites its label; the selection follows the index.
+        self._retarget(self._get_channel_options(), _channel_index)
         self.async_write_ha_state()
 
     async def async_select_option(self, option: str) -> None:
@@ -108,15 +154,14 @@ class MeshCoreChannelSelect(CoordinatorEntity, SelectEntity):
 
         # Extract channel_idx from format "Name (idx)"
         if self._attr_current_option and self._attr_current_option != "No channels":
-            import re
-            match = re.search(r'\((\d+)\)$', self._attr_current_option)
-            if match:
-                attributes["channel_idx"] = int(match.group(1))
+            channel_idx = _channel_index(self._attr_current_option)
+            if channel_idx is not None:
+                attributes["channel_idx"] = channel_idx
 
         return attributes
 
 
-class MeshCoreContactSelect(CoordinatorEntity, SelectEntity):
+class MeshCoreContactSelect(MeshCoreHelperSelect):
     """Helper entity for selecting MeshCore contacts."""
     
     def __init__(self, coordinator: DataUpdateCoordinator) -> None:
@@ -182,24 +227,20 @@ class MeshCoreContactSelect(CoordinatorEntity, SelectEntity):
             # Sort alphabetically (case-insensitive)
             contact_options.sort(key=str.lower)
 
-            return contact_options
+            # Placeholder first so a contact that disappears falls back to
+            # "pick someone", never silently to whoever now sorts first.
+            return [SELECT_NO_CONTACTS] + contact_options
         except Exception as ex:
             _LOGGER.error(f"Error getting contacts from coordinator: {ex}")
             return ["No contacts"]
-    
+
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        # Update the available options
-        self._attr_options = self._get_contact_options()
-        
-        # If current option is not in the new options, reset to the first option
-        if self._attr_current_option not in self._attr_options:
-            self._attr_current_option = self._attr_options[0]
-            
-        # Update the entity state
+        # A rename rewrites the label; the selection follows the pubkey prefix.
+        self._retarget(self._get_contact_options(), _contact_prefix)
         self.async_write_ha_state()
-    
+
     async def async_select_option(self, option: str) -> None:
         """Change the selected option."""
         self._attr_current_option = option
@@ -211,7 +252,10 @@ class MeshCoreContactSelect(CoordinatorEntity, SelectEntity):
         attributes = {}
 
         # Add the selected contact's public key as an attribute
-        if self._attr_current_option and self._attr_current_option != "No contacts":
+        if self._attr_current_option and self._attr_current_option not in (
+            "No contacts",
+            SELECT_NO_CONTACTS,
+        ):
             pubkey_part = extract_pubkey_from_selection(self._attr_current_option)
             if pubkey_part:
                 attributes["public_key_prefix"] = pubkey_part
@@ -225,7 +269,7 @@ class MeshCoreContactSelect(CoordinatorEntity, SelectEntity):
         return attributes
 
 
-class MeshCoreRecipientTypeSelect(CoordinatorEntity, SelectEntity):
+class MeshCoreRecipientTypeSelect(MeshCoreHelperSelect):
     """Select entity for choosing between channel or contact recipient."""
     
     def __init__(self, coordinator: DataUpdateCoordinator) -> None:
@@ -258,7 +302,7 @@ class MeshCoreRecipientTypeSelect(CoordinatorEntity, SelectEntity):
         self.async_write_ha_state()
 
 
-class MeshCoreDiscoveredContactSelect(CoordinatorEntity, SelectEntity):
+class MeshCoreDiscoveredContactSelect(MeshCoreHelperSelect):
     """Select entity for discovered contacts not yet added to node."""
 
     # The options list grows with the discovered-contact set and can exceed
@@ -305,11 +349,7 @@ class MeshCoreDiscoveredContactSelect(CoordinatorEntity, SelectEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        self._attr_options = self._get_discovered_contact_options()
-
-        if self._attr_current_option not in self._attr_options:
-            self._attr_current_option = self._attr_options[0]
-
+        self._retarget(self._get_discovered_contact_options(), _contact_prefix)
         self.async_write_ha_state()
 
     async def async_select_option(self, option: str) -> None:
@@ -335,7 +375,7 @@ class MeshCoreDiscoveredContactSelect(CoordinatorEntity, SelectEntity):
         return attributes
 
 
-class MeshCoreAddedContactSelect(CoordinatorEntity, SelectEntity):
+class MeshCoreAddedContactSelect(MeshCoreHelperSelect):
     """Select entity for contacts already added to node."""
 
     def __init__(self, coordinator: DataUpdateCoordinator) -> None:
@@ -375,11 +415,7 @@ class MeshCoreAddedContactSelect(CoordinatorEntity, SelectEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        self._attr_options = self._get_added_contact_options()
-
-        if self._attr_current_option not in self._attr_options:
-            self._attr_current_option = self._attr_options[0]
-
+        self._retarget(self._get_added_contact_options(), _contact_prefix)
         self.async_write_ha_state()
 
     async def async_select_option(self, option: str) -> None:

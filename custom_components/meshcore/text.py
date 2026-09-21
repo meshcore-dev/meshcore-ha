@@ -16,6 +16,23 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
+
+class MeshCoreHelperText(CoordinatorEntity, TextEntity):
+    """Base for the local UI text inputs, which hold the user's own draft.
+
+    The value is local state, so it stays editable while the radio is down: a
+    failed coordinator tick used to make every helper unavailable and
+    ``send_ui_message`` refuse, with the draft still on screen.
+    """
+
+    _attr_available = True
+
+    @property
+    def available(self) -> bool:
+        """Report always available; only transmission needs a live link."""
+        return True
+
+
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
@@ -26,7 +43,7 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class MeshCoreMessageInput(CoordinatorEntity, TextEntity):
+class MeshCoreMessageInput(MeshCoreHelperText):
     """Text input entity for composing MeshCore messages."""
     
     def __init__(self, coordinator: DataUpdateCoordinator) -> None:
@@ -60,7 +77,7 @@ class MeshCoreMessageInput(CoordinatorEntity, TextEntity):
         self.async_write_ha_state()
 
 
-class MeshCoreCommandInput(CoordinatorEntity, TextEntity):
+class MeshCoreCommandInput(MeshCoreHelperText):
     """Text input entity for MeshCore commands."""
     
     def __init__(self, coordinator: DataUpdateCoordinator) -> None:

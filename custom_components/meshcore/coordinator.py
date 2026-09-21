@@ -78,6 +78,16 @@ MSG_SAFETY_NET_INTERVAL: int = 60
 # Debounce for the governed node-schedule store.
 TRAFFIC_SAVE_DELAY: int = 30
 
+# Debounce for the discovered-contact and neighbour stores. A busy mesh
+# readvertises constantly, and an immediate save per advert rewrote the whole
+# set every time.
+STORE_SAVE_DELAY: int = 30
+
+# Contact-table resync backoff after a failed sync: doubles to the cap and is
+# reset by the first sync the node actually answers.
+CONTACT_SYNC_BACKOFF_MIN: int = 5
+CONTACT_SYNC_BACKOFF_MAX: int = 60
+
 # Key the lane credits are stored under, alongside the per-node schedules.
 TRAFFIC_BUDGET_KEY: str = "budget"
 
@@ -161,11 +171,20 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self._contacts = {}  # keyed by 12-char public_key prefix
         self._discovered_contacts = {}  # keyed by public_key
         self._manual_mode_initialized = False
+        # Merged added+discovered view, rebuilt only after a contact changes.
+        self._merged_contacts: list[dict[str, Any]] | None = None
+        # Contact-table resync gate: when the next attempt is due and how long
+        # the current failure streak waits.
+        self._next_contact_sync: float = 0.0
+        self._contact_sync_backoff: int = CONTACT_SYNC_BACKOFF_MIN
 
         self._store = Store[dict[str, dict]](hass, 1, f"meshcore.{config_entry.entry_id}.discovered_contacts")
         self._neighbor_store = Store[dict[str, dict]](
             hass, 1, f"meshcore.{config_entry.entry_id}.neighbor_data"
         )
+        self._discovered_contacts_loaded = False
+        self._store_save_pending = False
+        self._neighbor_save_pending = False
         self._neighbor_data_loaded = False
         # Identity lives in entry data, not options
         self.name = config_entry.data.get(CONF_NAME)
@@ -322,8 +341,13 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
 
     def mark_contact_dirty(self, pubkey_prefix: str):
         """Flag a contact's sensors for refresh; takes a full key or a prefix."""
+        self.invalidate_contacts()
         if pubkey_prefix:
             self._dirty_contacts.add(pubkey_prefix[:12])
+
+    def invalidate_contacts(self) -> None:
+        """Drop the merged contact list so the next read rebuilds it."""
+        self._merged_contacts = None
 
     def is_contact_dirty(self, pubkey_prefix: str) -> bool:
         """Whether a contact's sensors still need a refresh."""
@@ -337,8 +361,16 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
     def get_all_contacts(self) -> list:
         """Merge added and discovered contacts, keeping the latest lastmod.
 
-        Each entry gains ``pubkey_prefix`` and ``added_to_node``.
+        Each entry gains ``pubkey_prefix`` and ``added_to_node``. The merge is
+        cached until a contact changes: three selects, several sensors and the
+        services layer all read it, and each read used to copy every contact.
         """
+        if self._merged_contacts is None:
+            self._merged_contacts = self._merge_contacts()
+        return self._merged_contacts
+
+    def _merge_contacts(self) -> list[dict[str, Any]]:
+        """Build the merged added+discovered contact list."""
         contacts_dict: dict[str, dict] = {}
         added_pubkeys = {
             c.get("public_key") for c in self._contacts.values() if c.get("public_key")
@@ -377,10 +409,100 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         return entity_id
 
     def _publish_contacts(self) -> None:
-        """Broadcast the merged contact list after it has changed."""
+        """Broadcast the merged contact list after it has changed.
+
+        Deliberately not ``async_set_updated_data``: that cancels and
+        reschedules the refresh timer, so on a busy mesh the adverts alone kept
+        pushing the coordinator tick out. Listeners still see a new ``data``
+        mapping, which is what CoordinatorEntity consumers read.
+        """
+        self.invalidate_contacts()
         updated_data = dict(self.data) if self.data else {}
         updated_data["contacts"] = self.get_all_contacts()
-        self.async_set_updated_data(updated_data)
+        self.data = updated_data
+        self.async_update_listeners()
+
+    async def _sync_contacts(self, current_time: float) -> None:
+        """Resync the contact table, backing off while the node stays silent.
+
+        ``ensure_contacts`` reports that it issued a fetch, not that one
+        landed, so a degraded link used to re-request the whole table on every
+        tick. Success is the node actually reporting a contact table.
+        """
+        if current_time < self._next_contact_sync:
+            return
+
+        reported_before = self.api.contacts_reported_at
+        try:
+            issued = await self.api.ensure_contacts(follow=True)
+        except Exception as ex:
+            self.logger.error(f"Error syncing contacts: {ex}")
+            self._defer_contact_sync(current_time)
+            return
+
+        if issued and self.api.contacts_reported_at == reported_before:
+            self._defer_contact_sync(current_time)
+            return
+
+        self._contact_sync_backoff = CONTACT_SYNC_BACKOFF_MIN
+        self._next_contact_sync = 0.0
+        if not issued:
+            return
+
+        self.logger.info("Contacts synced from node")
+        self._contacts = {
+            contact["public_key"][:12]: contact
+            for contact in self.api.contacts.values()
+            if contact.get("public_key")
+        }
+        self.invalidate_contacts()
+
+    def _defer_contact_sync(self, current_time: float) -> None:
+        """Hold the next contact resync off, doubling the wait to the cap."""
+        self._next_contact_sync = current_time + self._contact_sync_backoff
+        self.logger.debug(
+            "Contact sync did not complete; next attempt in %ss",
+            self._contact_sync_backoff,
+        )
+        self._contact_sync_backoff = min(
+            self._contact_sync_backoff * 2, CONTACT_SYNC_BACKOFF_MAX
+        )
+
+    def _save_discovered_contacts(self) -> None:
+        """Queue a debounced write of the discovered set.
+
+        The dict is copied when the write actually runs, so an insertion made
+        while the write is queued is either included or saved by the next one,
+        never lost to a half-written live dict.
+        """
+        self._store_save_pending = True
+        self._store.async_delay_save(
+            lambda: dict(self._discovered_contacts), STORE_SAVE_DELAY
+        )
+
+    async def async_load_discovered_contacts(self) -> None:
+        """Load the discovered-contact FIFO once, merging under live adverts.
+
+        Runs at setup before any subscriber exists. Stored contacts keep their
+        insertion order and go first, so an advert that arrived before the load
+        finished stays at the back of the FIFO instead of being clobbered.
+        """
+        if self._discovered_contacts_loaded:
+            return
+        self._discovered_contacts_loaded = True
+        try:
+            stored = await self._store.async_load()
+        except Exception as ex:
+            _LOGGER.error("Error loading discovered contacts: %s", ex)
+            return
+        if not stored:
+            return
+        live = self._discovered_contacts
+        merged = {key: value for key, value in stored.items() if key not in live}
+        merged.update(live)
+        self._discovered_contacts = merged
+        self.invalidate_contacts()
+        _LOGGER.info("Loaded %d discovered contacts from storage", len(stored))
 
     def _remove_discovered_contact_entities(self, public_key: str) -> bool:
         """Remove one discovered contact's entities; True if it had a sensor.
@@ -513,13 +635,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
 
         if mode == MODE_OFF:
             self._discovered_contacts.clear()
-            try:
-                await self._store.async_save(self._discovered_contacts)
-            except Exception as ex:  # noqa: BLE001
-                _LOGGER.error(
-                    "Contact-mode reconcile (off): error saving cleared set: %s",
-                    ex,
-                )
+            self._save_discovered_contacts()
 
         if removed or mode == MODE_OFF:
             self._publish_contacts()
@@ -552,11 +668,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
 
         _LOGGER.info(f"Evicted {evict_count} oldest discovered contacts (limit: {max_contacts})")
 
-        try:
-            await self._store.async_save(self._discovered_contacts)
-        except Exception as ex:
-            _LOGGER.error(f"Error saving discovered contacts after eviction: {ex}")
-
+        self._save_discovered_contacts()
         self._publish_contacts()
         return True
 
@@ -611,10 +723,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 await asyncio.sleep(0)
 
         if removed_count > 0:
-            try:
-                await self._store.async_save(self._discovered_contacts)
-            except Exception as ex:
-                _LOGGER.error("Error saving discovered contacts: %s", ex)
+            self._save_discovered_contacts()
             self._publish_contacts()
 
         # Sweep contact entities left orphaned by cleanup calls made between
@@ -813,10 +922,32 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self._device_info_initialized = False
         self._manual_mode_initialized = False
         self._initial_drain_done = False
+        self._next_contact_sync = 0.0
+        self._contact_sync_backoff = CONTACT_SYNC_BACKOFF_MIN
+
+    async def async_flush_stores(self) -> None:
+        """Write out debounced store data before the entry goes away.
+
+        Home Assistant flushes pending delayed saves itself when it stops; an
+        entry unload or reload is the case it does not cover.
+        """
+        if self._store_save_pending:
+            self._store_save_pending = False
+            try:
+                await self._store.async_save(dict(self._discovered_contacts))
+            except Exception as ex:
+                _LOGGER.error("Error saving discovered contacts: %s", ex)
+        if self._neighbor_save_pending:
+            self._neighbor_save_pending = False
+            try:
+                await self._neighbor_store.async_save(self._persistable_neighbors())
+            except Exception as ex:
+                _LOGGER.error("Error saving neighbor data: %s", ex)
 
     async def async_shutdown(self) -> None:
         """Stop scheduled refreshes, node tasks and the entry's own listeners."""
         await super().async_shutdown()
+        await self.async_flush_stores()
 
         if self._channel_info_unsub is not None:
             self._channel_info_unsub()
@@ -1163,7 +1294,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     updated_neighbors[n_pubkey] = n_data
 
             self._repeater_neighbors[pubkey_prefix] = updated_neighbors
-            await self._save_neighbor_data()
+            self._save_neighbor_data()
 
             new_neighbors = []
             for n_pubkey in updated_neighbors:
@@ -1232,12 +1363,12 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 }
         return result
 
-    async def _save_neighbor_data(self) -> None:
-        """Save current neighbor data to persistent storage."""
-        try:
-            await self._neighbor_store.async_save(self._persistable_neighbors())
-        except Exception as ex:
-            _LOGGER.error("Error saving neighbor data: %s", ex)
+    def _save_neighbor_data(self) -> None:
+        """Queue a debounced write of the neighbour table."""
+        self._neighbor_save_pending = True
+        self._neighbor_store.async_delay_save(
+            self._persistable_neighbors, STORE_SAVE_DELAY
+        )
 
     async def _cleanup_stale_neighbors(self, days_threshold: int) -> int:
         """Remove neighbors whose last_heard exceeds the age threshold.
@@ -1295,7 +1426,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 await asyncio.sleep(0)
 
         if removed_count > 0:
-            await self._save_neighbor_data()
+            self._save_neighbor_data()
             self.async_update_listeners()
 
         _LOGGER.info(
@@ -1356,7 +1487,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             k for k in self._created_neighbor_sensors
             if not k.startswith(f"{pubkey_prefix}:")
         }
-        self.hass.async_create_task(self._save_neighbor_data())
+        self._save_neighbor_data()
 
         if removed_ids:
             _LOGGER.info(
@@ -1692,17 +1823,16 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
 
         await self.api.exchange("get_bat")
 
+        # Manual-add mode is persisted by the firmware, so one send per connect
+        # is enough. Nothing else may be gated behind it: the discovered FIFO
+        # is loaded once at setup, before any advert can arrive.
         if not self._manual_mode_initialized:
+            self._manual_mode_initialized = True
             try:
                 self.logger.info("Setting manual contact mode...")
                 result = await self.api.exchange("set_manual_add_contacts", True)
                 if result and result.type != EventType.ERROR:
                     self.logger.info("Manual contact mode enabled")
-                    self._manual_mode_initialized = True
-                    stored_contacts = await self._store.async_load()
-                    if stored_contacts:
-                        self._discovered_contacts = stored_contacts
-                        self.logger.info(f"Loaded {len(stored_contacts)} discovered contacts from storage")
                 else:
                     self.logger.error(f"Failed to set manual contact mode: {result}")
             except Exception as ex:
@@ -1730,19 +1860,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             except Exception as ex:
                 self.logger.error(f"Error fetching device info: {ex}")
         
-        # The SDK owns the dirty flag that decides whether this resyncs
-        try:
-            contacts_changed = await self.api.ensure_contacts(follow=True)
-            if contacts_changed:
-                self.logger.info("Contacts synced from node")
-                self._contacts = {}
-                for contact in self.api.contacts.values():
-                    public_key = contact.get("public_key")
-                    if public_key:
-                        prefix = public_key[:12]
-                        self._contacts[prefix] = contact
-        except Exception as ex:
-            self.logger.error(f"Error syncing contacts: {ex}")
+        await self._sync_contacts(current_time)
 
         result_data["contacts"] = self.get_all_contacts()
 

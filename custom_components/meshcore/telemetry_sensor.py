@@ -7,7 +7,7 @@ import time
 from collections.abc import Callable
 from datetime import datetime
 from functools import partial
-from typing import Any
+from typing import Any, Final
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -22,6 +22,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from custom_components.meshcore import MeshCoreDataUpdateCoordinator
 from meshcore import EventType
 from meshcore.events import Event
+from meshcore.lpp_json_encoder import my_lpp_types
 
 from .const import (
     DOMAIN,
@@ -35,22 +36,25 @@ from .utils import (
     format_entity_id,
     get_device_model,
     sanitize_name,
+    telemetry_pubkey_prefix,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-# Cayenne LPP Data Type mappings (IPSO Object IDs - 3200)
-# Maps both numeric LPP codes and string type names to sensor configurations
-LPP_TYPE_MAPPINGS: dict[int | str, dict] = {
-    0: {"name": "Digital Input", "icon": "mdi:toggle-switch", "create_multi": False},
-    1: {"name": "Digital Output", "icon": "mdi:toggle-switch", "create_multi": False},
+# Home Assistant presentation for the Cayenne LPP types the library decodes.
+# Display names, value shapes and multi-value field names come from the
+# library's own table, so a decoder that learns a new type cannot leave it
+# without a sensor; only units, device classes, icons and precision live here.
+# GPS (136) is absent on purpose: the device_tracker platform owns it.
+_LPP_PRESENTATION: dict[int, dict[str, Any]] = {
+    0: {"name": "Digital Input", "icon": "mdi:toggle-switch"},
+    1: {"name": "Digital Output", "icon": "mdi:toggle-switch"},
     2: {
         "name": "Analog Input",
         "icon": "mdi:sine-wave",
         "state_class": SensorStateClass.MEASUREMENT,
         "native_unit_of_measurement": "V",
         "suggested_display_precision": 2,
-        "create_multi": False,
     },
     3: {
         "name": "Analog Output",
@@ -58,13 +62,11 @@ LPP_TYPE_MAPPINGS: dict[int | str, dict] = {
         "state_class": SensorStateClass.MEASUREMENT,
         "native_unit_of_measurement": "V",
         "suggested_display_precision": 2,
-        "create_multi": False,
     },
     100: {
         "name": "Generic Sensor",
         "icon": "mdi:gauge",
         "state_class": SensorStateClass.MEASUREMENT,
-        "create_multi": False,
     },
     101: {
         "name": "Illuminance",
@@ -72,9 +74,8 @@ LPP_TYPE_MAPPINGS: dict[int | str, dict] = {
         "device_class": SensorDeviceClass.ILLUMINANCE,
         "native_unit_of_measurement": "lx",
         "state_class": SensorStateClass.MEASUREMENT,
-        "create_multi": False,
     },
-    102: {"name": "Presence", "icon": "mdi:motion-sensor", "create_multi": False},
+    102: {"name": "Presence", "icon": "mdi:motion-sensor"},
     103: {
         "name": "Temperature",
         "icon": "mdi:thermometer",
@@ -82,7 +83,6 @@ LPP_TYPE_MAPPINGS: dict[int | str, dict] = {
         "native_unit_of_measurement": "°C",
         "state_class": SensorStateClass.MEASUREMENT,
         "suggested_display_precision": 1,
-        "create_multi": False,
     },
     104: {
         "name": "Humidity",
@@ -91,7 +91,6 @@ LPP_TYPE_MAPPINGS: dict[int | str, dict] = {
         "native_unit_of_measurement": "%",
         "state_class": SensorStateClass.MEASUREMENT,
         "suggested_display_precision": 1,
-        "create_multi": False,
     },
     113: {
         "name": "Accelerometer",
@@ -99,8 +98,14 @@ LPP_TYPE_MAPPINGS: dict[int | str, dict] = {
         "state_class": SensorStateClass.MEASUREMENT,
         "native_unit_of_measurement": "G",
         "suggested_display_precision": 3,
-        "create_multi": True,  # Create separate sensors for X, Y, Z
-        "multi_fields": ["x", "y", "z"],
+    },
+    115: {
+        "name": "Barometer",
+        "icon": "mdi:gauge",
+        "device_class": SensorDeviceClass.ATMOSPHERIC_PRESSURE,
+        "native_unit_of_measurement": "hPa",
+        "state_class": SensorStateClass.MEASUREMENT,
+        "suggested_display_precision": 1,
     },
     116: {
         "name": "Voltage",
@@ -109,7 +114,6 @@ LPP_TYPE_MAPPINGS: dict[int | str, dict] = {
         "native_unit_of_measurement": "V",
         "state_class": SensorStateClass.MEASUREMENT,
         "suggested_display_precision": 2,
-        "create_multi": False,
     },
     117: {
         "name": "Current",
@@ -119,7 +123,44 @@ LPP_TYPE_MAPPINGS: dict[int | str, dict] = {
         "suggested_unit_of_measurement": "mA",
         "state_class": SensorStateClass.MEASUREMENT,
         "suggested_display_precision": 1,
-        "create_multi": False,
+    },
+    118: {
+        "name": "Frequency",
+        "icon": "mdi:sine-wave",
+        "device_class": SensorDeviceClass.FREQUENCY,
+        "native_unit_of_measurement": "Hz",
+        "state_class": SensorStateClass.MEASUREMENT,
+        "suggested_display_precision": 0,
+    },
+    120: {
+        "name": "Percentage",
+        "icon": "mdi:percent",
+        "native_unit_of_measurement": "%",
+        "state_class": SensorStateClass.MEASUREMENT,
+        "suggested_display_precision": 0,
+    },
+    121: {
+        "name": "Altitude",
+        "icon": "mdi:altimeter",
+        "device_class": SensorDeviceClass.DISTANCE,
+        "native_unit_of_measurement": "m",
+        "state_class": SensorStateClass.MEASUREMENT,
+        "suggested_display_precision": 1,
+    },
+    122: {
+        "name": "Load",
+        "icon": "mdi:weight",
+        "device_class": SensorDeviceClass.WEIGHT,
+        "native_unit_of_measurement": "kg",
+        "state_class": SensorStateClass.MEASUREMENT,
+        "suggested_display_precision": 3,
+    },
+    125: {
+        "name": "Concentration",
+        "icon": "mdi:molecule",
+        "native_unit_of_measurement": "ppm",
+        "state_class": SensorStateClass.MEASUREMENT,
+        "suggested_display_precision": 0,
     },
     128: {
         "name": "Power",
@@ -128,41 +169,107 @@ LPP_TYPE_MAPPINGS: dict[int | str, dict] = {
         "native_unit_of_measurement": "W",
         "state_class": SensorStateClass.MEASUREMENT,
         "suggested_display_precision": 0,
-        "create_multi": False,
+    },
+    130: {
+        "name": "Distance",
+        "icon": "mdi:ruler",
+        "device_class": SensorDeviceClass.DISTANCE,
+        "native_unit_of_measurement": "m",
+        "state_class": SensorStateClass.MEASUREMENT,
+        "suggested_display_precision": 3,
+    },
+    131: {
+        "name": "Energy",
+        "icon": "mdi:lightning-bolt",
+        "device_class": SensorDeviceClass.ENERGY,
+        "native_unit_of_measurement": "kWh",
+        "state_class": SensorStateClass.TOTAL_INCREASING,
+        "suggested_display_precision": 3,
+    },
+    132: {
+        "name": "Direction",
+        "icon": "mdi:compass",
+        "native_unit_of_measurement": "°",
+        "state_class": SensorStateClass.MEASUREMENT,
+        "suggested_display_precision": 0,
+    },
+    133: {"name": "Time", "icon": "mdi:clock"},
+    134: {
+        "name": "Gyrometer",
+        "icon": "mdi:axis-z-rotate-clockwise",
+        "native_unit_of_measurement": "°/s",
+        "state_class": SensorStateClass.MEASUREMENT,
+        "suggested_display_precision": 2,
     },
     135: {
         "name": "Color",
         "icon": "mdi:palette",
         "state_class": SensorStateClass.MEASUREMENT,
-        "create_multi": True,  # Create separate sensors for R, G, B
-        "multi_fields": ["r", "g", "b"],
     },
+    142: {"name": "Switch", "icon": "mdi:toggle-switch"},
 }
 
-# The meshcore SDK's lpp_json_encoder converts integer LPP type codes to string
-# names (e.g. 103 -> "temperature") during JSON serialization. Add string aliases
-# so the lookup works regardless of whether the type arrives as int or str.
-# String names sourced from meshcore.lpp_json_encoder.my_lpp_types.
-_LPP_STRING_TO_INT: dict[str, int] = {
-    "digital input": 0,
-    "digital output": 1,
-    "analog input": 2,
-    "analog output": 3,
-    "generic sensor": 100,
-    "illuminance": 101,
-    "presence": 102,
-    "temperature": 103,
-    "humidity": 104,
-    "accelerometer": 113,
-    "voltage": 116,
-    "current": 117,
-    "power": 128,
-    "colour": 135,
-}
+# LPP type the device_tracker platform owns; never given a sensor here.
+GPS_LPP_TYPE: Final = 136
 
-for _str_name, _int_key in _LPP_STRING_TO_INT.items():
-    if _int_key in LPP_TYPE_MAPPINGS:
-        LPP_TYPE_MAPPINGS[_str_name] = LPP_TYPE_MAPPINGS[_int_key]
+# Axes for the multi-value types the library decodes without naming their
+# fields: those readings arrive as a bare list, so the axes are positional.
+_POSITIONAL_AXES: dict[int, list[str]] = {134: ["x", "y", "z"]}
+
+
+def _build_lpp_mappings() -> dict[int | str, dict]:
+    """Derive the sensor table from the library's LPP type table.
+
+    Every decoded type gets an entry under both its numeric code and the
+    string name the encoder puts in the payload. Multi-value types get one
+    sensor per field, keyed by the library's own field name where it names
+    them and by position where it does not.
+    """
+    mappings: dict[int | str, dict] = {}
+    for code, (library_name, fields) in my_lpp_types.items():
+        if code == GPS_LPP_TYPE:
+            continue
+        presentation = dict(_LPP_PRESENTATION.get(code, {}))
+        config: dict[str, Any] = {
+            "name": presentation.pop("name", library_name.title()),
+            "icon": presentation.pop("icon", "mdi:gauge"),
+            **presentation,
+        }
+        axes = fields if fields else _POSITIONAL_AXES.get(code)
+        config["create_multi"] = bool(axes)
+        if axes:
+            config["multi_fields"] = [
+                {
+                    "field": field,
+                    "index": index,
+                    "name": f"{config['name']} {field.rsplit('_', 1)[-1].upper()}",
+                }
+                for index, field in enumerate(axes)
+            ]
+        mappings[code] = config
+        mappings[library_name] = config
+    return mappings
+
+
+# Maps both numeric LPP codes and string type names to sensor configurations.
+LPP_TYPE_MAPPINGS: dict[int | str, dict] = _build_lpp_mappings()
+
+
+def lpp_field_value(value: Any, field: str | None, index: int | None) -> Any:
+    """Pick one sensor's reading out of an LPP value.
+
+    Named multi-value readings arrive as a dict keyed by the library's field
+    names; unnamed ones arrive as a bare list, including the single-element
+    list a one-dimensional unnamed type produces, which Home Assistant would
+    otherwise reject as a list-valued state.
+    """
+    if isinstance(value, dict):
+        return value.get(field) if field else value
+    if isinstance(value, (list, tuple)):
+        if index is not None:
+            return value[index] if index < len(value) else None
+        return value[0] if len(value) == 1 else value
+    return value
 
 
 class TelemetrySensorManager:
@@ -191,7 +298,7 @@ class TelemetrySensorManager:
             _LOGGER.debug("No LPP data in telemetry event")
             return
 
-        pubkey_prefix = event.payload.get("pubkey_prefix", "")
+        pubkey_prefix = telemetry_pubkey_prefix(event)
         lpp_data = event.payload.get("lpp", [])
 
         # If no pubkey_prefix, this might be self telemetry
@@ -225,7 +332,7 @@ class TelemetrySensorManager:
                 continue
 
             # Skip GPS data - handled by device_tracker platform
-            if lpp_type == "gps":
+            if lpp_type in ("gps", GPS_LPP_TYPE):
                 continue
 
             # Create sensors based on the LPP type
@@ -386,7 +493,7 @@ class TelemetrySensorManager:
 
         sensors = []
 
-        if type_config.get("create_multi", False) and isinstance(value, dict):
+        if type_config.get("create_multi", False) and isinstance(value, (dict, list, tuple)):
             # Create separate sensors for multi-value types
             multi_fields = type_config.get("multi_fields", [])
 
@@ -394,19 +501,30 @@ class TelemetrySensorManager:
                 if isinstance(field_info, dict):
                     # Complex field definition
                     field = field_info["field"]
+                    field_index = field_info.get("index")
                     field_name = field_info["name"]
                     field_icon = field_info.get("icon", type_config["icon"])
-                    field_unit = field_info.get("unit")
-                    field_precision = field_info.get("precision")
+                    field_unit = field_info.get(
+                        "unit", type_config.get("native_unit_of_measurement")
+                    )
+                    field_precision = field_info.get(
+                        "precision", type_config.get("suggested_display_precision")
+                    )
                 else:
                     # Simple field name (like accelerometer x/y/z)
                     field = field_info
+                    field_index = None
                     field_name = f"{type_config['name']} {field.upper()}"
                     field_icon = type_config["icon"]
                     field_unit = type_config.get("native_unit_of_measurement")
                     field_precision = type_config.get("suggested_display_precision")
 
-                if field in value:
+                present = (
+                    field in value
+                    if isinstance(value, dict)
+                    else field_index is not None and field_index < len(value)
+                )
+                if present:
                     description = SensorEntityDescription(
                         key=f"telemetry_{pubkey_prefix}_{channel}_{lpp_type}_{field}",
                         name=f"Ch{channel} {field_name}",
@@ -425,6 +543,7 @@ class TelemetrySensorManager:
                         lpp_type,
                         node_info,
                         field,
+                        field_index,
                     )
                     sensors.append(sensor)
         else:
@@ -471,6 +590,7 @@ class MeshCoreTelemetrySensor(CoordinatorEntity, SensorEntity):
         lpp_type: int | str,
         node_info: dict[str, Any],
         field: str = None,  # type: ignore
+        field_index: int | None = None,
     ) -> None:
         """Initialize the telemetry sensor."""
         super().__init__(coordinator)
@@ -480,6 +600,7 @@ class MeshCoreTelemetrySensor(CoordinatorEntity, SensorEntity):
         self.lpp_type = lpp_type
         self.node_info = node_info
         self.field = field  # For multi-value sensors
+        self.field_index = field_index  # Position for unnamed multi-value fields
 
         # Set up naming based on node type
         node_name = node_info.get("name", f"Node {pubkey_prefix[:6]}")
@@ -554,12 +675,9 @@ class MeshCoreTelemetrySensor(CoordinatorEntity, SensorEntity):
                 value = channel_data.get("value")
                 self._raw_value = value
                 self._last_updated = time.time()
-
-                # Extract the specific field value if this is a multi-value sensor
-                if self.field and isinstance(value, dict):
-                    self._native_value = value.get(self.field)
-                else:
-                    self._native_value = value
+                self._native_value = lpp_field_value(
+                    value, self.field, self.field_index
+                )
 
                 # Update Home Assistant state only if requested
                 if update_state:

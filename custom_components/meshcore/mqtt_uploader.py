@@ -10,10 +10,11 @@ import shlex
 import ssl
 import subprocess
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Final
 
 import nacl.bindings
 import paho.mqtt.client as mqtt
@@ -27,6 +28,18 @@ from .const import (
     CONF_NAME,
     CONF_PUBKEY,
 )
+
+# Bounds for the single publish queue. RX_LOG is the flood: on a dense mesh it
+# arrives faster than a stalled broker drains, so the oldest of those is dropped
+# first and every other event type is kept.
+PUBLISH_QUEUE_MAX: Final = 500
+PUBLISH_QUEUE_DROPPABLE: Final = "RX_LOG"
+
+# Seconds a paho connect attempt may spend on a dead broker before setup moves on.
+CONNECT_TIMEOUT: Final = 10.0
+
+# Seconds the private-key export may take before the token probe gives up.
+KEY_EXPORT_DEADLINE: Final = 15.0
 
 
 def _as_bool(value: str | bool | None, default: bool = False) -> bool:
@@ -121,6 +134,13 @@ class MeshCoreMqttUploader:
         self._packet_dedupe_ttl_seconds = 1.0
         self._status_refresh_interval_seconds = 300
         self._status_refresh_task: asyncio.Task[None] | None = None
+        # One queue and one consumer for the whole entry: every radio event
+        # used to get its own task and executor hop, whether or not a broker
+        # was reachable.
+        self._publish_queue: deque[tuple[str, Any]] = deque()
+        self._publish_wakeup = asyncio.Event()
+        self._publish_task: asyncio.Task[None] | None = None
+        self._dropped_events = 0
         self._startup_timestamp = time.time()
         self._device_stats: dict[str, Any] = {}
         self._status_meta: dict[str, str] = {
@@ -361,8 +381,21 @@ class MeshCoreMqttUploader:
             broker: BrokerConfig = info["broker"]
             client = info["client"]
             try:
-                await self.hass.async_add_executor_job(
-                    client.connect, broker.server, broker.port, broker.keepalive
+                # paho's own socket deadline, plus a deadline on the await, so
+                # an unreachable broker cannot hold this up indefinitely.
+                client.connect_timeout = CONNECT_TIMEOUT
+                await asyncio.wait_for(
+                    self.hass.async_add_executor_job(
+                        client.connect, broker.server, broker.port, broker.keepalive
+                    ),
+                    CONNECT_TIMEOUT,
+                )
+                client.loop_start()
+            except TimeoutError:
+                self.logger.error(
+                    "[%s] Connection timed out after %.0fs; paho keeps retrying",
+                    broker.name,
+                    CONNECT_TIMEOUT,
                 )
                 client.loop_start()
             except Exception as ex:
@@ -371,6 +404,11 @@ class MeshCoreMqttUploader:
             self._status_refresh_task = asyncio.create_task(
                 self._async_status_refresh_loop(),
                 name="meshcore_mqtt_status_refresh",
+            )
+        if self._publish_task is None or self._publish_task.done():
+            self._publish_task = asyncio.create_task(
+                self._async_publish_loop(),
+                name="meshcore_mqtt_publish",
             )
 
     async def _async_create_client(self, broker: BrokerConfig):
@@ -635,7 +673,9 @@ class MeshCoreMqttUploader:
 
         try:
             self.logger.info("[%s] Attempting to fetch private key from device (export_private_key)", broker.name)
-            result = await self.api.exchange("export_private_key")
+            result = await self.api.exchange(
+                "export_private_key", deadline=KEY_EXPORT_DEADLINE
+            )
         except Exception as ex:
             self.logger.warning("[%s] Private key export command failed: %s", broker.name, ex)
             return None
@@ -1017,6 +1057,57 @@ class MeshCoreMqttUploader:
                 self._publish_status_for_client, client, broker, "online"
             )
 
+    def queue_raw_event(self, event_type: str, payload: Any) -> bool:
+        """Accept one event for publication; False when nothing would publish.
+
+        A no-op when no broker is up, so the event forwarder can skip the task
+        and the executor hop entirely instead of scheduling work that ends in
+        an early return.
+        """
+        if not any(info.get("connected") for info in self._clients):
+            return False
+        if len(self._publish_queue) >= PUBLISH_QUEUE_MAX:
+            if not self._drop_oldest_droppable():
+                self.logger.debug("MQTT publish queue full; dropping %s", event_type)
+                return False
+        self._publish_queue.append((event_type, payload))
+        self._publish_wakeup.set()
+        return True
+
+    def _drop_oldest_droppable(self) -> bool:
+        """Drop the oldest packet-log entry; True when one was found.
+
+        Everything else in the queue is a message, an advert or a status
+        change a listener is waiting for, so a full queue sheds the flood
+        rather than the meaning.
+        """
+        for index, (event_type, _payload) in enumerate(self._publish_queue):
+            if PUBLISH_QUEUE_DROPPABLE in (event_type or "").upper():
+                del self._publish_queue[index]
+                self._dropped_events += 1
+                if self._dropped_events % 100 == 1:
+                    self.logger.warning(
+                        "MQTT publish queue saturated; dropped %d packet-log events",
+                        self._dropped_events,
+                    )
+                return True
+        return False
+
+    async def _async_publish_loop(self) -> None:
+        """Drain the publish queue on one task, one executor hop per event."""
+        while True:
+            if not self._publish_queue:
+                self._publish_wakeup.clear()
+                await self._publish_wakeup.wait()
+                continue
+            event_type, payload = self._publish_queue.popleft()
+            try:
+                await self.async_publish_raw_event(event_type, payload)
+            except asyncio.CancelledError:
+                raise
+            except Exception as ex:
+                self.logger.error("Error publishing %s to MQTT: %s", event_type, ex)
+
     async def async_publish_raw_event(self, event_type: str, payload: Any) -> None:
         """Publish one event without blocking the HA event loop callback path."""
         self._update_status_cache_from_event(event_type, payload)
@@ -1203,13 +1294,16 @@ class MeshCoreMqttUploader:
 
     async def async_stop(self) -> None:
         """Stop all MQTT clients after publishing offline status."""
-        if self._status_refresh_task and not self._status_refresh_task.done():
-            self._status_refresh_task.cancel()
-            try:
-                await self._status_refresh_task
-            except asyncio.CancelledError:
-                pass
-        self._status_refresh_task = None
+        for attribute in ("_status_refresh_task", "_publish_task"):
+            task = getattr(self, attribute)
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            setattr(self, attribute, None)
+        self._publish_queue.clear()
         if not self._clients:
             return
         for info in self._clients:

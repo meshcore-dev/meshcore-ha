@@ -1589,11 +1589,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         del coordinator._discovered_contacts[full_pubkey]
         _LOGGER.info(f"Removed discovered contact: {contact_name} ({pubkey_prefix})")
 
-        # Save to storage
-        try:
-            await coordinator._store.async_save(coordinator._discovered_contacts)
-        except Exception as ex:
-            _LOGGER.error(f"Error saving discovered contacts: {ex}")
+        coordinator._save_discovered_contacts()
 
         # Mark contact as dirty so binary sensors update
         coordinator.mark_contact_dirty(pubkey_prefix)
@@ -1736,12 +1732,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     entity_registry.async_remove(entity_id)
 
             coordinator._discovered_contacts.clear()
-
-            try:
-                await coordinator._store.async_save(coordinator._discovered_contacts)
-            except Exception as ex:
-                _LOGGER.error(f"Error saving discovered contacts: {ex}")
-
+            coordinator._save_discovered_contacts()
             coordinator._publish_contacts()
 
             _LOGGER.info(f"Cleared {removed_count} discovered contacts")
