@@ -963,7 +963,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                 "import_contact": ["bytes"],
                 "update_contact": ["contact", "str", "str"],  # contact, path, flags
                 "add_contact": ["contact"],
-                "change_contact_path": ["contact", "int"],
+                "change_contact_path": ["contact", "str"],  # contact, path hex[:hash_mode]
                 "change_contact_flags": ["contact", "int"],
                 "set_autoadd_config": ["int"],
                 "get_autoadd_config": [],
@@ -1075,13 +1075,13 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                             prepared_args.append(int(arg))
                         except ValueError:
                             _LOGGER.error("Could not convert '%s' to integer", arg)
-                            return
+                            return {"error": "invalid_argument", "command": command_name, "detail": f"{arg} is not a valid int"}
                     elif param_type == "float":
                         try:
                             prepared_args.append(float(arg))
                         except ValueError:
                             _LOGGER.error("Could not convert '%s' to float", arg)
-                            return
+                            return {"error": "invalid_argument", "command": command_name, "detail": f"{arg} is not a valid float"}
                     elif param_type == "bool":
                         if arg.lower() in ("true", "yes", "y", "1"):
                             prepared_args.append(True)
@@ -1089,13 +1089,13 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                             prepared_args.append(False)
                         else:
                             _LOGGER.error("Could not convert '%s' to boolean", arg)
-                            return
+                            return {"error": "invalid_argument", "command": command_name, "detail": f"{arg} is not a valid bool"}
                     elif param_type == "bytes":
                         try:
                             prepared_args.append(bytes.fromhex(arg))
                         except ValueError:
                             _LOGGER.error("Could not convert '%s' to bytes - invalid hex string", arg)
-                            return
+                            return {"error": "invalid_argument", "command": command_name, "detail": f"{arg} is not hex"}
                     else:
                         prepared_args.append(arg)
 
