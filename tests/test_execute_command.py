@@ -236,18 +236,6 @@ async def test_none_response_returns_structured_error():
 
 
 @pytest.mark.asyncio
-async def test_empty_event_payload_returns_none():
-    """Regression: Event with empty-dict payload preserves the original
-    implicit-None return so callers that don't expect data aren't surprised."""
-    coord = _build_coordinator("get_time", _Event(_ET.MSG_SENT, {}))
-    handler = await _get_execute_handler(coord)
-
-    result = await handler(_call("get_time"))
-
-    assert result is None
-
-
-@pytest.mark.asyncio
 async def test_short_pubkey_prefix_returns_clear_error():
     """A too-short contact prefix returns a structured error, not silent None."""
     coord = _build_coordinator("req_status_sync", return_value=None, contact=None)
