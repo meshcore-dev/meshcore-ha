@@ -30,7 +30,13 @@ def coordinator_class():
         n
         for n in cls.body
         if getattr(n, "name", None)
-        in ("consume_incoming_messages", "async_flush_messages", "_async_update_data")
+        in (
+            "consume_incoming_messages",
+            "async_flush_messages",
+            "_async_update_data",
+            "_sync_contacts",
+            "_defer_contact_sync",
+        )
     ]
     namespace = runpy.run_path(str(BASE / "const.py"))
     namespace.update(
@@ -40,6 +46,8 @@ def coordinator_class():
         Any=object,
         _LOGGER=logging.getLogger(__name__),
         MSG_SAFETY_NET_INTERVAL=60,
+        CONTACT_SYNC_BACKOFF_MIN=5,
+        CONTACT_SYNC_BACKOFF_MAX=60,
         EventType=SimpleNamespace(
             NO_MORE_MSGS="empty", ERROR="error", TELEMETRY_RESPONSE="telemetry"
         ),
@@ -83,6 +91,9 @@ def make_coordinator(enabled):
     coord.data = {"contacts": []}
     coord.logger = logging.getLogger(__name__)
     coord._current_time = lambda: 1000
+    coord._next_contact_sync = 0.0
+    coord._contact_sync_backoff = 5
+    coord.invalidate_contacts = lambda: None
     coord._next_repeater_update_times = {}
     coord._next_telemetry_update_times = {}
     coord._repeater_consecutive_failures = {}

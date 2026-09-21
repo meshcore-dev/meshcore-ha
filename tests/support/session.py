@@ -30,6 +30,7 @@ class StubSession:
         self.contacts: dict[str, dict] = {}
         self.self_info: dict[str, Any] = {}
         self.contacts_dirty = False
+        self.contacts_reported_at = 0.0
         self.__dict__.update(attributes)
 
     def command_parameters(self, name: str) -> list[str] | None:

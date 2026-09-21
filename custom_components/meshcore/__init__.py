@@ -565,14 +565,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if repeater.get("pubkey_prefix"):
                 coordinator._next_repeater_update_times[repeater.get("pubkey_prefix")] = 0
     
-        # Load discovered contacts from storage before platforms set up
-        try:
-            stored_contacts = await coordinator._store.async_load()
-            if stored_contacts:
-                coordinator._discovered_contacts = stored_contacts
-                _LOGGER.info(f"Loaded {len(stored_contacts)} discovered contacts from storage")
-        except Exception as ex:
-            _LOGGER.error(f"Error loading discovered contacts: {ex}")
+        # The discovered-contact FIFO is loaded exactly here: before any
+        # subscriber exists, so no advert can be clobbered by a later reload.
+        await coordinator.async_load_discovered_contacts()
 
         # Enforce discovered contacts limit on startup (trim dict + save only, no entity cleanup)
         if settings.limit_discovered_contacts:
@@ -582,10 +577,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 keys_to_evict = list(coordinator._discovered_contacts.keys())[:evict_count]
                 for key in keys_to_evict:
                     del coordinator._discovered_contacts[key]
-                try:
-                    await coordinator._store.async_save(coordinator._discovered_contacts)
-                except Exception as ex:
-                    _LOGGER.error(f"Error saving discovered contacts after startup eviction: {ex}")
+                coordinator.invalidate_contacts()
+                coordinator._save_discovered_contacts()
                 _LOGGER.info(f"Evicted {evict_count} discovered contacts on startup (limit: {max_contacts})")
 
         # Load contacts from device on initialization
@@ -859,14 +852,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     max_contacts = coordinator.settings.max_discovered_contacts
                     evicted = await coordinator.async_evict_discovered_contacts(max_contacts)
                     if evicted:
-                        return  # eviction already saves and triggers async_set_updated_data
+                        return  # eviction already queued the save and published
 
-                # Save to storage
-                try:
-                    await coordinator._store.async_save(coordinator._discovered_contacts)
-                except Exception as ex:
-                    _LOGGER.error(f"Error saving discovered contacts: {ex}")
-
+                coordinator._save_discovered_contacts()
                 coordinator._publish_contacts()
 
         _LOGGER.info("Setting up NEW_CONTACT event listener")

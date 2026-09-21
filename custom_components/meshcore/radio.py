@@ -89,6 +89,7 @@ class RadioSession(MeshCommands):
         self.self_info: dict[str, Any] = {}
 
         self._mesh_core: MeshCore | None = None
+        self._contacts_reported_at = 0.0
         self._connected = False
         self._closing = False
         self._started = False
@@ -298,11 +299,20 @@ class RadioSession(MeshCommands):
         return mesh_core.get_contact_by_name(name) if mesh_core is not None else None
 
     async def ensure_contacts(self, follow: bool = True) -> bool:
-        """Resync the contact table when the node reports it stale."""
+        """Resync the contact table when the node reports it stale.
+
+        True means a fetch was issued, not that the node answered it; compare
+        ``contacts_reported_at`` across the call to tell those apart.
+        """
         mesh_core = self._live()
         if mesh_core is None:
             raise RadioUnavailable("MeshCore device is not connected")
         return bool(await self.exchange(mesh_core.ensure_contacts, follow=follow))
+
+    @property
+    def contacts_reported_at(self) -> float:
+        """Monotonic stamp of the last contact table the node actually sent."""
+        return self._contacts_reported_at
 
     def mark_contacts_dirty(self) -> None:
         """Make the next contact sync fetch the table again."""
@@ -454,6 +464,7 @@ class RadioSession(MeshCommands):
             return False
 
         mesh_core.dispatcher.subscribe(EventType.DISCONNECTED, self._handle_sdk_disconnect)
+        mesh_core.dispatcher.subscribe(EventType.CONTACTS, self._handle_contacts)
         for registration in self._registrations:
             self._attach(registration)
 
@@ -486,6 +497,10 @@ class RadioSession(MeshCommands):
     def _handle_sdk_disconnect(self, event: Event) -> None:
         """React to the SDK's link-loss event."""
         self._link_lost(getattr(event, "payload", None))
+
+    def _handle_contacts(self, _event: Event) -> None:
+        """Record that the node answered a contact-table fetch."""
+        self._contacts_reported_at = time.monotonic()
 
     def _link_lost(self, reason: Any) -> None:
         """Cross the link-loss edge exactly once and start recovery."""
