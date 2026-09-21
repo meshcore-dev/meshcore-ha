@@ -119,6 +119,18 @@ async def test_event_payload_returned_as_dict():
 
 
 @pytest.mark.asyncio
+async def test_event_with_empty_payload_still_returns_a_dict():
+    """A timed-out login or a bare OK must not surface as None (HA rejects it)."""
+    coord = _build_coordinator("send_login_sync", _Event(_ET.MSG_SENT, {}))
+    handler = await _get_execute_handler(coord)
+
+    result = await handler(_call("send_login_sync"))
+
+    assert isinstance(result, dict)
+    assert result["command"] == "send_login_sync"
+
+
+@pytest.mark.asyncio
 async def test_event_with_bytes_in_payload_is_hex_encoded():
     """Bytes inside an Event payload are converted to hex strings."""
     payload = {"key": b"\x01\x02\xff", "name": "node"}

@@ -1229,7 +1229,10 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                 )
                 if response:
                     return response
-                return
+                event_type = getattr(result.type, "value", result.type)
+                if event_type == "error":
+                    return {"error": "rejected", "command": command_name}
+                return {"event": str(event_type), "command": command_name}
             if isinstance(result, dict):
                 response = {
                     k: (v.hex() if isinstance(v, bytes) else v)
