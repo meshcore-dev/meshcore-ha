@@ -571,6 +571,19 @@ class MeshCoreTelemetrySensor(CoordinatorEntity, SensorEntity):
                 else:
                     self._native_value = value
 
+                # Some LPP types (e.g. "direction", "gyrometer") are encoded with
+                # no field mapping and are emitted as a raw list of values rather
+                # than a dict or scalar. Unwrap single-value lists to a scalar so
+                # HA's numeric sensor validation doesn't choke on a list state;
+                # for multi-value lists, fall back to a readable joined string.
+                if isinstance(self._native_value, list):
+                    if len(self._native_value) == 1:
+                        self._native_value = self._native_value[0]
+                    else:
+                        self._native_value = ", ".join(
+                            str(v) for v in self._native_value
+                        )
+
                 # Update Home Assistant state only if requested
                 if update_state:
                     self.async_write_ha_state()
