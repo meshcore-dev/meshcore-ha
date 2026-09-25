@@ -10,7 +10,7 @@ from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
 
-from cachetools import TTLCache
+from cachetools import LRUCache, TTLCache
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -23,6 +23,7 @@ from meshcore.events import Event, EventType
 
 from .config import Settings, get_conf
 from .const import (
+    ADVERT_PATH_CACHE_MAX_SIZE,
     AUTO_DISABLE_HOURS,
     CLI_CONSOLE_MAX_LINES,
     CONF_CLIENT_DISABLE_PATH_RESET,
@@ -48,7 +49,7 @@ from .const import (
     SEEN_WINDOW_SECS,
     get_contact_discovery_mode,
 )
-from .radio import RadioSession
+from .radio import RadioSession, RadioUnavailable
 from .traffic import (
     NODE_CLIENT,
     NODE_REPEATER,
@@ -211,6 +212,17 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self._max_channels = 4  # updated from DEVICE_INFO
         self._channel_info = {}  # keyed by channel_idx
 
+        # Advert path tracking: route the last advert from each contact took,
+        # keyed by 12-char public_key prefix. Populated on ADVERTISEMENT pushes.
+        self._advert_paths: LRUCache = LRUCache(maxsize=ADVERT_PATH_CACHE_MAX_SIZE)
+        self._advert_path_pending: set[str] = set()
+        # ADVERT_PATH replies don't name the contact. The exchange lock keeps
+        # replies apart; this one lets lookups queued behind a failing one see
+        # the latch before they reach the device.
+        self._advert_path_lock = asyncio.Lock()
+        self._advert_path_failures = 0
+        self._advert_path_disabled = False
+
         # Central device info every entity references
         self.device_info = {
             "identifiers": {(DOMAIN, config_entry.entry_id)},
@@ -289,6 +301,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
 
         # CHANNEL_INFO listener handle; registered once, kept across reconnects
         self._channel_info_unsub: Callable[[], None] | None = None
+        self._advert_path_unsub: Callable[[], None] | None = None
         api.add_connect_hook(self._on_radio_connected)
 
         # RX_LOG correlation hash -> list of RX_LOG payloads, TTL-evicted. The
@@ -952,6 +965,9 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         if self._channel_info_unsub is not None:
             self._channel_info_unsub()
             self._channel_info_unsub = None
+        if self._advert_path_unsub is not None:
+            self._advert_path_unsub()
+            self._advert_path_unsub = None
 
         tasks = [
             task
@@ -986,6 +1002,85 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             EventType.CHANNEL_INFO, handle_channel_info
         )
         self.logger.debug("Registered CHANNEL_INFO event listener")
+
+    def _setup_advert_path_listener(self) -> None:
+        """Fetch each advert's traversed path; registered once for the entry's life."""
+        if self._advert_path_unsub is not None:
+            return
+
+        def handle_advertisement(event: Event):
+            public_key = (event.payload or {}).get("public_key")
+            if public_key:
+                self.config_entry.async_create_background_task(
+                    self.hass,
+                    self._fetch_advert_path(public_key),
+                    f"meshcore_advert_path_{public_key[:12]}",
+                )
+
+        self._advert_path_unsub = self.api.subscribe(
+            EventType.ADVERTISEMENT, handle_advertisement
+        )
+        self.logger.debug("Registered ADVERTISEMENT event listener")
+
+    async def _fetch_advert_path(self, public_key: str) -> None:
+        """Fetch the path the last advert from this contact took.
+
+        GET_ADVERT_PATH is a local companion query (no RF traffic), so it is
+        not rate-limited. Fetching is disabled after repeated failures so
+        firmware without the command isn't queried on every advert.
+        """
+        prefix = public_key[:12]
+        if self._advert_path_disabled or prefix in self._advert_path_pending:
+            return
+        self._advert_path_pending.add(prefix)
+        try:
+            async with self._advert_path_lock:
+                # Re-checked here: the latch may have opened while this queued.
+                if self._advert_path_disabled:
+                    return
+                await self._request_advert_path(public_key, prefix)
+        finally:
+            self._advert_path_pending.discard(prefix)
+
+    async def _request_advert_path(self, public_key: str, prefix: str) -> None:
+        """Send one GET_ADVERT_PATH; caller must hold _advert_path_lock."""
+        success = False
+        try:
+            result = await self.api.exchange("get_advert_path", public_key)
+            if result and result.type == EventType.ADVERT_PATH:
+                success = True
+                payload = result.payload or {}
+                self._advert_paths[prefix] = {
+                    "adv_path": payload.get("path", ""),
+                    "adv_path_len": payload.get("path_len", -1),
+                    "adv_path_time": payload.get("timestamp"),
+                }
+                self.mark_contact_dirty(prefix)
+                self.async_update_listeners()
+        except RadioUnavailable:
+            # A dropped link says nothing about firmware support.
+            return
+        except Exception as ex:
+            self.logger.debug(f"Error fetching advert path for {prefix}: {ex}")
+        if success:
+            self._advert_path_failures = 0
+        else:
+            self._advert_path_failures += 1
+            if self._advert_path_failures >= 3 and not self._advert_path_disabled:
+                self._advert_path_disabled = True
+                self.logger.info(
+                    "Disabling advert path fetches after repeated failures "
+                    "(firmware may not support GET_ADVERT_PATH)"
+                )
+
+    def get_advert_path_data(self, pubkey_prefix: str) -> dict[str, Any]:
+        """Advert path attributes for a contact (empty dict until an advert is heard).
+
+        Accepts either full public key or 12-char prefix.
+        """
+        if not pubkey_prefix:
+            return {}
+        return self._advert_paths.get(pubkey_prefix[:12], {})
 
     async def fetch_all_channel_info(self) -> None:
         """Fetch channel info for all channels on startup."""
@@ -1855,6 +1950,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     self.logger.info(f"Device info updated - Firmware: {self._firmware_version}, Model: {self._hardware_model}, Max Channels: {self._max_channels}")
                     self._device_info_initialized = True
                     self._setup_channel_info_listener()
+                    self._setup_advert_path_listener()
                     await self.fetch_all_channel_info()
                     self.async_update_listeners()
             except Exception as ex:

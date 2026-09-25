@@ -218,6 +218,9 @@ DEFAULT_TRAFFIC_POLICY: Final = "legacy"
 RX_LOG_CACHE_MAX_SIZE: Final = 200
 RX_LOG_CACHE_TTL_SECONDS: Final = 20.0
 
+# Advert path cache, LRU-bounded so contact churn can't grow it indefinitely
+ADVERT_PATH_CACHE_MAX_SIZE: Final = 1000
+
 # Adaptive poll-wait for incoming channel message RX_LOG correlation
 CONF_ADAPTIVE_POLL_WAIT: Final = "adaptive_poll_wait"
 
