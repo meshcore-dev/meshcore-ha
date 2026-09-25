@@ -9,7 +9,7 @@ from collections import deque
 from datetime import timedelta
 from typing import Any, Dict
 
-from cachetools import TTLCache
+from cachetools import LRUCache, TTLCache
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -54,6 +54,7 @@ from .const import (
     RATE_LIMITER_REFILL_RATE_SECONDS,
     RX_LOG_CACHE_MAX_SIZE,
     RX_LOG_CACHE_TTL_SECONDS,
+    ADVERT_PATH_CACHE_MAX_SIZE,
     NEIGHBOR_PUBKEY_PREFIX_LENGTH,
     NEIGHBOR_STALE_THRESHOLD,
     SEEN_WINDOW_SECS,
@@ -148,8 +149,11 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
 
         # Advert path tracking: route the last advert from each contact took,
         # keyed by 12-char public_key prefix. Populated on ADVERTISEMENT pushes.
-        self._advert_paths: Dict[str, Dict[str, Any]] = {}
+        self._advert_paths: LRUCache = LRUCache(maxsize=ADVERT_PATH_CACHE_MAX_SIZE)
         self._advert_path_pending: set[str] = set()
+        # ADVERT_PATH replies don't name the contact, and the library hands
+        # each reply to every waiter, so concurrent lookups would share one.
+        self._advert_path_lock = asyncio.Lock()
         self._advert_path_failures = 0
         self._advert_path_disabled = False
         
@@ -835,6 +839,17 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         if self._advert_path_disabled or prefix in self._advert_path_pending:
             return
         self._advert_path_pending.add(prefix)
+        try:
+            async with self._advert_path_lock:
+                # Re-checked here: the latch may have opened while this queued.
+                if self._advert_path_disabled:
+                    return
+                await self._request_advert_path(public_key, prefix)
+        finally:
+            self._advert_path_pending.discard(prefix)
+
+    async def _request_advert_path(self, public_key: str, prefix: str) -> None:
+        """Send one GET_ADVERT_PATH; caller must hold _advert_path_lock."""
         success = False
         try:
             result = await self.api.mesh_core.commands.get_advert_path(public_key)
@@ -850,8 +865,6 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 self.async_update_listeners()
         except Exception as ex:
             self.logger.debug(f"Error fetching advert path for {prefix}: {ex}")
-        finally:
-            self._advert_path_pending.discard(prefix)
         if success:
             self._advert_path_failures = 0
         else:

@@ -6,18 +6,20 @@ the contact binary sensor merges it into its attributes. These tests drive the
 real coordinator methods and the real sensor class; only the MeshCore API is
 mocked.
 """
+import asyncio
 import logging
 from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 from homeassistant.core import HomeAssistant
-from meshcore.events import Event, EventType
+from meshcore.commands import CommandHandler
+from meshcore.events import Event, EventDispatcher, EventType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.meshcore.binary_sensor import (
     MeshCoreContactDiagnosticBinarySensor,
 )
-from custom_components.meshcore.const import DOMAIN
+from custom_components.meshcore.const import ADVERT_PATH_CACHE_MAX_SIZE, DOMAIN
 from custom_components.meshcore.coordinator import MeshCoreDataUpdateCoordinator
 
 FULL_PK = "a1" * 32
@@ -88,6 +90,77 @@ async def test_success_resets_failure_count(hass: HomeAssistant):
     # The success in the middle resets the consecutive-failure count, so the
     # latch never opens and all five calls reach the device.
     assert mock.await_count == 5
+
+
+async def test_lookups_queued_before_latch_do_not_reach_device(hass: HomeAssistant):
+    coordinator = _coordinator(hass)
+
+    async def slow_error(_key):
+        await asyncio.sleep(0)  # suspend so the other lookups queue behind this one
+        return Event(EventType.ERROR, {})
+
+    mock = _mock_advert_path(coordinator, None)
+    mock.side_effect = slow_error
+
+    await asyncio.gather(*(coordinator._fetch_advert_path(f"{i:02x}" * 32) for i in range(5)))
+
+    assert mock.await_count == 3
+
+
+class _FakeCompanion:
+    """Answers GET_ADVERT_PATH like the firmware: the reply doesn't name the contact."""
+
+    def __init__(self, dispatcher: EventDispatcher, paths: dict[str, str]) -> None:
+        self._dispatcher = dispatcher
+        self._paths = paths
+        self.replies: list[asyncio.Task] = []
+
+    async def send(self, data: bytes) -> None:
+        path = self._paths[data[2:].hex()]
+        self.replies.append(asyncio.create_task(self._reply(path)))
+
+    async def _reply(self, path: str) -> None:
+        await asyncio.sleep(0.01)  # device latency: gives a second request time to go out
+        payload = {"timestamp": 1754600000, "path_len": len(path) // 2, "path": path}
+        await self._dispatcher.dispatch(Event(EventType.ADVERT_PATH, payload))
+
+
+async def test_overlapping_lookups_each_get_their_own_path(hass: HomeAssistant):
+    """Uses the real meshcore command handler, whose waiters take any ADVERT_PATH."""
+    pk_a, pk_b = "a1" * 32, "b2" * 32
+    dispatcher = EventDispatcher()
+    await dispatcher.start()
+    companion = _FakeCompanion(dispatcher, {pk_a: "c3d4", pk_b: "e5f6"})
+    commands = CommandHandler()
+    commands.set_dispatcher(dispatcher)
+    commands.set_connection(companion)
+    coordinator = _coordinator(hass)
+    coordinator.api.mesh_core.commands = commands
+
+    try:
+        await asyncio.gather(
+            coordinator._fetch_advert_path(pk_a),
+            coordinator._fetch_advert_path(pk_b),
+        )
+    finally:
+        await asyncio.gather(*companion.replies)
+        await dispatcher.stop()
+
+    assert coordinator.get_advert_path_data(pk_a)["adv_path"] == "c3d4"
+    assert coordinator.get_advert_path_data(pk_b)["adv_path"] == "e5f6"
+
+
+async def test_cache_is_bounded(hass: HomeAssistant):
+    coordinator = _coordinator(hass)
+    _mock_advert_path(coordinator, Event(EventType.ADVERT_PATH, ADVERT_PATH_PAYLOAD))
+    keys = [f"{i:012x}" + "00" * 26 for i in range(ADVERT_PATH_CACHE_MAX_SIZE + 5)]
+
+    for key in keys:
+        await coordinator._fetch_advert_path(key)
+
+    assert len(coordinator._advert_paths) == ADVERT_PATH_CACHE_MAX_SIZE
+    assert coordinator.get_advert_path_data(keys[0]) == {}  # oldest evicted
+    assert coordinator.get_advert_path_data(keys[-1])["adv_path"] == "b2c3"
 
 
 async def test_advertisement_event_triggers_fetch(hass: HomeAssistant):
