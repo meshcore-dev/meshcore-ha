@@ -728,7 +728,11 @@ class MeshCoreContactDiagnosticBinarySensor(CoordinatorEntity, BinarySensorEntit
         # Add all contact properties as attributes
         for key, value in self._contact_data.items():
             attributes[key] = value
-            
+
+        # Route the last advert took (adv_path/adv_path_len/adv_path_time),
+        # tracked by the coordinator from ADVERTISEMENT pushes.
+        attributes.update(self.coordinator.get_advert_path_data(self.public_key))
+
         attributes["pubkey_short"] = self.public_key[:2] if self.public_key else ""
         
         # Get node type string

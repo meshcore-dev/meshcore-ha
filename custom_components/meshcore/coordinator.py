@@ -9,7 +9,7 @@ from collections import deque
 from datetime import timedelta
 from typing import Any, Dict
 
-from cachetools import TTLCache
+from cachetools import LRUCache, TTLCache
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -55,6 +55,7 @@ from .const import (
     RATE_LIMITER_REFILL_RATE_SECONDS,
     RX_LOG_CACHE_MAX_SIZE,
     RX_LOG_CACHE_TTL_SECONDS,
+    ADVERT_PATH_CACHE_MAX_SIZE,
     NEIGHBOR_PUBKEY_PREFIX_LENGTH,
     NEIGHBOR_STALE_THRESHOLD,
     SEEN_WINDOW_SECS,
@@ -184,6 +185,16 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self._hardware_model = None
         self._max_channels = 4  # Default to 4 channels, updated from DEVICE_INFO
         self._channel_info = {}  # Dict keyed by channel_idx to store channel info
+
+        # Advert path tracking: route the last advert from each contact took,
+        # keyed by 12-char public_key prefix. Populated on ADVERTISEMENT pushes.
+        self._advert_paths: LRUCache = LRUCache(maxsize=ADVERT_PATH_CACHE_MAX_SIZE)
+        self._advert_path_pending: set[str] = set()
+        # ADVERT_PATH replies don't name the contact, and the library hands
+        # each reply to every waiter, so concurrent lookups would share one.
+        self._advert_path_lock = asyncio.Lock()
+        self._advert_path_failures = 0
+        self._advert_path_disabled = False
         
         # Create a central device_info dict that all entities can reference
         self.device_info = {
@@ -843,6 +854,79 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             handle_channel_info,
         )
         self.logger.debug("Registered CHANNEL_INFO event listener")
+
+    def _setup_advert_path_listener(self) -> None:
+        """Set up ADVERTISEMENT listener to fetch each advert's traversed path."""
+        def handle_advertisement(event: Event):
+            try:
+                public_key = event.payload.get("public_key")
+                if public_key:
+                    self.hass.async_create_task(self._fetch_advert_path(public_key))
+            except Exception as ex:
+                self.logger.error(f"Error handling ADVERTISEMENT event: {ex}")
+
+        self.api.mesh_core.dispatcher.subscribe(
+            EventType.ADVERTISEMENT,
+            handle_advertisement,
+        )
+        self.logger.debug("Registered ADVERTISEMENT event listener")
+
+    async def _fetch_advert_path(self, public_key: str) -> None:
+        """Fetch the path the last advert from this contact took.
+
+        GET_ADVERT_PATH is a local companion query (no RF traffic), so it is
+        not rate-limited. Fetching is disabled after repeated failures so
+        firmware without the command isn't queried on every advert.
+        """
+        prefix = public_key[:12]
+        if self._advert_path_disabled or prefix in self._advert_path_pending:
+            return
+        self._advert_path_pending.add(prefix)
+        try:
+            async with self._advert_path_lock:
+                # Re-checked here: the latch may have opened while this queued.
+                if self._advert_path_disabled:
+                    return
+                await self._request_advert_path(public_key, prefix)
+        finally:
+            self._advert_path_pending.discard(prefix)
+
+    async def _request_advert_path(self, public_key: str, prefix: str) -> None:
+        """Send one GET_ADVERT_PATH; caller must hold _advert_path_lock."""
+        success = False
+        try:
+            result = await self.api.mesh_core.commands.get_advert_path(public_key)
+            if result and result.type == EventType.ADVERT_PATH:
+                success = True
+                payload = result.payload or {}
+                self._advert_paths[prefix] = {
+                    "adv_path": payload.get("path", ""),
+                    "adv_path_len": payload.get("path_len", -1),
+                    "adv_path_time": payload.get("timestamp"),
+                }
+                self.mark_contact_dirty(prefix)
+                self.async_update_listeners()
+        except Exception as ex:
+            self.logger.debug(f"Error fetching advert path for {prefix}: {ex}")
+        if success:
+            self._advert_path_failures = 0
+        else:
+            self._advert_path_failures += 1
+            if self._advert_path_failures >= 3 and not self._advert_path_disabled:
+                self._advert_path_disabled = True
+                self.logger.info(
+                    "Disabling advert path fetches after repeated failures "
+                    "(firmware may not support GET_ADVERT_PATH)"
+                )
+
+    def get_advert_path_data(self, pubkey_prefix: str) -> Dict[str, Any]:
+        """Advert path attributes for a contact (empty dict until an advert is heard).
+
+        Accepts either full public key or 12-char prefix.
+        """
+        if not pubkey_prefix:
+            return {}
+        return self._advert_paths.get(pubkey_prefix[:12], {})
     
     async def fetch_all_channel_info(self) -> None:
         """Fetch channel info for all channels on startup."""
@@ -1621,6 +1705,9 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
 
                     # Set up CHANNEL_INFO event listener
                     self._setup_channel_info_listener()
+
+                    # Set up ADVERTISEMENT listener for advert path tracking
+                    self._setup_advert_path_listener()
 
                     # Fetch channel info for all channels
                     await self.fetch_all_channel_info()

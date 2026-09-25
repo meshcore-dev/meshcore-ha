@@ -373,6 +373,10 @@ Each contact sensor includes detailed attributes:
 - `last_advert` - Unix timestamp of last advertisement
 - `last_advert_formatted` - ISO formatted timestamp
 - Location data (if available): `latitude`, `longitude`
+- Advert path (once an advert is heard while the integration is running; requires firmware with `GET_ADVERT_PATH` support):
+  - `adv_path` - Route the last advert took, as concatenated 1-byte hop hashes (hex); empty for zero-hop (direct) reception
+  - `adv_path_len` - Number of hops the advert traversed
+  - `adv_path_time` - Timestamp of that advert
 
 ### Entity Icons
 
