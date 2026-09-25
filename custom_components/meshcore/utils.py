@@ -226,7 +226,9 @@ def build_device_id(
         return f"{entry_id}_{node_type}_{pubkey_prefix}"
 
 
-def decrypt_channel_message(ciphertext: bytes, cipher_mac: bytes, channel_secret: bytes) -> tuple[int | None, str | None]:
+def decrypt_channel_message(
+    ciphertext: bytes, cipher_mac: bytes, channel_secret: bytes
+) -> tuple[int | None, str | None, bool]:
     """Decrypt a GroupText channel message using AES-128-ECB.
 
     Args:
@@ -235,14 +237,23 @@ def decrypt_channel_message(ciphertext: bytes, cipher_mac: bytes, channel_secret
         channel_secret: Channel secret key (16 bytes for AES-128)
 
     Returns:
-        Tuple of (timestamp, message_text) or (None, None) on failure
+        Tuple of (timestamp, message_text, mac_valid) or (None, None, False) on
+        failure. The message is decrypted even when the MAC does not verify;
+        mac_valid tells the caller whether it did.
+
+    MAC: firmware computes HMAC-SHA256 over the ciphertext keyed with the
+    channel secret and keeps the first 2 bytes. HMAC zero-pads short keys, so
+    the 16-byte secret matches the zero-padded 32-byte buffer the firmware
+    uses. A mismatch means the ciphertext (or MAC) was corrupted in transit,
+    e.g. by a repeater flipping bits after the LoRa CRC check, or that the
+    packet belongs to another channel with the same 1-byte hash.
     """
     try:
-        # Verify HMAC (optional but recommended)
+        # Verify HMAC; decrypt anyway and report the result to the caller
         expected_mac = hmac.new(channel_secret, ciphertext, hashlib.sha256).digest()[:2]
-        if expected_mac != cipher_mac:
+        mac_valid = expected_mac == cipher_mac
+        if not mac_valid:
             _LOGGER.debug("HMAC verification failed for channel message")
-            # Continue anyway - some implementations may not verify
 
         # Decrypt using AES-128 ECB
         cipher = AES.new(channel_secret, AES.MODE_ECB)
@@ -252,11 +263,11 @@ def decrypt_channel_message(ciphertext: bytes, cipher_mac: bytes, channel_secret
         timestamp = int.from_bytes(decrypted[0:4], byteorder="little")
         message_text = decrypted[5:].decode("utf-8", errors="ignore").strip('\x00')
 
-        return timestamp, message_text
+        return timestamp, message_text, mac_valid
 
     except Exception as ex:
         _LOGGER.debug(f"Error decrypting channel message: {ex}")
-        return None, None
+        return None, None, False
 
 
 def parse_and_decrypt_rx_log(payload: Any, channels_info: dict[int, dict]) -> dict[str, Any]:
@@ -335,7 +346,7 @@ def parse_and_decrypt_rx_log(payload: Any, channels_info: dict[int, dict]) -> di
                     except ValueError:
                         continue
 
-                    timestamp, message_text = decrypt_channel_message(ciphertext, cipher_mac, channel_secret)
+                    timestamp, message_text, mac_valid = decrypt_channel_message(ciphertext, cipher_mac, channel_secret)
 
                     if timestamp is not None and message_text is not None:
                         result = {
@@ -344,6 +355,7 @@ def parse_and_decrypt_rx_log(payload: Any, channels_info: dict[int, dict]) -> di
                             "timestamp": timestamp,
                             "text": message_text,
                             "decrypted": True,
+                            "mac_valid": mac_valid,
                             "path_len": path_len,
                             "path": path,
                             "channel_hash": chan_hash_hex,
@@ -438,7 +450,7 @@ def parse_and_decrypt_rx_log(payload: Any, channels_info: dict[int, dict]) -> di
             expected_hash_byte = hashlib.sha256(channel_secret).digest()[0]
 
             if expected_hash_byte == channel_hash_byte:
-                timestamp, message_text = decrypt_channel_message(ciphertext, cipher_mac, channel_secret)
+                timestamp, message_text, mac_valid = decrypt_channel_message(ciphertext, cipher_mac, channel_secret)
 
                 if timestamp is not None and message_text is not None:
                     result = {
@@ -447,6 +459,7 @@ def parse_and_decrypt_rx_log(payload: Any, channels_info: dict[int, dict]) -> di
                         "timestamp": timestamp,
                         "text": message_text,
                         "decrypted": True,
+                        "mac_valid": mac_valid,
                         "path_len": hop_count,
                         "path": path_data.hex(),
                         "channel_hash": f"{channel_hash_byte:02x}",
