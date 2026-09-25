@@ -69,6 +69,7 @@ from .traffic import (
     should_login,
     should_reset_path,
 )
+from .utils import warn_deprecated_internal
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -924,6 +925,15 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             self._telemetry_consecutive_failures[prefix] = failures.get("telemetry", 0)
             if state.get("auto_disabled"):
                 self._auto_disabled_devices.add(prefix)
+
+    @property
+    def _repeater_stats(self) -> dict[str, Any]:
+        """2.x attribute that was never populated, kept for companion integrations."""
+        warn_deprecated_internal(
+            "coordinator._repeater_stats",
+            "it was always empty, so drop the read and use the repeater sensors",
+        )
+        return {}
 
     @property
     def max_channels(self) -> int:

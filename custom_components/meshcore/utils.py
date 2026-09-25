@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import logging
 import re
+import sys
 from typing import Any, Final
 
 from Crypto.Cipher import AES
@@ -677,3 +678,32 @@ def parse_rx_log_data(payload: Any) -> dict[str, Any]:
 
     return result
 
+
+_REPORTED_DEPRECATIONS: set[str] = set()
+
+
+def warn_deprecated_internal(name: str, advice: str) -> None:
+    """Log once per name when another integration touches a removed internal.
+
+    Companion integrations reached into the 2.x coordinator directly. 3.0 keeps
+    a few of those names alive so they don't break on upgrade, and names the
+    caller so users know which integration needs updating.
+    """
+    if name in _REPORTED_DEPRECATIONS:
+        return
+    _REPORTED_DEPRECATIONS.add(name)
+    caller = "unknown caller"
+    frame = sys._getframe(1)
+    while frame is not None:
+        path = frame.f_code.co_filename.replace("\\", "/")
+        if "custom_components/" in path and f"/{DOMAIN}/" not in path:
+            caller = f"{path.split('custom_components/', 1)[1]}:{frame.f_lineno}"
+            break
+        frame = frame.f_back
+    _LOGGER.warning(
+        "%s is a removed meshcore internal, called from %s. It still works in 3.0 "
+        "but will be deleted in a future release; %s",
+        name,
+        caller,
+        advice,
+    )

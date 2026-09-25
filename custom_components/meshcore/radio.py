@@ -29,6 +29,7 @@ from .const import (
 )
 from .events import fire_connected, fire_disconnected
 from .radio_commands import MeshCommands
+from .utils import warn_deprecated_internal
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -105,6 +106,19 @@ class RadioSession(MeshCommands):
     def connected(self) -> bool:
         """Return whether the link is up and validated."""
         return self._connected
+
+    @property
+    def mesh_core(self) -> MeshCore | None:
+        """2.x accessor for the raw SDK instance, kept for companion integrations.
+
+        Calls made through it bypass the session's exchange lock, as they did in 2.x.
+        """
+        warn_deprecated_internal(
+            "api.mesh_core",
+            "use the meshcore services, or open an issue at "
+            "github.com/meshcore-dev/meshcore-ha for anything they don't cover",
+        )
+        return self._live()
 
     @property
     def node_name(self) -> str:
@@ -199,6 +213,13 @@ class RadioSession(MeshCommands):
         payload = getattr(event, "payload", None)
         if isinstance(payload, dict):
             self.self_info = dict(payload)
+
+    def _cache_self_info_event(self, event: Any) -> None:
+        """2.x name for cache_self_info_event, kept for companion integrations."""
+        warn_deprecated_internal(
+            "api._cache_self_info_event", "call api.cache_self_info_event instead"
+        )
+        self.cache_self_info_event(event)
 
     async def exchange(
         self,
