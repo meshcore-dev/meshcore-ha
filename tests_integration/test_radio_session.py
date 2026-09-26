@@ -6,10 +6,13 @@ session tests live here rather than in ``tests/``.
 """
 
 import asyncio
+import contextlib
+import gc
 import json
 import logging
+import socket
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -243,6 +246,95 @@ async def test_close_is_bounded_with_queued_events(hass: HomeAssistant) -> None:
     assert elapsed < 2.0
     assert radio.transport_closed
     radio.assert_no_leaked_tasks()
+
+
+@pytest.fixture
+def gc_paused() -> Iterator[None]:
+    """Keep unreachable SDK objects alive so a leaked task is still visible."""
+    gc.disable()
+    try:
+        yield
+    finally:
+        gc.enable()
+
+
+def _sdk_dispatcher_tasks() -> list[asyncio.Task]:
+    """Return the real SDK's dispatcher workers that are still pending."""
+    return [
+        task
+        for task in asyncio.all_tasks()
+        if not task.done()
+        and task.get_coro().__qualname__ == "EventDispatcher._process_events"
+    ]
+
+
+def _closed_port() -> int:
+    """Return a local port with no listener, so a connect is refused."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+async def test_refused_connect_leaves_no_sdk_task(
+    hass: HomeAssistant, gc_paused: None, socket_enabled: None
+) -> None:
+    """The real SDK factory raising on connect must not orphan its dispatcher."""
+    session = RadioSession(hass, "tcp", tcp_host="127.0.0.1", tcp_port=_closed_port())
+
+    assert await session.start() is False
+
+    assert _sdk_dispatcher_tasks() == []
+
+
+@contextlib.asynccontextmanager
+async def _silent_node() -> AsyncIterator[SimpleNamespace]:
+    """Accept TCP connections and never answer, like a node that hangs on appstart."""
+    node = SimpleNamespace(peers=[], accepted=asyncio.Event())
+
+    async def accept(reader: asyncio.StreamReader, _writer: Any) -> None:
+        node.peers.append(reader)
+        node.accepted.set()
+
+    server = await asyncio.start_server(accept, "127.0.0.1", 0)
+    node.port = server.sockets[0].getsockname()[1]
+    try:
+        yield node
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+async def test_timed_out_connect_releases_the_sdk_instance(
+    hass: HomeAssistant,
+    gc_paused: None,
+    socket_enabled: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A connect cut off by CREATE_TIMEOUT closes the socket and stops the dispatcher."""
+    monkeypatch.setattr(radio_module, "CREATE_TIMEOUT", 0.2)
+    async with _silent_node() as node:
+        session = RadioSession(hass, "tcp", tcp_host="127.0.0.1", tcp_port=node.port)
+        assert await session.start() is False
+
+        assert _sdk_dispatcher_tasks() == []
+        assert len(node.peers) == 1
+        await asyncio.wait_for(node.peers[0].read(), 1.0)
+
+
+async def test_cancelled_connect_releases_the_sdk_instance(
+    hass: HomeAssistant, gc_paused: None, socket_enabled: None
+) -> None:
+    """Cancelling a connect mid-handshake cleans up the same way, then re-raises."""
+    async with _silent_node() as node:
+        session = RadioSession(hass, "tcp", tcp_host="127.0.0.1", tcp_port=node.port)
+        attempt = asyncio.create_task(session.start())
+        await asyncio.wait_for(node.accepted.wait(), 1.0)
+        attempt.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await attempt
+
+        assert _sdk_dispatcher_tasks() == []
+        await asyncio.wait_for(node.peers[0].read(), 1.0)
 
 
 @pytest.fixture
