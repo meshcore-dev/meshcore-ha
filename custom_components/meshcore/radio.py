@@ -9,6 +9,7 @@ import logging
 import random
 import time
 from collections.abc import AsyncIterator, Callable, Coroutine, Mapping
+from contextvars import ContextVar
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Final
@@ -39,6 +40,27 @@ CREATE_TIMEOUT: Final = 30.0
 LINK_ERRORS: Final = (OSError, EOFError)
 RECONNECT_BACKOFF: Final[tuple[float, ...]] = (5.0, 10.0, 20.0, 40.0, 60.0)
 RECONNECT_JITTER: Final = 0.2
+
+
+# Per task, so entries connecting at the same time each see only their own instances
+_BUILT: ContextVar[list[MeshCore] | None] = ContextVar("meshcore_built", default=None)
+
+
+class _TrackedMeshCore(MeshCore):
+    """MeshCore that records each instance its factories build.
+
+    The SDK's connect() starts the dispatcher task before opening the transport
+    and leaves it running if the transport raises or the connect is cancelled,
+    and the factory then drops the instance. Recording it lets the session
+    release that task itself.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Build the SDK instance and report it to the current _create call."""
+        super().__init__(*args, **kwargs)
+        built = _BUILT.get()
+        if built is not None:
+            built.append(self)
 
 
 class RadioUnavailable(RuntimeError):
@@ -414,21 +436,33 @@ class RadioSession(MeshCommands):
         return True
 
     async def _create(self) -> MeshCore | None:
-        """Build the SDK instance for the configured transport, bounded in time."""
+        """Build the SDK instance for the configured transport, bounded in time.
+
+        Every instance the factory builds but does not hand back is released, so
+        a failed or timed-out connect leaves no dispatcher task or socket behind.
+        """
+        built: list[MeshCore] = []
+        token = _BUILT.set(built)
+        mesh_core: MeshCore | None = None
         try:
             _LOGGER.info("Connecting to MeshCore device...")
             factory = self._factory()
             if factory is None:
                 _LOGGER.error("Invalid connection configuration")
-                return None
-            return await asyncio.wait_for(factory, CREATE_TIMEOUT)
+            else:
+                mesh_core = await asyncio.wait_for(factory, CREATE_TIMEOUT)
         except TimeoutError:
             _LOGGER.error(
                 "Timed out after %.0fs opening the MeshCore connection", CREATE_TIMEOUT
             )
         except Exception as ex:
             _LOGGER.error("Error connecting to MeshCore device: %s", ex)
-        return None
+        finally:
+            _BUILT.reset(token)
+            for orphan in built:
+                if orphan is not mesh_core:
+                    await self._shutdown_instance(orphan, CLOSE_DEADLINE)
+        return mesh_core
 
     def _factory(self) -> Coroutine[Any, Any, MeshCore] | None:
         """Return the unawaited SDK creation call for the configured transport."""
@@ -436,7 +470,7 @@ class RadioSession(MeshCommands):
             _LOGGER.info(
                 "Using USB connection at %s with baudrate %s", self.usb_path, self.baudrate
             )
-            return MeshCore.create_serial(
+            return _TrackedMeshCore.create_serial(
                 self.usb_path,
                 self.baudrate,
                 debug=False,
@@ -444,14 +478,14 @@ class RadioSession(MeshCommands):
             )
         if self.connection_type == CONNECTION_TYPE_BLE:
             _LOGGER.info("Using BLE connection with address %s", self.ble_address)
-            return MeshCore.create_ble(
+            return _TrackedMeshCore.create_ble(
                 self.ble_address if self.ble_address else "",
                 debug=False,
                 auto_reconnect=False,
             )
         if self.connection_type == CONNECTION_TYPE_TCP and self.tcp_host:
             _LOGGER.info("Using TCP connection to %s:%s", self.tcp_host, self.tcp_port)
-            return MeshCore.create_tcp(
+            return _TrackedMeshCore.create_tcp(
                 self.tcp_host,
                 self.tcp_port,
                 debug=False,
