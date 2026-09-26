@@ -51,11 +51,14 @@ from .const import (
 )
 from .radio import RadioSession, RadioUnavailable
 from .traffic import (
+    LANE_DIRECT,
+    LANE_FLOOD,
     NODE_CLIENT,
     NODE_REPEATER,
     OP_NEIGHBOURS,
     OP_STATUS,
     OP_TELEMETRY,
+    PATH_HEAL_ATTEMPTS,
     POLICY_GOVERNED,
     Lane,
     MeshBudget,
@@ -64,6 +67,7 @@ from .traffic import (
     backoff_delay,
     classify_lane,
     denial_counts_as_failure,
+    heals_path,
     iso_timestamp,
     resolve_policy,
     should_login,
@@ -1619,6 +1623,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         update_interval = repeater_config.get(
             CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL
         )
+        lane: Lane = LANE_FLOOD
         try:
             contact = self.api.contact_by_prefix(pubkey_prefix)
             if not contact:
@@ -1696,11 +1701,12 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 await self._record_node_failure(
                     pubkey_prefix, failure_count + 1, update_interval, "repeater",
                     node_config=repeater_config, contact=contact, has_path=has_path,
+                    lane=lane,
                 )
             elif result.get('uptime', 0) == 0:
                 self.logger.warning(f"Malformed status response from repeater {repeater_name}: {result}")
                 await self._record_node_failure(
-                    pubkey_prefix, failure_count + 1, update_interval, "repeater"
+                    pubkey_prefix, failure_count + 1, update_interval, "repeater", lane=lane
                 )
             else:
                 self.logger.debug(f"Successfully updated repeater {repeater_name}")
@@ -1722,6 +1728,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 self._repeater_consecutive_failures.get(pubkey_prefix, 0) + 1,
                 update_interval,
                 "repeater",
+                lane=lane,
             )
         finally:
             self._active_repeater_tasks.pop(pubkey_prefix, None)
@@ -1738,11 +1745,16 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         node_config: dict | None = None,
         contact: Any = None,
         has_path: bool = False,
+        lane: Lane = LANE_FLOOD,
     ) -> None:
         """Book one failed poll: counter, reliability stat, path reset, backoff.
 
         ``node_config`` is passed only where a failure can justify rediscovering
-        the node's path; the policy decides whether this failure does.
+        the node's path; the policy decides whether this failure does. ``lane``
+        is the lane the failed attempt spent from: a node still on a known route
+        retries on the short spacing, one whose next attempt will flood pays the
+        long backoff. A reset whose route is rediscovered at once skips the
+        backoff and polls again on the next tick.
         """
         counters = (
             self._telemetry_consecutive_failures
@@ -1751,11 +1763,57 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         )
         counters[pubkey_prefix] = failures
         self._increment_failure(pubkey_prefix)
+        routed = lane == LANE_DIRECT
         if node_config is not None and should_reset_path(
             self._traffic_policy, failures, has_path, self._path_reset_disabled(node_config)
         ):
-            await self._reset_node_path(contact, node_config)
-        self._apply_backoff(pubkey_prefix, failures, update_interval, update_type)
+            if await self._reset_node_path(contact, node_config):
+                if await self._heal_path(contact, node_config):
+                    counters[pubkey_prefix] = 0
+                    self._set_next_due(pubkey_prefix, update_type, self._current_time())
+                    return
+                routed = False  # the route is gone, so the next attempt floods
+        self._apply_backoff(pubkey_prefix, failures, update_interval, update_type, routed=routed)
+
+    async def _heal_path(self, contact: Any, node_config: dict) -> bool:
+        """Rediscover a node's route right after a reset instead of waiting out a backoff.
+
+        Governed only. The burst costs one flood credit however many discoveries
+        it sends, and stops at the first route the node returns.
+        """
+        if not heals_path(self._traffic_policy) or not self._rate_limiter.try_consume(LANE_FLOOD):
+            return False
+        prefix = node_config.get("pubkey_prefix", "")
+        name = node_config.get("name", prefix)
+        for attempt in range(1, PATH_HEAL_ATTEMPTS + 1):
+            try:
+                _sent, answer = await self.api.path_discovery(
+                    contact, min_timeout=15.0, max_timeout=30.0
+                )
+            except RadioUnavailable:
+                return False
+            except Exception as ex:
+                self.logger.debug(f"Path discovery to {name} failed: {ex}")
+                continue
+            path = (answer.payload or {}) if answer else {}
+            if path.get("out_path_len", -1) < 0:
+                continue
+            # Mirror the route into the cached contact the way the SDK's own
+            # reset_path clears it, so the next poll is classified as routed.
+            contact["out_path_len"] = path["out_path_len"]
+            contact["out_path"] = path.get("out_path", "")
+            contact["out_path_hash_mode"] = {1: 0, 2: 1, 4: 2}.get(
+                path.get("out_path_hash_len", 1), 0
+            )
+            self.api.mark_contacts_dirty()
+            self._path_reset_pending.discard(prefix)
+            self.logger.info(
+                f"Rediscovered path to {name} on attempt {attempt}: "
+                f"{path['out_path_len']} hops"
+            )
+            return True
+        self.logger.info(f"No route to {name} after {PATH_HEAL_ATTEMPTS} path discoveries")
+        return False
 
     def _set_next_due(self, pubkey_prefix: str, update_type: str, when: int) -> None:
         """Record when a node's next status or telemetry attempt falls due."""
@@ -1799,9 +1857,11 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         failure_count: int,
         update_interval: int,
         update_type: str = "repeater",
+        *,
+        routed: bool = False,
     ) -> None:
         """Delay a failing node's next attempt by the policy's backoff."""
-        delay = backoff_delay(self._traffic_policy, failure_count, update_interval)
+        delay = backoff_delay(self._traffic_policy, failure_count, update_interval, routed=routed)
         self._set_next_due(pubkey_prefix, update_type, self._current_time() + delay)
         self.logger.debug(f"Applied backoff for {update_type} {pubkey_prefix}: "
                          f"failure_count={failure_count}, "
@@ -1861,14 +1921,14 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 self.logger.debug(f"No telemetry response received from {node_name}")
                 await self._record_node_failure(
                     pubkey_prefix, failure_count + 1, update_interval, "telemetry",
-                    node_config=node_config, contact=contact, has_path=has_path,
+                    node_config=node_config, contact=contact, has_path=has_path, lane=lane,
                 )
 
         except Exception as ex:
             self.logger.warning(f"Exception requesting telemetry from node {node_name}: {ex}")
             await self._record_node_failure(
                 pubkey_prefix, failure_count + 1, update_interval, "telemetry",
-                node_config=node_config, contact=contact, has_path=has_path,
+                node_config=node_config, contact=contact, has_path=has_path, lane=lane,
             )
         finally:
             self._active_telemetry_tasks.pop(pubkey_prefix, None)

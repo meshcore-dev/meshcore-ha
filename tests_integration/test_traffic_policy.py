@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any, Final
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from homeassistant.core import HomeAssistant
@@ -41,8 +41,11 @@ from custom_components.meshcore.traffic import (
     LANE_DIRECT,
     LANE_FLOOD,
     LANE_MESSAGES,
+    OP_STATUS,
+    PATH_HEAL_ATTEMPTS,
     POLICY_GOVERNED,
     POLICY_LEGACY,
+    classify_lane,
     iso_timestamp,
 )
 from tests.support.fake_radio import FakeRadio
@@ -223,7 +226,7 @@ async def test_governed_charges_a_channel_message_to_the_message_lane(
 
     assert key in governed.radio.calls
     assert _credits(governed, LANE_MESSAGES) == before - 1
-    assert _credits(governed, LANE_FLOOD) == 3
+    assert _credits(governed, LANE_FLOOD) == 5
 
 
 async def test_mesh_round_trip_does_not_block_a_local_command(
@@ -376,7 +379,7 @@ async def test_an_empty_flood_lane_defers_only_the_unrouted_node(
     assert unrouted_request not in radio.calls
     assert coordinator._repeater_consecutive_failures.get(UNROUTED_PREFIX, 0) == 0
     due = coordinator._next_repeater_update_times[UNROUTED_PREFIX]
-    assert 590 <= due - coordinator._current_time() <= 600
+    assert 170 <= due - coordinator._current_time() <= 180
     deferred = coordinator.deferred_nodes()
     assert deferred == [{"name": "Flooder", "lane": LANE_FLOOD, "until": iso_timestamp(due)}]
     assert coordinator.traffic_attributes()["deferred_nodes"] == deferred
@@ -410,8 +413,8 @@ async def test_the_rate_limiter_sensor_publishes_the_lane_rates(
     attributes = sensor.extra_state_attributes
     assert attributes is not None
     assert attributes["policy"] == POLICY_GOVERNED
-    assert attributes["flood_capacity"] == 3
-    assert attributes["flood_refill_per_hour"] == 6
+    assert attributes["flood_capacity"] == 5
+    assert attributes["flood_refill_per_hour"] == 20
     assert attributes["direct_capacity"] == 20
     assert attributes["direct_refill_per_hour"] == 120
     assert attributes["messages_capacity"] == 10
@@ -433,3 +436,106 @@ async def test_the_rate_limiter_sensor_publishes_the_lane_rates(
         "direct_next_eligible",
         "messages_next_eligible",
     }
+
+
+# -- Route healing -----------------------------------------------------------
+
+REPEATER_CONFIG: Final = {"name": "Repeater", "pubkey_prefix": PREFIX, "update_interval": 7200}
+
+
+def _path(out_path_len: int, out_path: str = "") -> Event:
+    """A PATH_RESPONSE as the session hands it back from a path discovery."""
+    payload = {
+        "pubkey_pre": PREFIX,
+        "out_path_len": out_path_len,
+        "out_path_hash_len": 1,
+        "out_path": out_path,
+    }
+    return Event(EventType.PATH_RESPONSE, payload)
+
+
+def _arm_reset(mesh: SimpleNamespace) -> dict:
+    """Script the path reset and pin the clock; return the live contact."""
+    contact = mesh.api.contact_by_prefix(PREFIX)
+    mesh.radio.script[mesh.radio.key("reset_path", contact)] = Event(EventType.OK, {})
+    mesh.coordinator._current_time = lambda: NOW
+    return contact
+
+
+async def _fail(mesh: SimpleNamespace, failures: int, contact: dict) -> None:
+    """Book one failed routed status poll against the repeater."""
+    await mesh.coordinator._record_node_failure(
+        PREFIX, failures, 7200, "repeater",
+        node_config=REPEATER_CONFIG, contact=contact, has_path=True, lane=LANE_DIRECT,
+    )
+
+
+async def test_governed_routed_failure_retries_on_the_legacy_spacing(
+    governed: SimpleNamespace,
+) -> None:
+    contact = _arm_reset(governed)
+
+    await _fail(governed, 1, contact)
+
+    assert governed.coordinator._next_repeater_update_times[PREFIX] == NOW + 232
+
+
+async def test_governed_reset_heals_the_route_for_one_flood_credit(
+    governed: SimpleNamespace,
+) -> None:
+    contact = _arm_reset(governed)
+    discover = AsyncMock(side_effect=[(None, None), (None, _path(1, "f5"))])
+    governed.api.path_discovery = discover
+    flood_before = _credits(governed, LANE_FLOOD)
+
+    await _fail(governed, 3, contact)
+
+    coordinator = governed.coordinator
+    assert discover.await_count == 2
+    assert _credits(governed, LANE_FLOOD) == flood_before - 1
+    assert coordinator._repeater_consecutive_failures[PREFIX] == 0
+    assert coordinator._next_repeater_update_times[PREFIX] == NOW
+    assert PREFIX not in coordinator._path_reset_pending
+    assert (contact["out_path_len"], contact["out_path"]) == (1, "f5")
+    assert classify_lane(OP_STATUS, contact) == LANE_DIRECT
+
+
+async def test_governed_reset_without_a_route_pays_the_flood_backoff(
+    governed: SimpleNamespace,
+) -> None:
+    contact = _arm_reset(governed)
+    discover = AsyncMock(return_value=(None, None))
+    governed.api.path_discovery = discover
+
+    await _fail(governed, 3, contact)
+
+    coordinator = governed.coordinator
+    due = coordinator._next_repeater_update_times[PREFIX]
+    assert discover.await_count == PATH_HEAL_ATTEMPTS
+    assert coordinator._repeater_consecutive_failures[PREFIX] == 3
+    assert PREFIX in coordinator._path_reset_pending
+    assert 0.9 * 7200 * 8 <= due - NOW <= 1.1 * 7200 * 8
+
+
+async def test_governed_heal_needs_a_flood_credit(governed: SimpleNamespace) -> None:
+    contact = _arm_reset(governed)
+    discover = AsyncMock()
+    governed.api.path_discovery = discover
+    _drain(governed, LANE_FLOOD)
+
+    await _fail(governed, 3, contact)
+
+    discover.assert_not_awaited()
+    assert governed.coordinator._repeater_consecutive_failures[PREFIX] == 3
+
+
+async def test_legacy_reset_never_sends_a_path_discovery(legacy: SimpleNamespace) -> None:
+    contact = _arm_reset(legacy)
+    discover = AsyncMock()
+    legacy.api.path_discovery = discover
+
+    await _fail(legacy, 3, contact)
+
+    discover.assert_not_awaited()
+    assert legacy.coordinator._next_repeater_update_times[PREFIX] == NOW + 928
+    assert PREFIX in legacy.coordinator._path_reset_pending

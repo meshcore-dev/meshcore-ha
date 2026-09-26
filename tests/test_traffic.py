@@ -69,6 +69,22 @@ def test_governed_backoff_is_jittered_and_capped(failures: int) -> None:
     assert delay <= traffic.GOVERNED_BACKOFF_CAP_SECONDS * 1.1
 
 
+@pytest.mark.parametrize("failures", [0, 1, 2, 5, 12])
+def test_governed_routed_backoff_uses_the_legacy_ladder(failures: int) -> None:
+    assert traffic.backoff_delay(GOVERNED, failures, 7200, routed=True) == (
+        traffic.backoff_delay(LEGACY, failures, 7200)
+    )
+
+
+def test_routed_does_not_move_legacy() -> None:
+    assert traffic.backoff_delay(LEGACY, 3, 7200, routed=True) == 928
+
+
+def test_only_governed_heals_a_reset_path() -> None:
+    assert traffic.heals_path(GOVERNED) is True
+    assert traffic.heals_path(LEGACY) is False
+
+
 @pytest.mark.parametrize("policy", [LEGACY, GOVERNED])
 def test_login_needs_five_failures_and_an_hour_of_cooldown(policy: str) -> None:
     assert traffic.should_login(policy, 4, 0, 100_000) is False
@@ -143,7 +159,7 @@ def test_user_messages_have_their_own_lane(op: str, contact: dict | None) -> Non
 
 def test_governed_lane_rates_are_flat_and_do_not_move() -> None:
     assert traffic.GOVERNED_LANES == {
-        traffic.LANE_FLOOD: (3, 6),
+        traffic.LANE_FLOOD: (5, 20),
         traffic.LANE_DIRECT: (20, 120),
         traffic.LANE_MESSAGES: (10, 60),
     }
@@ -170,16 +186,16 @@ def test_legacy_pools_every_lane_into_one_bucket(clock) -> None:
 def test_governed_lanes_are_independent(clock) -> None:
     budget = traffic.MeshBudget(GOVERNED)
 
-    for _ in range(3):
+    for _ in range(5):
         assert budget.try_consume(traffic.LANE_FLOOD) is True
     assert budget.try_consume(traffic.LANE_FLOOD) is False
-    assert budget.next_eligible(traffic.LANE_FLOOD) == 600.0
+    assert budget.next_eligible(traffic.LANE_FLOOD) == 180.0
 
     assert budget.try_consume(traffic.LANE_DIRECT) is True
     assert budget.try_consume(traffic.LANE_MESSAGES) is True
     assert budget.next_eligible(traffic.LANE_DIRECT) == 0.0
 
-    clock.value += 600
+    clock.value += 180
     assert budget.try_consume(traffic.LANE_FLOOD) is True
 
 
@@ -194,14 +210,14 @@ def test_governed_sensor_state_reports_direct_credits(clock) -> None:
 
 def test_governed_attributes_expose_every_lane_rate(clock) -> None:
     budget = traffic.MeshBudget(GOVERNED)
-    for _ in range(3):
+    for _ in range(5):
         budget.try_consume(traffic.LANE_FLOOD)
 
     attributes = budget.attributes()
     assert attributes is not None
     assert attributes["policy"] == GOVERNED
-    assert attributes["flood_capacity"] == 3
-    assert attributes["flood_refill_per_hour"] == 6
+    assert attributes["flood_capacity"] == 5
+    assert attributes["flood_refill_per_hour"] == 20
     assert attributes["flood_credits"] == 0
     assert attributes["flood_next_eligible"].endswith("+00:00")
     assert attributes["direct_credits"] == 20
@@ -216,13 +232,13 @@ def test_legacy_publishes_no_lane_attributes(clock) -> None:
 
 def test_governed_credits_survive_a_restart(clock) -> None:
     budget = traffic.MeshBudget(GOVERNED)
-    for _ in range(3):
+    for _ in range(5):
         budget.try_consume(traffic.LANE_FLOOD)
     stored = budget.snapshot()
     assert stored["lanes"] == {"flood": 0, "direct": 20, "messages": 10}
 
     restored = traffic.MeshBudget(GOVERNED)
-    restored.restore({**stored, "at": stored["at"] - 1200})
+    restored.restore({**stored, "at": stored["at"] - 390})  # two credits back
     assert restored.try_consume(traffic.LANE_FLOOD) is True
     assert restored.try_consume(traffic.LANE_FLOOD) is True
     assert restored.try_consume(traffic.LANE_FLOOD) is False

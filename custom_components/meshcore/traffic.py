@@ -16,6 +16,9 @@ budget is flat per radio -- tracking more nodes shares it rather than growing
 it -- and split into three independent lanes so unrouted polling can never
 starve a routed poll or a message the user sent. It defers instead of failing
 when a lane runs dry, and applies auto-disable to clients and telemetry too.
+A node failing over a known route retries on the legacy spacing; only flooded
+attempts pay the long backoff. When a failing node's route is reset, governed
+rediscovers it at once rather than waiting out that backoff.
 """
 
 from __future__ import annotations
@@ -54,7 +57,7 @@ LANE_MESSAGES: Final[Lane] = "messages"
 # over a known path and may run at volume; the user's own messages get a lane
 # of their own so automatic polling can never hold them up.
 GOVERNED_LANES: Final[dict[Lane, tuple[int, int]]] = {
-    LANE_FLOOD: (3, 6),
+    LANE_FLOOD: (5, 20),
     LANE_DIRECT: (20, 120),
     LANE_MESSAGES: (10, 60),
 }
@@ -82,6 +85,9 @@ LOGIN_COOLDOWN_SECONDS: Final = 3600
 LEGACY_RETRY_WINDOW_DIVISOR: Final = 31 * 2
 GOVERNED_BACKOFF_CAP_SECONDS: Final = 86400
 GOVERNED_BACKOFF_JITTER: Final = 0.1
+# Path discoveries sent back to back after a route reset, charged one flood
+# credit between them.
+PATH_HEAL_ATTEMPTS: Final = 3
 SECONDS_PER_HOUR: Final = 3600
 
 
@@ -114,15 +120,19 @@ def classify_lane(op: str, contact: Any = None, *, path_reset: bool = False) -> 
     return LANE_DIRECT
 
 
-def backoff_delay(policy: TrafficPolicy, failure_count: int, interval: int) -> int:
+def backoff_delay(
+    policy: TrafficPolicy, failure_count: int, interval: int, *, routed: bool = False
+) -> int:
     """Return the seconds a failing node waits before its next attempt.
 
     Legacy sizes a base interval so five retries fit inside half the refresh
-    window and never delays past one refresh interval. Governed keeps doubling
-    the configured interval up to a day, jittered so a mesh-wide outage does
-    not resynchronise every node onto the same second.
+    window and never delays past one refresh interval. Governed does the same
+    when the failed attempt went over a known route, since a routed retry costs
+    the mesh little. A flooded attempt keeps doubling the configured interval
+    up to a day, jittered so a mesh-wide outage does not resynchronise every
+    node onto the same second.
     """
-    if policy != POLICY_GOVERNED:
+    if policy != POLICY_GOVERNED or routed:
         base_interval = max(1, interval // LEGACY_RETRY_WINDOW_DIVISOR)
         return min(base_interval * (REPEATER_BACKOFF_BASE**failure_count), interval)
 
@@ -159,6 +169,11 @@ def denial_counts_as_failure(policy: TrafficPolicy) -> bool:
     the poll to the moment its lane has credit again instead.
     """
     return policy != POLICY_GOVERNED
+
+
+def heals_path(policy: TrafficPolicy) -> bool:
+    """Whether a path reset is followed at once by a burst of path discoveries."""
+    return policy == POLICY_GOVERNED
 
 
 def auto_disable_applies(

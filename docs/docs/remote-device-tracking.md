@@ -200,7 +200,8 @@ above and in the rest of this page; nothing about it has changed.
 | Request cost | 1 per mesh request | 1 per request in its own lane |
 | Budget exhausted | counted as a node failure, node backs off | the poll is deferred to when credit returns; no failure recorded |
 | Service calls | never metered | metered, in the lane they belong to |
-| Backoff | fits five retries inside the refresh interval | doubles the interval up to 24 h, with +/-10% jitter |
+| Backoff | fits five retries inside the refresh interval | same as Legacy while the node has a known route; once polls flood, doubles the interval up to 24 h, with +/-10% jitter |
+| Path reset | next poll floods | up to 3 path discoveries sent at once, charged one flood credit; a route found means the node is polled again right away |
 | Auto-disable | repeaters only, status polling only | repeaters and clients, status and telemetry |
 | Node schedules | in memory, reset on restart | persisted, restored on restart |
 
@@ -218,7 +219,7 @@ an empty flood lane can never hold up a routed poll or a message you sent.
 
 | Lane | Capacity | Refill | Carries |
 |---|---|---|---|
-| Flood | 3 | 6/hour | automatic traffic that floods: polling a contact with no route, path discovery, the first probe after a path reset, adverts sent from automations |
+| Flood | 5 | 20/hour | automatic traffic that floods: polling a contact with no route, path discovery, the first probe after a path reset, adverts sent from automations |
 | Direct | 20 | 120/hour | automatic traffic over a known route: status, telemetry, login and neighbour paging for routed contacts |
 | Messages | 10 | 60/hour | `send_message`, `send_channel_message` and `trace`, from any caller |
 
