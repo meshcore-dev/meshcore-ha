@@ -84,6 +84,7 @@ from .const import (
     DEFAULT_TCP_PORT,
     DOMAIN,
     MIN_UPDATE_INTERVAL,
+    NEW_ENTRY_TRAFFIC_POLICY,
     NodeType,
 )
 from .radio import RadioSession
@@ -434,6 +435,7 @@ class MeshCoreConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: igno
                 CONF_REPEATER_SUBSCRIPTIONS: [],
                 CONF_TRACKED_CLIENTS: [],
                 CONF_MAP_UPLOAD_ENABLED: False,
+                CONF_TRAFFIC_POLICY: NEW_ENTRY_TRAFFIC_POLICY,
             },
         )
 

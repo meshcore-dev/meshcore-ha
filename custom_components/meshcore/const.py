@@ -212,7 +212,10 @@ RATE_LIMITER_REFILL_RATE_SECONDS: Final = 120
 # the integration has always used; "governed" applies the cost-weighted budget
 # and the node schedule described in traffic.py.
 CONF_TRAFFIC_POLICY: Final = "traffic_policy"
+# What an entry without the setting runs, so existing installs keep legacy.
 DEFAULT_TRAFFIC_POLICY: Final = "legacy"
+# What a newly created entry is given.
+NEW_ENTRY_TRAFFIC_POLICY: Final = "governed"
 
 # RX_LOG correlation cache settings
 RX_LOG_CACHE_MAX_SIZE: Final = 200

@@ -191,10 +191,11 @@ If you want to re-enable before the next integration reload:
 **Settings → Devices & Services → MeshCore → Configure → Global Settings → Mesh Traffic Policy**
 
 The policy decides how much airtime the integration may spend and how it reacts
-when it runs out. The default, **Legacy**, is exactly the behaviour described
-above and in the rest of this page; nothing about it has changed.
+when it runs out. New installs start on **Governed**. Installs created before
+3.0 have no setting and stay on **Legacy**, which is exactly the behaviour
+described above and in the rest of this page; nothing about it has changed.
 
-| | Legacy (default) | Governed |
+| | Legacy (existing installs) | Governed (new installs) |
 |---|---|---|
 | Budget | 20 requests, refilling one every 2 minutes | three lanes, flat per radio (below) |
 | Request cost | 1 per mesh request | 1 per request in its own lane |
