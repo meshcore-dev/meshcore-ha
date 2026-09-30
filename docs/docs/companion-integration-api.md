@@ -39,7 +39,7 @@ Fired when meshcore-ha receives a direct or channel message — the primary even
 | `hop_count` | int | DM only | Number of hops the message traversed. **experimental** |
 | `snr` | float | DM only, V3 firmware | Signal-to-noise ratio of the inbound DM. **experimental** |
 
-For outgoing channel messages, this event re-fires once after RX_LOG collection completes (~4 s typical) carrying the final `rx_log_data`, `repeater_count`, and `progressive: false`. Treat the re-fire as the terminal state — see the example below.
+For outgoing channel messages, this event re-fires once after RX_LOG collection completes (4 s on fast presets; longer messages on slow presets wait up to 20 s, sized to the packet's airtime) carrying the final `rx_log_data`, `repeater_count`, and `progressive: false`. Treat the re-fire as the terminal state — see the example below.
 
 ### `meshcore_delivery_update`
 

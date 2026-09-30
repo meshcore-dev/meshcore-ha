@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+import math
 import re
 import sys
 from typing import Any, Final
@@ -707,3 +708,19 @@ def warn_deprecated_internal(name: str, advice: str) -> None:
         caller,
         advice,
     )
+
+
+LORA_PREAMBLE_SYMBOLS: Final = 16  # MeshCore sets this on every radio
+
+
+def lora_airtime(payload_len: int, sf: int, bw_khz: float, cr: int) -> float:
+    """Return the seconds a LoRa packet spends on air (Semtech AN1200.13).
+
+    ``cr`` is the coding-rate denominator the node reports, 5-8 for 4/5-4/8.
+    Explicit header and CRC, as MeshCore sends them.
+    """
+    symbol = (2**sf) / (bw_khz * 1000)
+    low_data_rate = 1 if symbol > 0.016 else 0
+    bits = 8 * payload_len - 4 * sf + 28 + 16
+    payload_symbols = 8 + max(math.ceil(bits / (4 * (sf - 2 * low_data_rate))) * cr, 0)
+    return (LORA_PREAMBLE_SYMBOLS + 4.25 + payload_symbols) * symbol

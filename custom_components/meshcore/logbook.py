@@ -1,6 +1,7 @@
 """Logbook integration for MeshCore."""
 import asyncio
 import logging
+import math
 from collections.abc import Callable
 
 from homeassistant.core import Event, HomeAssistant, callback
@@ -12,7 +13,12 @@ from .const import (
     ENTITY_DOMAIN_BINARY_SENSOR,
 )
 from .events import EVENT_MESSAGE, fire_delivery_update, fire_message
-from .utils import create_message_correlation_key, get_channel_entity_id, get_contact_entity_id
+from .utils import (
+    create_message_correlation_key,
+    get_channel_entity_id,
+    get_contact_entity_id,
+    lora_airtime,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -376,6 +382,35 @@ def handle_contact_message(event, coordinator) -> None:
     except Exception as ex:
         _LOGGER.error("Error handling contact message: %s", ex, exc_info=True)
 
+# Repeat collection for an outgoing channel message, in 1-second passes.
+_MIN_COLLECTION_PASSES = 4
+_MAX_COLLECTION_PASSES = 20  # well inside the 60 s outgoing-key reservation
+# A repeater holds a flood back for a random 0 to 5 x airtime x txdelay, and
+# MeshCore's default txdelay is 0.5.
+_REPEAT_DELAY_AIRTIMES = 2.5
+_GRP_TXT_OVERHEAD = 6  # header, path length, one path hash, channel hash, 2-byte MAC
+
+
+def _collection_passes(radio: dict, sender_name: str, message_text: str) -> int:
+    """Return how many 1-second passes can catch a channel message's last repeat.
+
+    That repeat lands after our own send, the longest random repeater delay
+    and the repeat itself, so long messages on slow presets outrun a fixed
+    four seconds. Without the radio's settings the old four-pass window stays.
+    """
+    try:
+        sf, bw, cr = int(radio["radio_sf"]), float(radio["radio_bw"]), int(radio["radio_cr"])
+    except (KeyError, TypeError, ValueError):
+        return _MIN_COLLECTION_PASSES
+    if not (5 <= sf <= 12 and bw > 0 and 5 <= cr <= 8):
+        return _MIN_COLLECTION_PASSES
+    # Encrypted body: 4-byte timestamp, a type byte and "<sender>: <text>".
+    plaintext = 5 + len(f"{sender_name}: {message_text}".encode())
+    packet = _GRP_TXT_OVERHEAD + math.ceil(plaintext / 16) * 16
+    window = lora_airtime(packet, sf, bw, cr) * (2 + _REPEAT_DELAY_AIRTIMES) + 1.0
+    return max(_MIN_COLLECTION_PASSES, min(math.ceil(window), _MAX_COLLECTION_PASSES))
+
+
 def _collected(
     base: dict, rx_logs: list, *, progressive: bool = False, collecting: bool | None = None
 ) -> dict:
@@ -493,13 +528,15 @@ async def handle_outgoing_message(event_data, coordinator) -> None:
         # radio picks up those re-broadcasts as RX_LOG events. This lets us
         # count how many repeaters relayed our message.
         #
-        # The message itself is logged now, not four seconds from now: a send
+        # The message itself is logged now, not when collection ends: a send
         # is a fact as soon as the radio takes it, and a shutdown in between
         # used to lose the entry entirely. What the repeaters heard follows as
-        # delivery updates, in rolling 1-second passes. Using pop() on a match
-        # forces late arrivals into a new cache entry under the same key,
-        # which subsequent passes pick up.
-        NUM_COLLECTION_PASSES = 4
+        # delivery updates, in rolling 1-second passes sized to the message's
+        # airtime. Using pop() on a match forces late arrivals into a new cache
+        # entry under the same key, which subsequent passes pick up.
+        num_passes = _collection_passes(
+            coordinator.api.self_info, coordinator.api.node_name or device_name, message_text
+        )
         PASS_INTERVAL_SECONDS = 1.0
 
         hash_key = None
@@ -531,7 +568,7 @@ async def handle_outgoing_message(event_data, coordinator) -> None:
         all_rx_logs: list = []
 
         try:
-            for pass_num in range(NUM_COLLECTION_PASSES):
+            for pass_num in range(num_passes):
                 await asyncio.sleep(PASS_INTERVAL_SECONDS)
 
                 batch = coordinator._pending_rx_logs.pop(hash_key, None)
@@ -552,7 +589,7 @@ async def handle_outgoing_message(event_data, coordinator) -> None:
                     _collected(
                         logbook_event,
                         all_rx_logs,
-                        progressive=pass_num < NUM_COLLECTION_PASSES - 1,
+                        progressive=pass_num < num_passes - 1,
                     ),
                 )
         except asyncio.CancelledError:
