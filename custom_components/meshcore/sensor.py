@@ -989,6 +989,9 @@ class LastMessageDeliverySensor(CoordinatorEntity, SensorEntity):
             count = self._repeater_count or 0
             if count == 0 and (is_progressive or event_data.get("collecting")):
                 self._state = "Waiting"
+            elif count == 0 and event_data.get("repeats_observable") is False:
+                # Too long for the companion to report a repeat: not a failure.
+                self._state = "Unconfirmed"
             else:
                 self._state = f"{count} Repeater{'s' if count != 1 else ''}"
 

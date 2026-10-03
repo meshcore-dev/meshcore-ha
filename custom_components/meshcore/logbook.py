@@ -389,6 +389,28 @@ _MAX_COLLECTION_PASSES = 20  # well inside the 60 s outgoing-key reservation
 # MeshCore's default txdelay is 0.5.
 _REPEAT_DELAY_AIRTIMES = 2.5
 _GRP_TXT_OVERHEAD = 6  # header, path length, one path hash, channel hash, 2-byte MAC
+# The companion pushes a received packet to HA only when it fits one serial
+# frame (companion_radio MyMesh::logRxRaw: len + 3 <= MAX_FRAME_SIZE, 172).
+_COMPANION_MAX_FRAME = 172
+# The most a relayed copy carries around the ciphertext: header, path length,
+# a 4-byte path hash, 4 transport-code bytes, channel hash and 2-byte MAC.
+_RELAYED_OVERHEAD_MAX = 13
+
+
+def _grp_txt_ciphertext_len(sender_name: str, message_text: str) -> int:
+    """Return the encrypted body length: timestamp, type byte, "<sender>: <text>"."""
+    plaintext = 5 + len(f"{sender_name}: {message_text}".encode())
+    return math.ceil(plaintext / 16) * 16
+
+
+def _repeats_observable(sender_name: str, message_text: str) -> bool:
+    """Whether a relayed copy of this channel message can reach HA at all.
+
+    A longer one is relayed but never pushed by the companion, so hearing
+    nothing back says nothing about delivery.
+    """
+    relayed = _RELAYED_OVERHEAD_MAX + _grp_txt_ciphertext_len(sender_name, message_text)
+    return relayed + 3 <= _COMPANION_MAX_FRAME
 
 
 def _collection_passes(radio: dict, sender_name: str, message_text: str) -> int:
@@ -404,9 +426,7 @@ def _collection_passes(radio: dict, sender_name: str, message_text: str) -> int:
         return _MIN_COLLECTION_PASSES
     if not (5 <= sf <= 12 and bw > 0 and 5 <= cr <= 8):
         return _MIN_COLLECTION_PASSES
-    # Encrypted body: 4-byte timestamp, a type byte and "<sender>: <text>".
-    plaintext = 5 + len(f"{sender_name}: {message_text}".encode())
-    packet = _GRP_TXT_OVERHEAD + math.ceil(plaintext / 16) * 16
+    packet = _GRP_TXT_OVERHEAD + _grp_txt_ciphertext_len(sender_name, message_text)
     window = lora_airtime(packet, sf, bw, cr) * (2 + _REPEAT_DELAY_AIRTIMES) + 1.0
     return max(_MIN_COLLECTION_PASSES, min(math.ceil(window), _MAX_COLLECTION_PASSES))
 
@@ -534,9 +554,9 @@ async def handle_outgoing_message(event_data, coordinator) -> None:
         # delivery updates, in rolling 1-second passes sized to the message's
         # airtime. Using pop() on a match forces late arrivals into a new cache
         # entry under the same key, which subsequent passes pick up.
-        num_passes = _collection_passes(
-            coordinator.api.self_info, coordinator.api.node_name or device_name, message_text
-        )
+        sender_name = coordinator.api.node_name or device_name
+        num_passes = _collection_passes(coordinator.api.self_info, sender_name, message_text)
+        logbook_event["repeats_observable"] = _repeats_observable(sender_name, message_text)
         PASS_INTERVAL_SECONDS = 1.0
 
         hash_key = None

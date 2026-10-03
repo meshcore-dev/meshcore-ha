@@ -104,6 +104,7 @@ plus:
 - `rx_log_data` / `repeater_count` - Empty and `0`: nothing has been heard back yet
 - `progressive` - `false` (this is the message event; reception counts arrive as `meshcore_delivery_update`)
 - `collecting` - `true` while reception data may still arrive for this send, `false` when no correlation was possible
+- `repeats_observable` - `false` when the message is too long for the companion to report a relayed copy back (it only forwards packets that fit one serial frame, so roughly 130+ bytes of text). A `repeater_count` of `0` then means "unknown", not "not relayed", and the delivery sensor shows `Unconfirmed`
 
 **Example Automation:**
 ```yaml
@@ -207,6 +208,7 @@ This event fires in three scenarios:
 - `send_id` - (Optional) Send identifier from the service call
 - `rx_log_data` - Cumulative array of all RX_LOG entries collected so far (same structure as `rx_log_data` on `meshcore_message`)
 - `repeater_count` - Number of repeaters that received the message
+- `repeats_observable` - Whether a relayed copy can be reported back at all (see above)
 - `progressive` - `true` on each intermediate pass, `false` on the terminal update that closes the send.
 
 **Incoming Message Fields (Adaptive Mode):**

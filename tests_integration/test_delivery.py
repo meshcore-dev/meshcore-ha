@@ -30,6 +30,7 @@ from custom_components.meshcore.logbook import (
 )
 from custom_components.meshcore.logbook import handle_outgoing_message
 from custom_components.meshcore.radio import RadioSession
+from custom_components.meshcore.sensor import LastMessageDeliverySensor
 from custom_components.meshcore.utils import create_message_correlation_key
 from tests.support.fake_radio import FakeRadio
 
@@ -239,3 +240,43 @@ async def test_a_colon_in_the_body_is_not_a_sender(
     assert (unprefixed["sender_name"], unprefixed["message"]) == ("Unknown", "ETA 14:30")
     assert (prefixed["sender_name"], prefixed["message"]) == ("Client", "Hello")
     assert prefixed["pubkey_prefix"] == "b" * 12
+
+
+async def test_a_send_says_whether_its_repeats_can_be_heard(
+    hass: HomeAssistant, runtime: SimpleNamespace, captured: dict
+) -> None:
+    """Long messages are relayed but never reported back by the companion."""
+    await handle_outgoing_message(CHANNEL_SEND, runtime.coordinator)
+    await handle_outgoing_message(
+        {**CHANNEL_SEND, "message": "x" * 150, "send_timestamp": NOW + 1},
+        runtime.coordinator,
+    )
+
+    short, long = (
+        [e for e in captured[EVENT_MESSAGE] if e["message"] == text][0]
+        for text in ("Hello", "x" * 150)
+    )
+    assert short["repeats_observable"] is True
+    assert long["repeats_observable"] is False
+
+
+@pytest.mark.parametrize(
+    ("observable", "state"), [(True, "0 Repeaters"), (False, "Unconfirmed")]
+)
+async def test_an_unheard_long_message_is_unconfirmed_not_failed(
+    hass: HomeAssistant, runtime: SimpleNamespace, observable: bool, state: str
+) -> None:
+    sensor = LastMessageDeliverySensor(runtime.coordinator)
+    sensor.async_write_ha_state = lambda: None
+
+    sensor.update_from_event(
+        {
+            "message_type": "channel",
+            "message": "x",
+            "rx_log_data": [],
+            "progressive": False,
+            "repeats_observable": observable,
+        }
+    )
+
+    assert sensor.native_value == state

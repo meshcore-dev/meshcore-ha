@@ -6,7 +6,7 @@ slow presets used to be counted as "0 Repeaters" at a fixed four seconds (#366).
 
 import pytest
 
-from custom_components.meshcore.logbook import _collection_passes
+from custom_components.meshcore.logbook import _collection_passes, _repeats_observable
 from custom_components.meshcore.utils import lora_airtime
 
 EU_NARROW = {"radio_sf": 8, "radio_bw": 62.5, "radio_cr": 8}
@@ -40,3 +40,22 @@ def test_the_window_is_capped() -> None:
 )
 def test_unknown_radio_settings_keep_four_passes(radio: dict) -> None:
     assert _collection_passes(radio, "node", "x" * 80) == 4
+
+
+# The companion only pushes a received packet that fits one serial frame, so the
+# repeat of a long channel message never reaches HA (#367).
+
+
+def test_a_short_message_can_be_confirmed() -> None:
+    assert _repeats_observable("Hub", "Hello") is True
+
+
+def test_the_frame_limit_boundary() -> None:
+    # "Gorsag: " + 131 bytes encrypts to 144; one more byte pads to 160 and,
+    # with the largest relay overhead, no longer fits a 172-byte frame.
+    assert _repeats_observable("Gorsag", "x" * 131) is True
+    assert _repeats_observable("Gorsag", "x" * 132) is False
+
+
+def test_the_limit_counts_utf8_bytes() -> None:
+    assert _repeats_observable("Gorsag", "ł" * 66) is False
