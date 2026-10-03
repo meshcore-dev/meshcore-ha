@@ -1,757 +1,484 @@
 ---
-sidebar_position: 4
+sidebar_position: 13
 title: Events
 ---
 
 # Events
 
-The Meshcore Home Assistant integration provides multiple layers of events, from raw SDK events to simplified message events designed for easy automation.
+The integration fires eight event types on the Home Assistant event bus. For automation examples, see [Automation](automation.md).
 
-## Event Architecture
+| Event | When it fires | In the logbook |
+|---|---|---|
+| [`meshcore_message`](#meshcore_message) | A message arrives, or the integration logs a message that it sent | Yes |
+| [`meshcore_delivery_update`](#meshcore_delivery_update) | New delivery data arrives for a message that `meshcore_message` already announced | No |
+| [`meshcore_message_sent`](#meshcore_message_sent) | The companion accepts a message from `send_message` or `send_channel_message` | No |
+| [`meshcore_message_send_failed`](#meshcore_message_send_failed) | A message from `send_message` or `send_channel_message` did not leave the companion | No |
+| [`meshcore_raw_event`](#meshcore_raw_event) | The meshcore-py library reports an event from the companion | No |
+| [`meshcore_cli_response`](#meshcore_cli_response) | `execute_command` or `execute_command_ui` completes with `record_to_console: true` | No |
+| [`meshcore_connected`](#connection-events) | The link to the companion opens or opens again | No |
+| [`meshcore_disconnected`](#connection-events) | The link to the companion closes or is lost | No |
 
-The integration provides three levels of events:
+## Fields on every event
 
-1. **First-Class Message Events** - Simplified events for common messaging use cases
-2. **Raw SDK Events** - Direct access to all Meshcore SDK events
-3. **Connection Events** - Integration status events
+### Which companion fired the event
 
-### Which radio fired the event
+| Field | Type | Description |
+|---|---|---|
+| `entry_id` | string | The entry (companion) that fired the event. Filter on it when you have more than one companion. |
+| `device_id` | string or null | The device registry ID of that companion. It is `null` before the integration registers the device. |
 
-Every `meshcore_*` event carries two extra fields:
+To find these IDs, see [Select the entry](services.md#select-the-entry). On `meshcore_cli_response`, `entry_id` is the entry that the service call named. See [meshcore_cli_response](#meshcore_cli_response).
 
-- `entry_id` - The config entry (radio) that produced the event
-- `device_id` - That radio's device ID in the Home Assistant device registry, or `null` before the device is registered
+### Timestamps
 
-Use them to filter automations when you run more than one MeshCore radio:
+| Event | `timestamp` format | Example |
+|---|---|---|
+| `meshcore_message`, `meshcore_delivery_update` | ISO 8601 string, UTC | `"2026-10-03T18:08:47.722967+00:00"` |
+| `meshcore_message_sent`, `meshcore_message_send_failed`, `meshcore_cli_response` | Integer, Unix seconds | `1791050927` |
+| `meshcore_raw_event` | Float, Unix seconds | `1791050927.7153687` |
 
-```yaml
-triggers:
-  - trigger: event
-    event_type: meshcore_message
-    event_data:
-      entry_id: 01J0ABCDEFGHJKMNPQRSTVWXYZ
-```
-
-On `meshcore_cli_response`, `entry_id` keeps its original meaning — the entry the
-service call named, which is `null` when the call named none. The entry the
-command actually ran on is the additional `resolved_entry_id`.
+A `meshcore_delivery_update` carries the `timestamp` of the message that it updates, not the time of the update.
 
 ### Secrets in events
 
-Raw events reach both the Home Assistant event bus and any MQTT broker
-configured for raw payload mode, so node secrets are withheld by default:
+By default, the integration removes node secrets from raw events on the event bus and on MQTT brokers in raw payload mode. It does not forward `EventType.PRIVATE_KEY`, and it replaces each `channel_secret` and `secret` value with `"<redacted>"`. The integration continues to decrypt channel traffic. To forward the real values, enable **Global Settings > Expose Node Secrets in Events**.
 
-- `EventType.PRIVATE_KEY` events are not forwarded at all
-- `channel_secret` and `secret` values are replaced with `"<redacted>"`
+CAUTION: Do not enable **Expose Node Secrets in Events** on a shared system. Each user of the event bus or the MQTT broker can then read your channel keys.
 
-Channel decryption inside the integration is unaffected. To forward the real
-values, turn on **Expose Node Secrets in Events** in the integration's Global
-Settings, and be aware that anyone who can read your event bus or your MQTT
-broker can then read them.
+## Message event order
 
-## First-Class Message Events
+Use `send_id` to connect the events of one outgoing message. Only `send_message`, `send_channel_message` and `send_ui_message` fire outgoing events. A message that you send with `execute_command` (for example `send_msg`) fires none.
 
-These events are designed for easy use in automations, with simplified field structures.
+### Outgoing direct message
 
-### meshcore_message
-Fired when any message is received. Ideal for notifications and message logging.
-
-**Channel Message Fields:**
-- `message` - Message text
-- `sender_name` - Name of sender
-- `channel` - Channel type (e.g., "public")
-- `channel_idx` - Channel number (0-255)
-- `entity_id` - Related binary sensor entity
-- `timestamp` - When received
-- `message_type` - "channel"
-- `pubkey_prefix` - Sender's public key prefix
-- `hop_count` - Number of repeater hops the packet traversed. `0` indicates direct reception (firmware returns the `0xFF` sentinel, which is normalised to `0`); positive values are the literal hop count from the SDK `path_len` byte.
-- `snr` - (Optional) Signal-to-noise ratio in dB for this packet. Present on V3 `CHANNEL_MSG_RECV` frames (carried directly in the SDK payload as `SNR`). On V2 frames the field is only populated when channel decryption is enabled and the SDK matched a `log_channels` entry, so absence is normal.
-- `rx_log_data` - (Optional) Array of radio reception details when message was received via multiple mesh paths:
-  - `channel_idx` - Channel number
-  - `channel_name` - Channel name
-  - `timestamp` - Message timestamp
-  - `text` - Decrypted message text
-  - `snr` - Signal-to-noise ratio in dB
-  - `rssi` - Received signal strength indicator
-  - `path_len` - Number of hops
-  - `path` - Hex-encoded path (node pubkey prefixes)
-  - `path_hash_size` - Per-hop hash width in bytes (1–3). The `path` field concatenates each hop's hash at this width, so consumers must split `path` on this width rather than assuming one byte per hop.
-  - `channel_hash` - Channel identifier hash
-  - `decrypted` - Whether decryption succeeded
-  - `route_type` - Raw route type integer (0 = TC_FLOOD, 3 = TC_DIRECT)
-  - `route_typename` - Human-readable route type string (e.g. `"TC_FLOOD"`)
-  - `region_scope` - `true` if the message was received via a region-scoped flood (TC_FLOOD)
-  - `flood_scope` - Matched scope name if `region_scope` is `true` and a scope is configured, otherwise `null`
-
-**Direct Message Fields:**
-- `message` - Message text
-- `sender_name` - Name of sender, or `null` when the sender is not a contact this node knows. An unknown sender gets no conversation entity, but the message is still published — identify them by `pubkey_prefix`.
-- `pubkey_prefix` - Sender's public key prefix
-- `receiver_name` - Name of receiver
-- `entity_id` - Related binary sensor entity
-- `timestamp` - When received
-- `message_type` - "direct"
-
-**Outgoing Channel Message Fields:**
-
-An outgoing channel message is logged as soon as the radio accepts it, so the
-entry is never lost to a restart during collection. It carries the fields above
-plus:
-
-- `outgoing` - `true`
-- `send_id` - Correlates the delivery updates that follow
-- `rx_log_data` / `repeater_count` - Empty and `0`: nothing has been heard back yet
-- `progressive` - `false` (this is the message event; reception counts arrive as `meshcore_delivery_update`)
-- `collecting` - `true` while reception data may still arrive for this send, `false` when no correlation was possible
-- `repeats_observable` - `false` when the message is too long for the companion to report a relayed copy back (it only forwards packets that fit one serial frame, so roughly 130+ bytes of text). A `repeater_count` of `0` then means "unknown", not "not relayed", and the delivery sensor shows `Unconfirmed`
-
-**Example Automation:**
-```yaml
-alias: Forward All Messages
-trigger:
-  - platform: event
-    event_type: meshcore_message
-action:
-  - service: notify.notify
-    data:
-      message: >
-        {% if trigger.event.data.message_type == 'channel' %}
-          Ch{{ trigger.event.data.channel_idx }}: {{ trigger.event.data.sender_name }}: {{ trigger.event.data.message }}
-        {% else %}
-          DM from {{ trigger.event.data.sender_name }}: {{ trigger.event.data.message }}
-        {% endif %}
+```mermaid
+sequenceDiagram
+    participant A as Automation
+    participant HA as Integration
+    participant C as Companion
+    participant N as Recipient
+    A->>HA: send_message
+    HA->>C: send_msg
+    C-->>HA: accepted, expected ACK code
+    HA-)A: meshcore_message_sent (1)
+    Note over A,HA: The service call returns
+    C->>N: message
+    N-->>C: ACK
+    C-->>HA: ACK
+    Note over HA: Wait ends at ACK or timeout
+    HA-)A: meshcore_message_sent (2)
+    HA-)A: meshcore_message
+    HA-)A: meshcore_delivery_update
 ```
 
-### meshcore_message_sent
-Fired when a message is successfully sent via integration services.
+| Event | Data |
+|---|---|
+| `meshcore_message_sent` (1) | `progressive: true`, `ack_received: false` |
+| `meshcore_message_sent` (2) | `ack_received: true` or `false`. No `progressive` field. |
+| `meshcore_message` | `outgoing: true`, `ack_received` |
+| `meshcore_delivery_update` | `progressive: false`, `ack_received` |
 
-**Channel Message Fields:**
-- `message` - Message text sent
-- `device` - Config entry ID
-- `message_type` - "channel"
-- `receiver` - Channel identifier (e.g., "channel_1")
-- `timestamp` - Unix timestamp
-- `channel_idx` - Channel number
-- `send_timestamp` - Device-reported send timestamp (or HA server clock fallback)
-- `send_id` - 8-character hex identifier for correlating delivery updates
-- `scope` - Flood scope used for this send, or `null` if none was specified
+- The timeout is 1.2 times the `suggested_timeout` of the companion, or 12 seconds if the companion reports no value.
+- If the companion reports no expected ACK code, the integration does not wait, and `ack_received` is `false`.
+- The logbook entry appears after the wait ends.
 
-**Direct Message Fields:**
-- `message` - Message text sent
-- `device` - Config entry ID
-- `message_type` - "direct"
-- `receiver` - Receiver name (may be null)
-- `timestamp` - Unix timestamp
-- `contact_public_key` - Full public key of recipient
-- `ack_received` - Whether the recipient acknowledged the message
-- `send_id` - 8-character hex identifier for correlating delivery updates
-- `progressive` - `true` on the first of the two events (see below); absent on the second
+### Outgoing channel message
 
-A direct message fires this event **twice**: once as soon as the radio accepts
-the message (`progressive: true`, `ack_received: false`) so a UI can react
-immediately, and once when the acknowledgement arrives or its wait expires
-(no `progressive` field, `ack_received` set to the outcome). Automations that
-only want the outcome should ignore events with `progressive: true`. The
-outcome also arrives as a terminal `meshcore_delivery_update`.
-
-**Example Automation:**
-```yaml
-alias: Log Sent Messages
-trigger:
-  - platform: event
-    event_type: meshcore_message_sent
-action:
-  - service: logbook.log
-    data:
-      name: "Sent"
-      message: "{{ trigger.event.data.message_type }}: {{ trigger.event.data.message }}"
+```mermaid
+sequenceDiagram
+    participant A as Automation
+    participant HA as Integration
+    participant C as Companion
+    participant R as Repeaters
+    A->>HA: send_channel_message
+    opt scope is set
+        HA->>C: set_flood_scope
+    end
+    HA->>C: send_chan_msg
+    C-->>HA: accepted
+    opt scope is set
+        HA->>C: reset flood scope
+    end
+    HA-)A: meshcore_message_sent
+    HA-)A: meshcore_message
+    C->>R: channel packet
+    loop N passes, 1 s each
+        R-->>C: relayed copies
+        C-->>HA: RX_LOG_DATA
+        HA-)A: meshcore_delivery_update
+    end
 ```
 
-### meshcore_message_send_failed
-Fired when a message never left the radio. The service still raises for a
-caller that blocks on it; this event is how an automation hears about the
-failure.
+| Event | Data |
+|---|---|
+| `meshcore_message` | `outgoing: true`, `collecting: true`, `repeater_count: 0` |
+| `meshcore_delivery_update`, passes 1 to N-1 | `progressive: true`, cumulative `rx_log_data` |
+| `meshcore_delivery_update`, pass N | `progressive: false`, the final `repeater_count` |
 
-**Event data:**
+- Each pass lasts 1 second and fires one update, also when it found no new copies.
+- N is from 4 to 20. N is 4.5 times the airtime of the packet plus 1 second, rounded up. If the integration does not know the radio settings, N is 4.
+- If Home Assistant stops during collection, the integration fires the final update (`progressive: false`) with the count so far.
+- If the integration cannot correlate the send, `meshcore_message` carries `collecting: false` and no update follows.
 
-- `reason` - `contact_not_found`, `rejected` (the firmware refused it), `send_failed` (the send raised) or `traffic_policy` (the mesh budget refused it)
-- `message_type` - `"direct"` or `"channel"`
-- `target` - The requested recipient (direct messages)
-- `channel_idx` - The requested channel (channel messages)
-- `detail` - What the radio or the policy reported, when there is more to say
-- `timestamp` - Unix epoch seconds
-- `entry_id` / `device_id` - Which radio refused
+#### repeats_observable
 
-### meshcore_delivery_update
+The companion reports a received packet only when it fits in one serial frame (172 bytes). The integration checks the size before the send and sets `repeats_observable`:
 
-Fired progressively as RX_LOG radio reception data arrives for a message. This event delivers repeater path information that was not yet available when the initial `meshcore_message` or `meshcore_message_sent` event fired.
+- `true`: `<sender name>: <text>` is 139 bytes or less (UTF-8). The integration can hear relayed copies.
+- `false`: the text is longer. A `repeater_count` of 0 then means "unknown", not "not relayed". The **Last Message Delivery** sensor shows `Unconfirmed`.
 
-This event fires in three scenarios:
+### Incoming channel message
 
-1. **Outgoing channel messages** — The message itself is logged immediately as `meshcore_message`. The integration then collects repeater reception data over 4 passes (1 second apart) and fires a `meshcore_delivery_update` after each; the last one carries `progressive: false`. If Home Assistant shuts down mid-collection, the count collected so far is published as that terminal update rather than lost.
-
-2. **Outgoing direct messages** — One terminal update (`progressive: false`) carrying `ack_received`, fired when the acknowledgement arrives or its wait expires.
-
-3. **Incoming channel messages (adaptive mode only)** — When [Adaptive Channel Message Delivery](./messaging#rx_log-correlation) is enabled, the initial `meshcore_message` event fires as soon as the first RX_LOG data arrives. Background collection passes then deliver late-arriving repeater data via this event.
-
-**Outgoing Message Fields:**
-- `message` - The message text that was sent
-- `sender_name` - Name of the sending node
-- `channel` - Channel name
-- `channel_idx` - Channel number
-- `entity_id` - Related entity
-- `domain` - `"meshcore"`
-- `timestamp` - ISO format timestamp
-- `outgoing` - `true`
-- `message_type` - `"channel"`
-- `send_id` - (Optional) Send identifier from the service call
-- `rx_log_data` - Cumulative array of all RX_LOG entries collected so far (same structure as `rx_log_data` on `meshcore_message`)
-- `repeater_count` - Number of repeaters that received the message
-- `repeats_observable` - Whether a relayed copy can be reported back at all (see above)
-- `progressive` - `true` on each intermediate pass, `false` on the terminal update that closes the send.
-
-**Incoming Message Fields (Adaptive Mode):**
-- `entity_id` - Source entity
-- `domain` - `"meshcore"`
-- `message_type` - `"channel"`
-- `sender_name` - Name of the message sender
-- `message` - The received message text
-- `timestamp` - ISO format timestamp
-- `rx_log_data` - Cumulative array of all RX_LOG entries collected so far
-- `repeater_count` - Number of repeater receptions collected
-- `progressive` - `true` (always, for incoming)
-
-**Example — Tracking Outgoing Delivery:**
-```yaml
-alias: Track Message Delivery
-triggers:
-  - trigger: event
-    event_type: meshcore_delivery_update
-    event_data:
-      outgoing: true
-      message_type: channel
-      progressive: false
-actions:
-  - action: notify.notify
-    data:
-      message: >
-        Message "{{ trigger.event.data.message }}" received via
-        {{ trigger.event.data.repeater_count }} repeater(s)
+```mermaid
+sequenceDiagram
+    participant R as Repeaters
+    participant C as Companion
+    participant HA as Integration
+    participant A as Automation
+    R->>C: channel packet (1 or more copies)
+    C-->>HA: RX_LOG_DATA, one per copy
+    HA-)A: meshcore_raw_event, one per copy
+    C-->>HA: MESSAGES_WAITING
+    HA->>C: get_msg
+    C-->>HA: CHANNEL_MSG_RECV
+    HA-)A: meshcore_raw_event
+    alt Default mode
+        Note over HA: wait 500 ms
+        HA-)A: meshcore_message
+    else Adaptive mode
+        Note over HA: check each 50 ms, max 500 ms
+        HA-)A: meshcore_message
+        opt new copies at +0.5 s or +1.5 s
+            HA-)A: meshcore_delivery_update
+        end
+    end
 ```
 
-This reports the final reception-data collection result. It does not confirm that every recipient received the message.
+- The integration matches copies to the message by channel index and sender timestamp. See [Messaging: RX_LOG Correlation](messaging.md#rx_log-correlation).
+- In adaptive mode, an update fires only when a check finds new copies. An incoming message never gets an update with `progressive: false`.
+- When **Retrieve queued incoming messages** is off, the integration does not send `get_msg`. See [Messaging: Share the companion with a phone](messaging.md#sharing-a-companion-with-a-phone).
 
-**Example — Monitoring Incoming Paths (Adaptive Mode):**
-```yaml
-alias: Log Additional Incoming Paths
-trigger:
-  - platform: event
-    event_type: meshcore_delivery_update
-    event_data:
-      message_type: "channel"
-condition:
-  - condition: template
-    value_template: "{{ trigger.event.data.outgoing is not defined }}"
-action:
-  - service: logbook.log
-    data:
-      name: "Mesh Path Update"
-      message: >
-        {{ trigger.event.data.sender_name }}'s message now seen via
-        {{ trigger.event.data.repeater_count }} path(s)
-```
+### Incoming direct message
 
-**Example Terminal Event Data — Outgoing (Final Pass):**
-```yaml
-event_type: meshcore_delivery_update
-data:
-  message: "Good morning mesh!"
-  sender_name: "PonyBot"
-  channel: "public"
-  channel_idx: 0
-  entity_id: binary_sensor.meshcore_a305ca_ch_0_messages
-  domain: "meshcore"
-  timestamp: "2025-09-11T18:08:47.722967"
-  outgoing: true
-  message_type: "channel"
-  rx_log_data:
-    - channel_idx: 0
-      channel_name: "public"
-      timestamp: 1762838456
-      text: "PonyBot: Good morning mesh!"
-      snr: 12.0
-      rssi: -70
-      path_len: 0
-      path: ""
-      channel_hash: "11"
-      route_type: 0
-      route_typename: "TC_FLOOD"
-      region_scope: true
-      flood_scope: "pl-mz"
-    - channel_idx: 0
-      channel_name: "public"
-      timestamp: 1762838456
-      text: "PonyBot: Good morning mesh!"
-      snr: 5.5
-      rssi: -50
-      path_len: 1
-      path: "cf"
-      channel_hash: "11"
-      route_type: 3
-      route_typename: "TC_DIRECT"
-      region_scope: false
-      flood_scope: null
-  repeater_count: 2
-  progressive: false
-```
+The integration fires `meshcore_message` immediately, with no delivery update. A text reply from a repeater to `send_cmd` also arrives as an incoming direct message.
 
-## Raw SDK Events
+## meshcore_message
 
-All events from the Meshcore SDK are exposed as `meshcore_raw_event`. These provide complete access to all device data and events.
+The integration fires `meshcore_message` one time for each message. This event is the source of the logbook entry. Every variant has `domain: "meshcore"`, `entry_id` and `device_id`.
 
-### Event Structure
-Every raw event contains:
-- `event_type` - The SDK event type string (e.g., "EventType.BATTERY")
-- `payload` - Event-specific data structure
-- `timestamp` - Unix timestamp when received
+`<pk6>` is the first 6 hex characters of the companion public key. `<node pk6>` is the same for the other node.
 
-### Common Raw Event Types
+### Incoming direct message fields
 
-#### Message Events
-**EventType.CONTACT_MSG_RECV** - Direct message received
-- `type` - Message type (PRIV)
-- `SNR` - Signal-to-noise ratio in dB
-- `pubkey_prefix` - Sender's public key prefix
-- `text` - Message content
-- `sender_timestamp` - When sent
-- `path_len` - Routing path length
+| Field | Type | Present | Description |
+|---|---|---|---|
+| `message` | string | Always | The message text |
+| `sender_name` | string or null | Always | The advertised name of the sender. `null` when the sender is not a contact. |
+| `pubkey_prefix` | string | Always | The public key prefix of the sender (12 hex characters) |
+| `receiver_name` | string | Always | Always `"meshcore"`. It is not the name of your companion. |
+| `entity_id` | string | Always | `binary_sensor.meshcore_<pk6>_<node pk6>_messages`. The entity exists only for a contact. |
+| `timestamp` | string | Always | The time that Home Assistant processed the message |
+| `message_type` | string | Always | `"direct"` |
+| `hop_count` | integer | Always | The number of hops. `0` means direct reception. |
+| `snr` | float | When the frame has it | The signal-to-noise ratio in dB |
 
-**EventType.CHANNEL_MSG_RECV** - Channel message received
-- `type` - Message type (CHAN)
-- `SNR` - Signal-to-noise ratio in dB
-- `channel_idx` - Channel number
-- `text` - Message content
-- `sender_timestamp` - When sent
+### Incoming channel message fields
 
-**EventType.MSG_SENT** - Message transmission confirmed
+| Field | Type | Present | Description |
+|---|---|---|---|
+| `message` | string | Always | The text without the `Name: ` prefix when the sender is known. Otherwise, the full text. |
+| `sender_name` | string | Always | The text before the first `:` when it is the name of a contact. Otherwise `"Unknown"`. |
+| `pubkey_prefix` | string | When the sender is a contact | The first 12 hex characters of the public key of that contact |
+| `channel` | string | Always | The channel name on the companion. If the channel has no name: `"public"` for channel 0, or the index as a string. |
+| `channel_idx` | integer | Always | The channel index |
+| `entity_id` | string | Always | `binary_sensor.meshcore_<pk6>_ch_<channel_idx>_messages` |
+| `timestamp` | string | Always | The time that Home Assistant processed the message |
+| `message_type` | string | Always | `"channel"` |
+| `hop_count` | integer | Always | The number of hops. `0` means direct reception. |
+| `snr` | float | When the frame has it | The signal-to-noise ratio in dB |
+| `rx_log_data` | list | When the integration matched copies | One entry for each copy. See [rx_log_data entries](#rx_log_data-entries). |
 
-**EventType.RX_LOG_DATA** - Raw radio reception log
-- `raw_hex` - Complete raw LoRa packet
-- `snr` - Signal-to-noise ratio in dB
-- `rssi` - Received signal strength indicator
-- `payload` - Packet payload hex string
-- `payload_length` - Length of payload
-- `route_type` - Route type integer (0 = TC_FLOOD, 3 = TC_DIRECT)
-- `route_typename` - Human-readable route type string
-- `parsed` - Parsed packet structure:
-  - `header` - Packet header byte
-  - `path_len` - Number of hops
-  - `path` - Routing path hex
-  - `path_nodes` - Array of node pubkey prefixes
-  - `channel_hash` - Channel identifier
-- `decrypted` - (Optional) Decrypted GroupText payload:
-  - `channel_idx` - Channel number
-  - `channel_name` - Channel name
-  - `timestamp` - Message timestamp
-  - `text` - Decrypted message text
-  - `decrypted` - Whether decryption succeeded
-  - `path_len` - Number of hops
-  - `path` - Routing path
-  - `channel_hash` - Channel hash
+### Outgoing direct message fields
 
-:::info
-RX_LOG events are automatically correlated with `meshcore_message` events. The integration decrypts GroupText payloads and attaches radio metrics (SNR, RSSI, path) to the corresponding message event as `rx_log_data`. This allows you to see which mesh routes your messages took and signal quality for each reception.
-:::
+The integration fires this event after the ACK wait ends.
 
-#### Device Events
-**EventType.BATTERY** - Battery status
-- `level` - Battery level in millivolts
-- `used_kb` - Memory used in KB
-- `total_kb` - Total memory in KB
+| Field | Type | Description |
+|---|---|---|
+| `message` | string | The text that was sent |
+| `sender_name` | string or null | The companion name that the entry stored at setup or at the last reconfigure |
+| `receiver_name` | string or null | The name of the recipient contact |
+| `pubkey_prefix` | string | The first 12 hex characters of the public key of the recipient |
+| `entity_id` | string | `binary_sensor.meshcore_<pk6>_<node pk6>_messages` |
+| `timestamp` | string | The time that the integration logged the message |
+| `outgoing` | boolean | `true` |
+| `message_type` | string | `"direct"` |
+| `send_id` | string | 8 hex characters. The same value is on the `meshcore_message_sent` events of this send. |
+| `ack_received` | boolean | `true` when the recipient acknowledged the message before the timeout |
 
-**EventType.DEVICE_INFO** - Device configuration
-- Complete device capabilities and settings
+### Outgoing channel message fields
 
-**EventType.ERROR** - Error notifications
-- Error messages and codes
+The integration fires this event immediately after the companion accepts the message.
 
-#### Network Events
-**EventType.CONTACTS** - Contact list updates
-- Dictionary keyed by public key
-- Each contact includes:
-  - `type` - Node type (1=Client, 2=Repeater)
-  - `adv_name` - Advertised name
-  - `last_advert` - Last seen timestamp
-  - `adv_lat`/`adv_lon` - GPS coordinates
+| Field | Type | Description |
+|---|---|---|
+| `message` | string | The text that was sent |
+| `sender_name` | string or null | The companion name that the entry stored at setup or at the last reconfigure |
+| `channel` | string | The channel name on the companion. `""` for a slot with an empty name. |
+| `channel_idx` | integer | The channel index |
+| `entity_id` | string | `binary_sensor.meshcore_<pk6>_ch_<channel_idx>_messages` |
+| `timestamp` | string | The time that the integration logged the message |
+| `outgoing` | boolean | `true` |
+| `message_type` | string | `"channel"` |
+| `send_id` | string | 8 hex characters. The same value is on `meshcore_message_sent` and on each delivery update. |
+| `repeats_observable` | boolean | See [repeats_observable](#repeats_observable) |
+| `rx_log_data` | list | Always `[]`. Copies arrive in `meshcore_delivery_update`. |
+| `repeater_count` | integer | Always `0` |
+| `progressive` | boolean | Always `false` |
+| `collecting` | boolean | `true` when delivery updates will follow |
 
-**EventType.NODES** - Network topology updates
+An outgoing message does not carry `hop_count` or `snr`.
 
-#### Telemetry Events
-**EventType.TELEMETRY_RESPONSE** - Sensor data
-- Cayenne LPP formatted telemetry
+### rx_log_data entries
 
-**EventType.STATUS_RESPONSE** - Repeater statistics
-- Detailed operational metrics
+Each entry describes one copy of a channel packet that the companion heard.
 
-### Using Raw Events
-```yaml
-alias: Battery Monitor
-trigger:
-  - platform: event
-    event_type: meshcore_raw_event
-    event_data:
-      event_type: "EventType.BATTERY"
-action:
-  - service: notify.notify
-    data:
-      message: "Battery: {{ (trigger.event.data.payload.level / 1000) | round(2) }}V"
-```
+| Field | Type | Description |
+|---|---|---|
+| `channel_idx` | integer | The channel index that decrypted the packet |
+| `channel_name` | string | The channel name on the companion |
+| `timestamp` | integer | The sender timestamp from the decrypted packet (Unix seconds) |
+| `text` | string | The decrypted text, including the `Name: ` prefix |
+| `snr` | float | The signal-to-noise ratio of this copy, in dB |
+| `rssi` | integer | The received signal strength of this copy, in dBm |
+| `path_len` | integer | The number of hops in `path` |
+| `path` | string | The hex hashes of the repeaters that relayed this copy, in order |
+| `path_hash_size` | integer | The bytes for each hop. Split `path` into parts of `path_hash_size * 2` hex characters. |
+| `channel_hash` | string | The 1-byte channel hash, as hex |
+| `route_type` | integer | `0` TC_FLOOD, `1` FLOOD, `2` DIRECT, `3` TC_DIRECT |
+| `route_typename` | string | The name of the route type, for example `"TC_FLOOD"` |
+| `region_scope` | boolean | `true` when `route_type` is `0` (a region-scoped flood) |
+| `flood_scope` | string or null | The matched name from **Flood Scope Allowlist**, or `null` |
 
-## CLI Console Events
+## meshcore_delivery_update
 
-### meshcore_cli_response
-Fired after an `execute_command` (or `execute_command_ui`) call made with
-`record_to_console: true` completes. Use it to react to CLI output in
-automations without polling the console sensor.
+The integration fires `meshcore_delivery_update` when new delivery data arrives for a message that `meshcore_message` already announced.
 
-**Event data:**
+| Variant | Number of updates | Final update |
+|---|---|---|
+| Outgoing channel message | N (4 to 20), one each second | The last pass has `progressive: false` |
+| Outgoing direct message | 1 | That update has `progressive: false` |
+| Incoming channel message, adaptive mode only | 0 to 2 | None: all updates have `progressive: true` |
 
-- `command` - The command string that was run
-- `response` - The normalized response (see [execute_command Response Shapes](#execute_command-response-shapes)), or `null` on failure
-- `is_error` - `true` when the command failed or returned no response
-- `entry_id` - The config entry named in the service call (`null` when none was named)
-- `resolved_entry_id` - The config entry the command actually ran against
-- `device_id` - That entry's device ID in the device registry
-- `timestamp` - Unix epoch seconds when the response was recorded
+**Outgoing channel message:** the fields are the [outgoing channel message fields](#outgoing-channel-message-fields), without `collecting`, and with these values:
 
-**Example:**
-```yaml
-alias: Notify on CLI error
-trigger:
-  - platform: event
-    event_type: meshcore_cli_response
-condition:
-  - condition: template
-    value_template: "{{ trigger.event.data.is_error }}"
-action:
-  - service: persistent_notification.create
-    data:
-      title: "MeshCore CLI error"
-      message: "Command '{{ trigger.event.data.command }}' failed"
-```
+| Field | Description |
+|---|---|
+| `rx_log_data` | All copies collected so far (cumulative) |
+| `repeater_count` | The number of entries in `rx_log_data`. It does not confirm that other nodes received the message. |
+| `progressive` | `true` on each pass before the last. `false` on the final update. |
 
-## Connection Events
+**Outgoing direct message:** the fields are the [outgoing direct message fields](#outgoing-direct-message-fields), plus `progressive: false`. Use `ack_received` for the result.
 
-### meshcore_connected
-Fired when the Meshcore device connects.
+**Incoming channel message:** the update has `entity_id`, `domain`, `message_type`, `sender_name`, `message`, `timestamp`, `rx_log_data` (cumulative), `repeater_count`, `progressive: true`, `entry_id` and `device_id`. It has no `send_id`. To find the matching `meshcore_message`, compare `entity_id` and `timestamp`.
 
-- `connection_type` - `usb`, `ble` or `tcp`
-- `entry_id` / `device_id` - Which radio connected
+## meshcore_message_sent
 
-### meshcore_disconnected  
-Fired when the Meshcore device disconnects.
+The integration fires `meshcore_message_sent` when the companion accepts a message. It does not confirm delivery. A direct message fires it two times. To act one time, ignore the event with `progressive: true`.
 
-- `unexpected` - `true` when the link was lost rather than closed; absent on a normal teardown
-- `entry_id` / `device_id` - Which radio disconnected
+| Field | Type | Present | Description |
+|---|---|---|---|
+| `message` | string | Always | The text that was sent |
+| `device` | string | Always | The entry ID of the companion that sent the message |
+| `message_type` | string | Always | `"direct"` or `"channel"` |
+| `receiver` | string or null | Always | Direct: the name of the recipient contact, or `null`. Channel: `"channel_<channel_idx>"`. |
+| `timestamp` | integer | Always | Unix seconds when the event fired |
+| `send_id` | string | Always | 8 hex characters |
+| `contact_public_key` | string | Direct only | The full public key of the recipient |
+| `ack_received` | boolean | Direct only | `false` on the first event. The ACK result on the second event. |
+| `progressive` | boolean | Direct, first event only | `true` |
+| `channel_idx` | integer | Channel only | The channel index |
+| `send_timestamp` | integer | Channel only | The timestamp that the companion used for the packet |
+| `scope` | string or null | Channel only | The flood scope of the service call |
+| `entry_id`, `device_id` | string | Always | See [Which companion fired the event](#which-companion-fired-the-event) |
 
-**Example:**
-```yaml
-alias: Connection Monitor
-trigger:
-  - platform: event
-    event_type: meshcore_connected
-  - platform: event
-    event_type: meshcore_disconnected
-action:
-  - service: persistent_notification.create
-    data:
-      title: "Meshcore Status"
-      message: "Device {{ 'connected' if trigger.event.event_type == 'meshcore_connected' else 'disconnected' }}"
-```
+## meshcore_message_send_failed
 
-## execute_command Response Shapes
+The integration fires `meshcore_message_send_failed` when a message did not leave the companion. The service call does not raise an error, except for `traffic_policy`.
 
-When calling the `meshcore.execute_command` service with `return_response: true`, the
-integration normalizes the underlying SDK return value into one of three JSON-safe shapes.
-Callers should branch on these:
+| Field | Type | Present | Description |
+|---|---|---|---|
+| `reason` | string | Always | See the table below |
+| `message_type` | string | Always | `"direct"` or `"channel"` |
+| `timestamp` | integer | Always | Unix seconds |
+| `target` | string | Direct only | The requested recipient, for example `node_id 'myclient'` or `public key 'def456'` |
+| `channel_idx` | integer | Channel only | The requested channel index |
+| `detail` | string | `rejected`, `send_failed`, `traffic_policy` | The text from the firmware, the library or the traffic policy |
+| `entry_id`, `device_id` | string | Always | See [Which companion fired the event](#which-companion-fired-the-event) |
 
-1. **Pass-through dict** — for `send_*` / `set_*` commands (which return an SDK Event with a
-   `.payload` dict) and for `req_*_sync` commands that return a plain dict. The dict is
-   surfaced directly, with any `bytes` values hex-encoded to strings:
+| `reason` | Cause | Service call |
+|---|---|---|
+| `contact_not_found` | No contact on the companion matches (direct only) | Returns |
+| `not_connected` | The companion is not connected | Returns |
+| `rejected` | The firmware refused the message | Returns |
+| `send_failed` | The send raised an exception | Returns |
+| `traffic_policy` | The messages lane has no credit. See [Mesh Traffic Policy](traffic-policy.md). | Raises an error |
 
-   ```json
-   { "name": "MyRepeater", "owner": "alice" }
-   ```
+No event fires when `entry_id` does not exist, or when a `send_message` call has no recipient.
 
-2. **Wrapped value** — for `req_*_sync` commands that return a list, scalar, or string
-   (for example `req_telemetry_sync` returns an LPP list, `req_regions_sync` returns a
-   region string). The value is wrapped under a `result` key:
+## meshcore_raw_event
 
-   ```json
-   { "result": [ { "channel": 1, "type": "temperature", "value": 21.5 } ] }
-   ```
+The integration fires `meshcore_raw_event` for each event that the meshcore-py library reports, except `PRIVATE_KEY`. The [meshcore-py source](https://github.com/meshcore-dev/meshcore_py) defines each payload.
 
-   ```json
-   { "result": "US" }
-   ```
+| Field | Type | Present | Description |
+|---|---|---|---|
+| `event_type` | string | Always | The library event type, for example `"EventType.BATTERY"` |
+| `payload` | any | Always | The library payload. Bytes become hex strings. `null` when serialization failed. |
+| `timestamp` | float | Always | Unix seconds when the event fired |
+| `serialization_error` | string | When serialization failed | The error text |
+| `entry_id`, `device_id` | string | Always | See [Which companion fired the event](#which-companion-fired-the-event) |
 
-3. **No-response error** — when the SDK returns `None` (a timeout or no response), a
-   structured error is returned so callers can detect the failure rather than receiving a
-   bare `null`:
+### RX_LOG_DATA additions
 
-   ```json
-   { "error": "no_response", "command": "req_status_sync" }
-   ```
+The integration adds two objects to the payload of `EventType.RX_LOG_DATA`:
 
-## Common Automation Patterns
+| Field | Present | Description |
+|---|---|---|
+| `parsed` | When the header can be read | `header`, `path_len`, `path_hash_size`, and for a non-empty path `path` and `path_nodes` (one hex string for each hop). Channel packets also have `channel_hash`. |
+| `decrypted` | On most packets | The result of the channel decryption. Use the text only when `decrypted.decrypted` is `true`. |
 
-### Message Filtering by Channel
-```yaml
-alias: Channel 0 Messages Only
-trigger:
-  - platform: event
-    event_type: meshcore_message
-    event_data:
-      message_type: "channel"
-      channel_idx: 0
-action:
-  - service: notify.notify
-    data:
-      message: "Ch0: {{ trigger.event.data.message }}"
-```
+When a channel key decrypts the packet, `decrypted` has `decrypted: true`, `channel_idx`, `channel_name`, `timestamp`, `text`, and the `parsed` route fields. When no key decrypts it, `decrypted` has only header fields and no `decrypted` key.
 
-### Message Filtering by Sender
-```yaml
-alias: Messages from Specific Node
-trigger:
-  - platform: event
-    event_type: meshcore_message
-condition:
-  - condition: template
-    value_template: "{{ 'f293ac' in trigger.event.data.pubkey_prefix }}"
-action:
-  - service: notify.notify
-    data:
-      message: "{{ trigger.event.data.sender_name }}: {{ trigger.event.data.message }}"
-```
-
-### Signal Quality Monitoring
-```yaml
-alias: Poor Signal Alert
-trigger:
-  - platform: event
-    event_type: meshcore_message
-    event_data:
-      message_type: "channel"
-condition:
-  - condition: template
-    value_template: >
-      {{ trigger.event.data.rx_log_data is defined and
-         trigger.event.data.rx_log_data | selectattr('snr', 'lt', 5) | list | length > 0 }}
-action:
-  - service: notify.notify
-    data:
-      title: "Poor Signal Quality"
-      message: >
-        Message from {{ trigger.event.data.sender_name }} had poor signal:
-        {% for rx in trigger.event.data.rx_log_data %}
-        Path {{ rx.path_len }} hops: SNR {{ rx.snr }}dB, RSSI {{ rx.rssi }}
-        {% endfor %}
-```
-
-### Mesh Path Monitoring
-```yaml
-alias: Multi-Path Message Detection
-trigger:
-  - platform: event
-    event_type: meshcore_message
-    event_data:
-      message_type: "channel"
-condition:
-  - condition: template
-    value_template: "{{ trigger.event.data.rx_log_data | length > 1 }}"
-action:
-  - service: logbook.log
-    data:
-      name: "Mesh Routing"
-      message: >
-        Message received via {{ trigger.event.data.rx_log_data | length }} paths:
-        {% for rx in trigger.event.data.rx_log_data %}
-        - {{ rx.path_len }} hops ({{ rx.path }}): SNR {{ rx.snr }}dB
-        {% endfor %}
-```
-
-### Contact Discovery
-```yaml
-alias: New Contact Alert
-trigger:
-  - platform: event
-    event_type: meshcore_raw_event
-    event_data:
-      event_type: "EventType.CONTACTS"
-action:
-  - service: persistent_notification.create
-    data:
-      title: "Contacts Updated"
-      message: "Network has {{ trigger.event.data.payload | length }} contacts"
-```
-
-## Event Data Examples
-
-### First-Class Events
-
-#### Received Channel Message
-```yaml
-event_type: meshcore_message
-data:
-  message: "Testing channel 0"
-  sender_name: "🦄"
-  channel: "public"
-  channel_idx: 0
-  entity_id: binary_sensor.meshcore_a305ca_ch_0_messages
-  timestamp: "2025-09-11T18:08:47.722967"
-  message_type: "channel"
-  pubkey_prefix: "f293ac8c4a71"
-  rx_log_data:
-    - channel_idx: 0
-      channel_name: "public"
-      timestamp: 1762838456
-      text: "🦄: Testing channel 0"
-      snr: 12.0
-      rssi: -70
-      path_len: 0
-      path: ""
-      channel_hash: "11"
-      route_type: 0
-      route_typename: "TC_FLOOD"
-      region_scope: true
-      flood_scope: "pl-mz"
-    - channel_idx: 0
-      channel_name: "public"
-      timestamp: 1762838456
-      text: "🦄: Testing channel 0"
-      snr: 5.5
-      rssi: -50
-      path_len: 1
-      path: "cf"
-      channel_hash: "11"
-      route_type: 3
-      route_typename: "TC_DIRECT"
-      region_scope: false
-      flood_scope: null
-```
-
-#### Received Direct Message
-```yaml
-event_type: meshcore_message
-data:
-  message: "Hello there!"
-  sender_name: "🦄"
-  pubkey_prefix: "f293ac8c4a71"
-  receiver_name: "meshcore"
-  entity_id: binary_sensor.meshcore_a305ca_f293ac_messages
-  timestamp: "2025-09-11T18:09:27.722298"
-  message_type: "direct"
-```
-
-### Raw SDK Events
-
-#### Battery Status
-```yaml
-event_type: meshcore_raw_event
-data:
-  event_type: EventType.BATTERY
-  payload:
-    level: 4069
-    used_kb: 167
-    total_kb: 1404
-  timestamp: 1757613857.7153687
-```
-
-#### Message Received (Raw)
-```yaml
-event_type: meshcore_raw_event
-data:
-  event_type: EventType.CONTACT_MSG_RECV
-  payload:
-    type: PRIV
-    SNR: 11.5
-    pubkey_prefix: f293ac8c4a71
-    path_len: 255
-    txt_type: 0
-    sender_timestamp: 1757613902
-    text: "Test message"
-  timestamp: 1757613903.7221627
-```
-
-#### Radio Reception Log
 ```yaml
 event_type: meshcore_raw_event
 data:
   event_type: EventType.RX_LOG_DATA
   payload:
-    raw_hex: 32ce1501cf11e351c12442cbb78bab821ae4ab935d741e58
-    snr: 12.5
-    rssi: -50
-    payload: 1501cf11e351c12442cbb78bab821ae4ab935d741e58
-    payload_length: 22
+    snr: 9.5
+    rssi: -71
+    route_type: 1
+    route_typename: FLOOD
+    payload_type: 5
+    path_len: 1
+    path_hash_size: 1
+    path: "cf"
     parsed:
       header: "15"
       path_len: 1
-      path: cf
+      path_hash_size: 1
+      path: "cf"
       path_nodes:
-        - cf
-      channel_hash: "11"
+        - "cf"
+      channel_hash: "4a"
     decrypted:
-      channel_idx: 0
-      channel_name: Public
-      timestamp: 1762838525
-      text: "🦄: Test message"
       decrypted: true
+      channel_idx: 1
+      channel_name: "#mychannel"
+      timestamp: 1791051000
+      text: "mynode: Test"
       path_len: 1
-      path: cf
-      channel_hash: "11"
-  timestamp: 1762838527.1688693
+      path: "cf"
+      path_hash_size: 1
+      channel_hash: "4a"
+  timestamp: 1791051001.1688693
+  entry_id: YOUR_ENTRY_ID
+  device_id: YOUR_DEVICE_ID
 ```
 
-#### Contacts Update
+## meshcore_cli_response
+
+The integration fires `meshcore_cli_response` when `execute_command` or `execute_command_ui` completes with `record_to_console: true`. A denied command or a traffic policy refusal fires no event.
+
+| Field | Type | Description |
+|---|---|---|
+| `command` | string | The command text |
+| `response` | object or null | See [Response shapes](services.md#response-shapes). `null` when the command did not parse, does not exist, or no entry is connected. Private keys and channel secrets show `<redacted>`, unless **Expose Node Secrets in Events** is on. |
+| `is_error` | boolean | `true` when `response` is `null` or has an `error` key |
+| `entry_id` | string or null | The entry that the service call named. `null` for a direct `execute_command` call without `entry_id`. |
+| `resolved_entry_id` | string or null | The entry that ran the command |
+| `device_id` | string or null | The device registry ID of the resolved entry |
+| `timestamp` | integer | Unix seconds |
+
+## Connection events
+
+| Event | Field | Description |
+|---|---|---|
+| `meshcore_connected` | `connection_type` | `"usb"`, `"ble"` or `"tcp"`. Fires each time the link opens, also on each reconnect. |
+| `meshcore_disconnected` | `unexpected` | `true` when the link is lost. The first reconnect attempt is after approximately 5 seconds. Absent on unload, reload or Home Assistant stop. |
+
+Both events carry `entry_id` and `device_id`.
+
+## Event data examples
+
+In these examples, the public key of the companion starts with `abc123`. The public key of `myclient` starts with `def456`.
+
+### Example: incoming channel message
+
 ```yaml
-event_type: meshcore_raw_event
+event_type: meshcore_message
 data:
-  event_type: EventType.CONTACTS
-  payload:
-    f293ac8c4a712ce1a82f06aad4c40e9bc38a0860fc789c7a2f9ce106bdaff710:
-      public_key: f293ac8c4a712ce1a82f06aad4c40e9bc38a0860fc789c7a2f9ce106bdaff710
-      type: 1
-      adv_name: "Weather Station"
-      last_advert: 1757574270
-      adv_lat: 45.427231
-      adv_lon: -122.795721
+  message: "Good morning"
+  sender_name: "myclient"
+  pubkey_prefix: "def456abc012"
+  channel: "#mychannel"
+  channel_idx: 1
+  entity_id: binary_sensor.meshcore_abc123_ch_1_messages
+  domain: meshcore
+  timestamp: "2026-10-03T18:08:47.722967+00:00"
+  message_type: channel
+  hop_count: 1
+  snr: 6.25
+  rx_log_data:
+    - channel_idx: 1
+      channel_name: "#mychannel"
+      timestamp: 1791050927
+      text: "myclient: Good morning"
+      snr: 6.25
+      rssi: -92
+      path_len: 1
+      path: "cf"
+      path_hash_size: 1
+      channel_hash: "4a"
+      route_type: 1
+      route_typename: FLOOD
+      region_scope: false
+      flood_scope: null
+  entry_id: YOUR_ENTRY_ID
+  device_id: YOUR_DEVICE_ID
 ```
 
-## When to Use Which Event Type
+### Example: final update of an outgoing channel message
 
-### Use First-Class Message Events When:
-- Building simple message notifications
-- Creating message logging automations
-- Filtering messages by type (channel vs direct)
-- You need clean, simplified data structures
-
-### Use Raw SDK Events When:
-- Monitoring battery or device status
-- Tracking network topology changes
-- Accessing signal quality metrics (SNR)
-- Building advanced telemetry automations
-- You need complete event data
-
-## Performance Considerations
-
-- First-class events have simplified payloads for better performance
-- Use event_data filters in triggers to reduce processing
-- Consider using `mode: single` or `mode: queued` for message handlers
-- Raw events contain complete SDK data - extract only needed fields
-
-## SDK Event Reference
-
-For a complete list of all SDK event types and their payloads, see the [Meshcore Python SDK Events documentation](https://github.com/meshcore-dev/meshcore_py/blob/main/src/meshcore/events.py).
+```yaml
+event_type: meshcore_delivery_update
+data:
+  message: "Test"
+  sender_name: "mynode"
+  channel: "#mychannel"
+  channel_idx: 1
+  entity_id: binary_sensor.meshcore_abc123_ch_1_messages
+  domain: meshcore
+  timestamp: "2026-10-03T18:10:00.120000+00:00"
+  outgoing: true
+  message_type: channel
+  send_id: "1a2b3c4d"
+  repeats_observable: true
+  rx_log_data:
+    - channel_idx: 1
+      channel_name: "#mychannel"
+      timestamp: 1791051000
+      text: "mynode: Test"
+      snr: 9.5
+      rssi: -71
+      path_len: 1
+      path: "cf"
+      path_hash_size: 1
+      channel_hash: "4a"
+      route_type: 1
+      route_typename: FLOOD
+      region_scope: false
+      flood_scope: null
+  repeater_count: 1
+  progressive: false
+  entry_id: YOUR_ENTRY_ID
+  device_id: YOUR_DEVICE_ID
+```

@@ -1,295 +1,463 @@
 ---
-sidebar_position: 6
+sidebar_position: 14
 title: Automation
 ---
 
 # Automation
 
-The Meshcore Home Assistant integration provides rich automation capabilities through events, services, and sensors.
+The examples are valid for Home Assistant 2025.6 and later. For the event fields, see [Events](events.md). For the service fields, see [Services](services.md).
 
-## Message Automations
+Replace these example values with your values:
 
-### Forward Messages to Push Notifications
+| Example value | Meaning |
+|---|---|
+| `abc123` | The first 6 hex characters of the companion public key |
+| `def456abc0` | The first 10 hex characters of the public key of a tracked node |
+| `def456abc012` | The 12-character public key prefix of a contact |
+| `mynode`, `myrepeater`, `myclient` | The name of the companion or the tracked node in the entity ID |
+| `YOUR_ENTRY_ID`, `YOUR_DEVICE_ID` | The IDs of a companion. See [Select the entry](services.md#select-the-entry). |
+| `notify.notify` | Your notify action, for example `notify.mobile_app_myphone` |
 
-Forward all Meshcore messages to your mobile device:
+To find your entity IDs, open **Developer Tools > States** and filter on `meshcore`.
+
+## Ignore your own messages
+
+`meshcore_message` also fires for the messages that the send services send, with `outgoing: true`. An automation that forwards or answers messages must ignore them. If not, a reply automation answers itself. Use this condition:
 
 ```yaml
-alias: Meshcore Forward to Push
-description: "Forwards all MeshCore messages to a push notification"
+conditions:
+  - condition: template
+    value_template: "{{ not (trigger.event.data.outgoing | default(false)) }}"
+```
+
+## Message automations
+
+### Notify on an incoming direct message
+
+```yaml
+alias: MeshCore direct message notification
 triggers:
   - trigger: event
     event_type: meshcore_message
+    event_data:
+      message_type: direct
+conditions:
+  - condition: template
+    value_template: "{{ not (trigger.event.data.outgoing | default(false)) }}"
+actions:
+  - action: notify.notify
+    data:
+      title: >-
+        MeshCore message from
+        {{ trigger.event.data.sender_name or trigger.event.data.pubkey_prefix }}
+      message: "{{ trigger.event.data.message }}"
+mode: queued
+```
+
+`sender_name` is `null` when the sender is not a contact on the companion. The title then shows the public key prefix.
+
+### Forward all received messages
+
+```yaml
+alias: MeshCore forward to notification
+description: Sends each received MeshCore message to a notification
+triggers:
+  - trigger: event
+    event_type: meshcore_message
+conditions:
+  - condition: template
+    value_template: "{{ not (trigger.event.data.outgoing | default(false)) }}"
 actions:
   - action: notify.notify
     data:
       message: >-
-        {% if trigger.event.data.channel is defined %}
-          Channel {{ trigger.event.data.channel }}: {{ trigger.event.data.sender_name }}: {{ trigger.event.data.message }}
+        {% set sender = trigger.event.data.sender_name or 'Unknown' %}
+        {% if trigger.event.data.message_type == 'channel' %}
+          {{ trigger.event.data.channel }}: {{ sender }}: {{ trigger.event.data.message }}
         {% else %}
-          {{ trigger.event.data.sender_name }}: {{ trigger.event.data.message }}
+          {{ sender }}: {{ trigger.event.data.message }}
         {% endif %}
-mode: single
+mode: queued
 ```
 
-### Channel-Specific Notifications
+For a channel message from a node that is not a contact, `sender_name` is `Unknown` and `message` contains the full text.
 
-Monitor only specific channels:
+### Filter messages
+
+Add one of these filters to the forward example above.
+
+Messages on channel 1 (trigger):
 
 ```yaml
-alias: Channel 0 Messages Only
-trigger:
-  - platform: event
+    event_data:
+      message_type: channel
+      channel_idx: 1
+```
+
+Messages on one companion (trigger). To filter on the device, use `device_id: YOUR_DEVICE_ID`.
+
+```yaml
+    event_data:
+      entry_id: YOUR_ENTRY_ID
+```
+
+Messages from one node (condition). A channel message has `pubkey_prefix` only when the sender is a contact on the companion.
+
+```yaml
+  - condition: template
+    value_template: >-
+      {{ (trigger.event.data.pubkey_prefix | default('', true)).startswith('def456') }}
+```
+
+### Reply to a status request
+
+The sender must be a contact on the companion. If not, the reply fails with `contact_not_found`. The reply goes out from the companion that received the request.
+
+```yaml
+alias: MeshCore reply to status requests
+triggers:
+  - trigger: event
     event_type: meshcore_message
     event_data:
-      message_type: "channel"
-      channel_idx: 0
-action:
-  - service: notify.notify
-    data:
-      message: "Ch0: {{ trigger.event.data.message }}"
-```
-
-### Filter Messages by Sender
-
-Get notifications only from specific nodes:
-
-```yaml
-alias: Messages from Specific Node
-trigger:
-  - platform: event
-    event_type: meshcore_message
-condition:
+      message_type: direct
+conditions:
   - condition: template
-    value_template: "{{ 'f293ac' in trigger.event.data.pubkey_prefix }}"
-action:
-  - service: notify.notify
+    value_template: "{{ not (trigger.event.data.outgoing | default(false)) }}"
+  - condition: template
+    value_template: "{{ trigger.event.data.message | trim | lower == 'status' }}"
+actions:
+  - action: meshcore.send_message
     data:
-      message: "{{ trigger.event.data.sender_name }}: {{ trigger.event.data.message }}"
+      entry_id: "{{ trigger.event.data.entry_id }}"
+      pubkey_prefix: "{{ trigger.event.data.pubkey_prefix }}"
+      message: >-
+        Battery {{ states('sensor.meshcore_abc123_battery_percentage_mynode') }}%,
+        {{ states('sensor.meshcore_abc123_node_count_mynode') }} nodes
+mode: queued
+max: 5
 ```
 
-## Network Maintenance
+## Send automations
 
-### Scheduled Advertisement Broadcasting
+### Alert when a send fails
 
-Keep your node discoverable by sending periodic advertisements:
+Most send failures do not raise an error. They fire `meshcore_message_send_failed`.
 
 ```yaml
-alias: MeshCore Scheduled Advertisement
-description: "Sends a MeshCore advertisement broadcast every 15 minutes"
-trigger:
-  - platform: time_pattern
-    minutes: "/15"  # Every 15 minutes
-action:
-  - service: meshcore.execute_command
+alias: MeshCore send failed
+triggers:
+  - trigger: event
+    event_type: meshcore_message_send_failed
+actions:
+  - action: notify.notify
     data:
-      command: "send_advert"
-      kwargs: {}
+      title: MeshCore send failed
+      message: >-
+        {{ trigger.event.data.message_type }} message not sent:
+        {{ trigger.event.data.reason }}
+        {{ trigger.event.data.detail | default('') }}
+mode: queued
+```
+
+### Continue when the traffic policy refuses a send
+
+Under the Governed traffic policy, a send fails when the messages lane is empty, and the error stops the automation. Set `continue_on_error: true` to continue. See [Mesh Traffic Policy](traffic-policy.md).
+
+```yaml
+alias: MeshCore hourly status message
+triggers:
+  - trigger: time_pattern
+    minutes: "0"
+actions:
+  - action: meshcore.send_message
+    continue_on_error: true
+    data:
+      pubkey_prefix: "def456abc012"
+      message: "Hourly status check"
+  - action: logbook.log
+    data:
+      name: MeshCore
+      message: Hourly status action completed
 mode: single
 ```
 
-## Sensor Monitoring
+### Log final delivery results
 
-### Temperature Alerts
-
-Monitor environmental sensors from telemetry:
+Each outgoing message gets one final `meshcore_delivery_update` with `progressive: false`.
 
 ```yaml
-alias: High Temperature Alert
-trigger:
-  - platform: numeric_state
-    entity_id: sensor.meshcore_def456_sensor1_ch1_temperature
-    above: 30
-action:
-  - service: notify.notify
+alias: MeshCore log final delivery results
+triggers:
+  - trigger: event
+    event_type: meshcore_delivery_update
+    event_data:
+      outgoing: true
+      progressive: false
+actions:
+  - action: logbook.log
     data:
-      message: "Temperature alert: {{ states(trigger.entity_id) }}°C"
+      name: MeshCore delivery
+      message: >-
+        {% set d = trigger.event.data %}
+        {% if d.message_type == 'direct' %}
+          Direct message to {{ d.receiver_name or d.pubkey_prefix }}:
+          {{ 'ACK received' if d.ack_received else 'no ACK' }}
+        {% elif d.repeats_observable %}
+          Channel {{ d.channel }}: {{ d.repeater_count }} relayed copies heard
+        {% else %}
+          Channel {{ d.channel }}: message too long to count relayed copies
+        {% endif %}
+mode: queued
 ```
 
-### Repeater Battery Monitoring
+`repeater_count` is the number of relayed copies that the companion heard. It does not confirm that other nodes received the message. See [meshcore_delivery_update](events.md#meshcore_delivery_update).
 
-Monitor repeater stations for low battery:
+### Notify on a CLI error
 
 ```yaml
-alias: Repeater Low Battery
-trigger:
-  - platform: numeric_state
-    entity_id: sensor.meshcore_abc123_repeater1_battery_percentage
+alias: MeshCore CLI error
+triggers:
+  - trigger: event
+    event_type: meshcore_cli_response
+    event_data:
+      is_error: true
+actions:
+  - action: persistent_notification.create
+    data:
+      title: MeshCore CLI error
+      message: "Command '{{ trigger.event.data.command }}' failed: {{ trigger.event.data.response }}"
+mode: queued
+```
+
+The event fires only for commands that run with `record_to_console: true`. A firmware error has `is_error: true`. See [Response shapes](services.md#response-shapes).
+
+## Network maintenance
+
+### Send an advert on a schedule
+
+This example sends a flood advert every 6 hours. Under Governed, each advert takes one credit from the flood lane. Do not send adverts often, because every repeater retransmits a flood advert.
+
+```yaml
+alias: MeshCore scheduled advert
+triggers:
+  - trigger: time_pattern
+    hours: "/6"
+    minutes: "0"
+actions:
+  - action: meshcore.execute_command
+    data:
+      command: "send_advert true"
+mode: single
+```
+
+## Connection automations
+
+### Connection lost and restored
+
+```yaml
+alias: MeshCore connection lost or restored
+triggers:
+  - trigger: event
+    event_type: meshcore_disconnected
+    event_data:
+      unexpected: true
+    id: lost
+  - trigger: event
+    event_type: meshcore_connected
+    id: restored
+actions:
+  - action: persistent_notification.create
+    data:
+      title: MeshCore
+      notification_id: meshcore_connection
+      message: >-
+        {% if trigger.id == 'lost' %}
+          The link to the companion is lost. The integration tries to reconnect.
+        {% else %}
+          The companion is connected over {{ trigger.event.data.connection_type }}.
+        {% endif %}
+mode: queued
+```
+
+A reload or a shutdown fires `meshcore_disconnected` without `unexpected`, so this automation ignores it. Use these events, not the sensors, to detect a lost link: the sensors become `unavailable` when the companion disconnects.
+
+## Sensor automations
+
+### Companion battery low
+
+```yaml
+alias: MeshCore companion battery low
+triggers:
+  - trigger: numeric_state
+    entity_id: sensor.meshcore_abc123_battery_percentage_mynode
     below: 20
-action:
-  - service: notify.notify
-    data:
-      title: "Repeater Battery Low"
-      message: "{{ state_attr(trigger.entity_id, 'friendly_name') }} at {{ states(trigger.entity_id) }}%"
-```
-
-## Connection Monitoring
-
-### Node Offline Detection
-
-Get notified when nodes stop responding:
-
-```yaml
-alias: Node Went Offline
-trigger:
-  - platform: state
-    entity_id: sensor.meshcore_abc123_repeater1_uptime
-    to: 'unavailable'
     for:
       minutes: 10
-action:
-  - service: notify.notify
+actions:
+  - action: notify.notify
     data:
-      title: "Node Offline"
-      message: "{{ state_attr(trigger.entity_id, 'friendly_name') }} is not responding"
+      title: MeshCore companion battery low
+      message: "{{ trigger.to_state.name }} is at {{ trigger.to_state.state }} %"
+mode: single
 ```
 
-### Connection Status Monitoring
+#### Raw event variant (experimental)
 
-Track when your Meshcore device connects or disconnects:
-
-```yaml
-alias: Connection Monitor
-trigger:
-  - platform: event
-    event_type: meshcore_connected
-  - platform: event
-    event_type: meshcore_disconnected
-action:
-  - service: persistent_notification.create
-    data:
-      title: "Meshcore Status"
-      message: "Device {{ 'connected' if trigger.event.event_type == 'meshcore_connected' else 'disconnected' }}"
-```
-
-## Signal Quality
-
-### Poor Signal Alert
-
-Monitor signal quality and alert on degradation using RX_LOG data:
+The raw `BATTERY` event is experimental: the payload can change with meshcore-py releases. `level` is in mV.
 
 ```yaml
-alias: Poor Signal Alert
-trigger:
-  - platform: event
-    event_type: meshcore_message
-    event_data:
-      message_type: "channel"
-condition:
-  - condition: template
-    value_template: >
-      {{ trigger.event.data.rx_log_data is defined and
-         trigger.event.data.rx_log_data | selectattr('snr', 'lt', 5) | list | length > 0 }}
-action:
-  - service: notify.notify
-    data:
-      title: "Poor Signal Quality"
-      message: >
-        Message from {{ trigger.event.data.sender_name }} had poor signal:
-        {% for rx in trigger.event.data.rx_log_data %}
-        Path {{ rx.path_len }} hops: SNR {{ rx.snr }}dB, RSSI {{ rx.rssi }}
-        {% endfor %}
-```
-
-### Multi-Path Reception Monitoring
-
-Track when messages are received via multiple mesh routes:
-
-```yaml
-alias: Multi-Path Message Detection
-trigger:
-  - platform: event
-    event_type: meshcore_message
-    event_data:
-      message_type: "channel"
-condition:
-  - condition: template
-    value_template: "{{ trigger.event.data.rx_log_data | length > 1 }}"
-action:
-  - service: logbook.log
-    data:
-      name: "Mesh Routing"
-      message: >
-        Message received via {{ trigger.event.data.rx_log_data | length }} paths:
-        {% for rx in trigger.event.data.rx_log_data %}
-        - {{ rx.path_len }} hops ({{ rx.path }}): SNR {{ rx.snr }}dB
-        {% endfor %}
-```
-
-### Direct Path Messages Only
-
-Get notifications only for messages received directly (no hops):
-
-```yaml
-alias: Direct Path Messages
-trigger:
-  - platform: event
-    event_type: meshcore_message
-    event_data:
-      message_type: "channel"
-condition:
-  - condition: template
-    value_template: >
-      {{ trigger.event.data.rx_log_data is defined and
-         trigger.event.data.rx_log_data | selectattr('path_len', 'eq', 0) | list | length > 0 }}
-action:
-  - service: notify.notify
-    data:
-      message: "Direct: {{ trigger.event.data.sender_name }}: {{ trigger.event.data.message }}"
-```
-
-## Raw Event Monitoring
-
-### Battery Event Tracking
-
-Monitor battery updates from the raw event stream:
-
-```yaml
-alias: Battery Monitor
-trigger:
-  - platform: event
+alias: MeshCore companion battery low (raw event)
+triggers:
+  - trigger: event
     event_type: meshcore_raw_event
     event_data:
-      event_type: "EventType.BATTERY"
-action:
-  - service: notify.notify
+      event_type: EventType.BATTERY
+conditions:
+  - condition: template
+    value_template: >-
+      {{ trigger.event.data.payload is mapping
+         and trigger.event.data.payload.level is defined
+         and trigger.event.data.payload.level < 3500 }}
+actions:
+  - action: notify.notify
     data:
-      message: "Battery: {{ (trigger.event.data.payload.level / 1000) | round(2) }}V"
+      message: "Companion battery: {{ (trigger.event.data.payload.level / 1000) | round(2) }} V"
+mode: single
 ```
 
-## Message Logging
+### Tracked node stops answering
 
-### Log Sent Messages
-
-Keep track of all messages sent through the integration:
+The Online sensor changes to `off` when the node does not answer for 2.5 times its update interval. See [Online sensors](sensors.md#online-sensors).
 
 ```yaml
-alias: Log Sent Messages
-trigger:
-  - platform: event
-    event_type: meshcore_message_sent
-action:
-  - service: logbook.log
+alias: MeshCore repeater offline
+triggers:
+  - trigger: state
+    entity_id: binary_sensor.meshcore_def456abc0_online_myrepeater
+    to: "off"
+    for:
+      minutes: 10
+actions:
+  - action: notify.notify
     data:
-      name: "Sent"
-      message: "{{ trigger.event.data.message_type }}: {{ trigger.event.data.message }}"
+      title: MeshCore node offline
+      message: "{{ trigger.to_state.name }} does not answer"
+mode: single
 ```
 
-## Tips for Automations
+### Low battery on any tracked node
 
-1. **Use Event Filters**: Filter events in the trigger to reduce processing
-2. **Check Conditions**: Use conditions to further refine when automations run
-3. **Mode Selection**: Use `mode: single` to prevent duplicate executions
-4. **Template Sensors**: Create template sensors for complex calculations
-5. **Combine Triggers**: Use multiple triggers for related events
+The pattern `meshcore_[0-9a-f]{10}_` selects the battery sensors of tracked nodes and other nodes that send battery telemetry. It excludes the companion.
 
-## Advanced Automation
+```yaml
+alias: MeshCore low battery on a tracked node
+triggers:
+  - trigger: template
+    value_template: >-
+      {% set ns = namespace(count=0) %}
+      {% for id in integration_entities('meshcore')
+           | select('match', 'sensor[.]meshcore_[0-9a-f]{10}_') %}
+        {% if state_attr(id, 'device_class') == 'battery'
+              and states(id) | is_number
+              and states(id) | float < 20 %}
+          {% set ns.count = ns.count + 1 %}
+        {% endif %}
+      {% endfor %}
+      {{ ns.count > 0 }}
+actions:
+  - variables:
+      low_nodes: >-
+        {% set ns = namespace(names=[]) %}
+        {% for id in integration_entities('meshcore')
+             | select('match', 'sensor[.]meshcore_[0-9a-f]{10}_') %}
+          {% if state_attr(id, 'device_class') == 'battery'
+                and states(id) | is_number
+                and states(id) | float < 20 %}
+            {% set ns.names = ns.names + [state_attr(id, 'friendly_name') ~ ': ' ~ states(id) ~ ' %'] %}
+          {% endif %}
+        {% endfor %}
+        {{ ns.names | join(', ') }}
+  - action: notify.notify
+    data:
+      title: MeshCore low battery
+      message: "{{ low_nodes }}"
+mode: single
+```
 
-For complex contact management and automation workflows, see the community example:
-[Meshcore Contact Management in Home Assistant](https://github.com/WJ4IoT/Meshcore-Contact-Management-in-Home-Assistant)
+A template trigger fires only when its result changes from false to true. A second low node does not fire it again while the first node is still low.
 
-## Related Documentation
+### Remote temperature
 
-- [Events](./events.md) - Complete event reference
-- [Services](./services.md) - Available services for automations
-- [Sensors](./sensors.md) - Sensor entities for triggers
-- [Messaging](./messaging.md) - Message handling details
+```yaml
+alias: MeshCore high temperature
+triggers:
+  - trigger: numeric_state
+    entity_id: sensor.meshcore_def456abc0_ch1_temperature_myclient
+    above: 30
+actions:
+  - action: notify.notify
+    data:
+      message: "Temperature on myclient: {{ trigger.to_state.state }} °C"
+mode: single
+```
+
+The telemetry entity ID format is `sensor.meshcore_<pk10>_ch<n>_<type>_<name>`. See [Sensors](sensors.md).
+
+## Signal automations
+
+A received channel message can have `rx_log_data`: one item for each copy that the companion heard, with `snr`, `rssi`, `path_len` and `path`. See [rx_log_data entries](events.md#rx_log_data-entries).
+
+### Weak signal alert
+
+```yaml
+alias: MeshCore weak signal
+triggers:
+  - trigger: event
+    event_type: meshcore_message
+    event_data:
+      message_type: channel
+conditions:
+  - condition: template
+    value_template: "{{ not (trigger.event.data.outgoing | default(false)) }}"
+  - condition: template
+    value_template: >-
+      {{ trigger.event.data.rx_log_data | default([])
+         | rejectattr('snr', 'none') | selectattr('snr', 'lt', 5)
+         | list | count > 0 }}
+actions:
+  - action: notify.notify
+    data:
+      title: Weak MeshCore signal
+      message: >-
+        Message from {{ trigger.event.data.sender_name }}:
+        {% for rx in trigger.event.data.rx_log_data %}
+        {{ rx.path_len }} hops, SNR {{ rx.snr }} dB, RSSI {{ rx.rssi }} dBm
+        {% endfor %}
+mode: queued
+```
+
+### Other signal conditions
+
+Replace the second condition of the weak signal alert with one of these.
+
+Message heard on more than one route:
+
+```yaml
+  - condition: template
+    value_template: "{{ trigger.event.data.rx_log_data | default([]) | count > 1 }}"
+```
+
+Message heard with no hops:
+
+```yaml
+  - condition: template
+    value_template: >-
+      {{ trigger.event.data.rx_log_data | default([])
+         | selectattr('path_len', 'eq', 0) | list | count > 0 }}
+```
+
+## Tips
+
+- Filter in the trigger with `event_data` when you can.
+- Use `mode: queued` for message automations. `mode: single` drops a message that arrives while the automation runs.
+- For a community example of contact management, see [MeshCore Contact Management in Home Assistant](https://github.com/WJ4IoT/Meshcore-Contact-Management-in-Home-Assistant).

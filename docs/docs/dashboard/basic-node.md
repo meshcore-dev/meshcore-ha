@@ -5,301 +5,247 @@ sidebar_position: 2
 
 # Basic Node Dashboard
 
-A comprehensive dashboard for your MeshCore node featuring:
-- **Messaging**: Send messages to channels or contacts
-- **Contact Management**: Add/remove contacts with dedicated UI
-- **Map View**: Visualize contact locations
-- **Battery Graph**: 24-hour battery percentage trend
-- **Rate Limiting**: Monitor request token availability
-- **Device Batteries**: Auto-populated battery levels for all tracked devices
-- **Advanced Repeater Table**: Detailed repeater statistics in tabular format
-- **Command Interface**: Execute CLI commands directly
+This dashboard shows one companion and the nodes that it tracks: messaging, map, commands, contact management, batteries, rate limiter history and a repeater table. It needs the [auto-entities](https://github.com/thomasloven/lovelace-auto-entities) custom card from HACS.
+
+## Dashboard YAML
+
+1. Go to **Settings > Dashboards**.
+2. Add a new dashboard from scratch.
+3. Open the dashboard.
+4. Select the pencil icon.
+5. In the three-dot menu, select **Raw configuration editor**.
+6. Paste the YAML.
+7. Replace `abc123` (companion prefix) and `mynode` (companion name) with your values. To find them, filter **Developer Tools > States** on `node_status`.
+8. Select **Save**.
 
 ```yaml
-type: sections
-max_columns: 4
-title: Meshcore
-path: meshcore
-dense_section_placement: true
-sections:
-  - type: grid
-    cards:
-      - type: vertical-stack
+title: MeshCore
+views:
+  - type: sections
+    max_columns: 4
+    title: MeshCore
+    path: meshcore
+    dense_section_placement: true
+    badges:
+      - type: entity
+        entity: sensor.meshcore_abc123_node_status_mynode
+        show_name: false
+      - type: entity
+        entity: sensor.meshcore_abc123_battery_percentage_mynode
+        name: Battery
+      - type: entity
+        entity: sensor.meshcore_abc123_battery_voltage_mynode
+        name: Volts
+      - type: entity
+        entity: sensor.meshcore_abc123_frequency_mynode
+        name: Freq
+      - type: entity
+        entity: sensor.meshcore_abc123_tx_power_mynode
+        name: TX
+        icon: mdi:antenna
+      - type: entity
+        entity: sensor.meshcore_abc123_spreading_factor_mynode
+        name: SF
+        icon: mdi:video-input-antenna
+      - type: entity
+        entity: sensor.meshcore_abc123_node_count_mynode
+        name: Nodes
+    sections:
+      - type: grid
         cards:
+          - type: heading
+            heading: Messaging
           - type: custom:auto-entities
-            card:
-              type: logbook
             filter:
               include:
-                - entity_id: binary_sensor.meshcore_*_messages
-              exclude: []
+                - integration: meshcore
+                  entity_id: binary_sensor.meshcore_*_messages
+            card:
+              type: logbook
+              hours_to_show: 24
           - type: entities
             entities:
               - entity: select.meshcore_recipient_type
                 name: Send To
               - type: conditional
                 conditions:
-                  - entity: select.meshcore_recipient_type
+                  - condition: state
+                    entity: select.meshcore_recipient_type
                     state: Channel
                 row:
                   entity: select.meshcore_channel
                   name: Channel
               - type: conditional
                 conditions:
-                  - entity: select.meshcore_recipient_type
+                  - condition: state
+                    entity: select.meshcore_recipient_type
                     state: Contact
                 row:
                   entity: select.meshcore_contact
                   name: Contact
               - entity: text.meshcore_message
                 name: Message
-          - show_name: true
-            show_icon: true
-            type: button
+          - type: button
             name: Send Message
             icon: mdi:send
-            tap_action:
-              action: call-service
-              service: meshcore.send_ui_message
+            show_name: true
+            show_icon: true
             icon_height: 24px
-        title: MeshCore Messaging
-  - type: grid
-    cards:
-      - type: custom:auto-entities
-        filter:
-          include:
-            - integration: meshcore
-              entity_id: binary_sensor.meshcore_*_contact
-              options:
-                label_mod: icon
-        card:
-          type: map
-          default_zoom: 15
-          label_mode: icon
-      - type: vertical-stack
+            tap_action:
+              action: perform-action
+              perform_action: meshcore.send_ui_message
+          - type: entities
+            entities:
+              - entity: sensor.meshcore_abc123_last_message_delivery_mynode
+                name: Last delivery
+      - type: grid
         cards:
+          - type: heading
+            heading: Map and commands
+          - type: custom:auto-entities
+            filter:
+              include:
+                - integration: meshcore
+                  entity_id: binary_sensor.meshcore_*_contact
+                  options:
+                    label_mode: icon
+            card:
+              type: map
+              default_zoom: 15
           - type: markdown
             content: >-
-              Execute CLI commands on your MeshCore node.
-
-              [📖 Docs](https://meshcore-dev.github.io/meshcore-ha/docs/ha/services#execute-command)
-
-              [📖 SDK commands](https://github.com/meshcore-dev/meshcore_py?tab=readme-ov-file#available-commands)
+              Run a command on the companion. See the
+              [CLI Command Reference](https://meshcore-dev.github.io/meshcore-ha/docs/ha/cli-commands)
+              page for the syntax.
           - type: entities
             entities:
               - entity: text.meshcore_command
                 name: CLI Command
-          - show_name: true
+          - type: button
+            name: Execute Command
+            icon: mdi:console
+            show_name: true
             show_icon: true
-            type: button
+            icon_height: 24px
             tap_action:
               action: perform-action
               perform_action: meshcore.execute_command_ui
-            name: Execute Command
-            icon: mdi:console
-            icon_height: 24px
-      - type: custom:apexcharts-card
-        header:
-          show: true
-          title: Battery (24h)
-          show_states: true
-        graph_span: 24h
-        series:
-          - entity: sensor.meshcore_<pubkey>_battery_percentage_<node_name>
-            name: Battery
-            stroke_width: 2
-            color: '#4caf50'
-        apex_config:
-          chart:
-            height: 200
-          yaxis:
-            min: 0
-            max: 100
-  - type: grid
-    cards:
-      - type: entities
-        title: Manage Contacts
-        entities:
-          - entity: select.meshcore_discovered_contact
-            name: Discovered
-            secondary_info: last-changed
-          - type: button
-            name: ➕ Add Contact
-            action_name: Add
-            tap_action:
-              action: call-service
-              service: meshcore.add_selected_contact
-          - entity: select.meshcore_added_contact
-            name: Added
-            secondary_info: last-changed
-          - type: button
-            name: ➖ Remove Contact
-            action_name: Remove
-            tap_action:
-              action: call-service
-              service: meshcore.remove_selected_contact
-      - type: custom:auto-entities
-        filter:
-          include:
-            - entity_id: sensor.meshcore_*_battery_percentage*
-        card:
-          type: entities
-          title: Device Batteries
-          state_color: true
-        sort:
-          method: state
-          numeric: true
-      - type: custom:apexcharts-card
-        header:
-          show: true
-          title: Rate Limiter (24h)
-          show_states: true
-        graph_span: 24h
-        series:
-          - entity: sensor.meshcore_<pubkey>_rate_limiter_tokens_<node_name>
-            name: Tokens Available
-            stroke_width: 1
-            color: orange
-        apex_config:
-          chart:
-            height: 200
-          yaxis:
-            min: 0
-            max: 20
-  - type: grid
-    columns: 2
-    cards:
-      - type: custom:flex-table-card
-        title: Repeater Statistics
-        entities:
-          include: sensor.meshcore_*_repeater*_battery_percentage*
-        columns:
-          - name: Repeater
-            data: friendly_name
-            modify: x.replace('Battery Percentage', '').replace('MeshCore', '').trim()
-          - name: Battery
-            data: state
-            suffix: '%'
-            align: center
-          - name: Success
-            data: request_successes
-            align: center
-          - name: Failed
-            data: request_failures
-            align: center
-          - name: SNR
-            data: last_snr
-            suffix: ' dB'
-            align: center
-          - name: Path
-            data: path
-            modify: x.split(',').join(' → ')
-        sort_by: friendly_name+
-        css:
-          table+: 'font-size: 12px;'
-          th+: 'background-color: var(--primary-color); color: white;'
-badges:
-  - type: entity
-    entity: sensor.meshcore_<pubkey>_node_status_<node_name>
-    show_name: false
-  - type: entity
-    entity: sensor.meshcore_<pubkey>_battery_percentage_<node_name>
-    name: Battery
-  - type: entity
-    entity: sensor.meshcore_<pubkey>_battery_voltage_<node_name>
-    name: Volts
-  - type: entity
-    entity: sensor.meshcore_<pubkey>_frequency_<node_name>
-    name: Freq
-  - type: entity
-    entity: sensor.meshcore_<pubkey>_tx_power_<node_name>
-    name: TX
-    icon: mdi:antenna
-  - type: entity
-    entity: sensor.meshcore_<pubkey>_spreading_factor_<node_name>
-    name: SF
-    icon: mdi:video-input-antenna
-  - type: entity
-    entity: sensor.meshcore_<pubkey>_node_count_<node_name>
-    name: Nodes
+          - type: history-graph
+            title: Battery (24 h)
+            hours_to_show: 24
+            entities:
+              - entity: sensor.meshcore_abc123_battery_percentage_mynode
+                name: Battery
+      - type: grid
+        cards:
+          - type: heading
+            heading: Contacts and batteries
+          - type: entities
+            title: Manage Contacts
+            entities:
+              - entity: select.meshcore_discovered_contact
+                name: Discovered
+              - type: button
+                name: Add Contact
+                icon: mdi:account-plus
+                action_name: Add
+                tap_action:
+                  action: perform-action
+                  perform_action: meshcore.add_selected_contact
+              - entity: select.meshcore_added_contact
+                name: Added
+              - type: button
+                name: Remove Contact
+                icon: mdi:account-minus
+                action_name: Remove
+                tap_action:
+                  action: perform-action
+                  perform_action: meshcore.remove_selected_contact
+          - type: custom:auto-entities
+            filter:
+              include:
+                - integration: meshcore
+                  domain: sensor
+                  attributes:
+                    device_class: battery
+            sort:
+              method: state
+              numeric: true
+            card:
+              type: entities
+              title: Device Batteries
+              state_color: true
+          - type: history-graph
+            title: Rate Limiter (24 h)
+            hours_to_show: 24
+            entities:
+              - entity: sensor.meshcore_abc123_rate_limiter_tokens_mynode
+                name: Credits available
+      - type: grid
+        column_span: 2
+        cards:
+          - type: heading
+            heading: Repeaters
+          - type: markdown
+            title: Repeater Statistics
+            content: |
+              | Repeater | Battery | Online | OK | Failed | SNR | Hops | Route |
+              |:--|--:|:-:|--:|--:|--:|--:|:--|
+              {% for s in states.sensor
+                   | selectattr('entity_id', 'match', 'sensor.meshcore_[0-9a-f]{10}_battery_percentage_')
+                   | sort(attribute='name') -%}
+              {%- set id = s.entity_id -%}
+              {%- set name_part = id.split('_battery_percentage_')[1] -%}
+              {%- set pk = id.split('_')[1] -%}
+              {%- set ok = states(id.replace('_battery_percentage_', '_request_successes_')) -%}
+              {%- set bad = states(id.replace('_battery_percentage_', '_request_failures_')) -%}
+              {%- set snr = states(id.replace('_battery_percentage_', '_last_snr_')) -%}
+              {%- set hops = states(id.replace('_battery_percentage_', '_out_path_len_')) -%}
+              {%- set route = states(id.replace('_battery_percentage_', '_out_path_')) -%}
+              {%- set online = states('binary_sensor.meshcore_' ~ pk ~ '_online_' ~ name_part) -%}
+              | {{ device_attr(id, 'name') | replace('MeshCore Repeater: ', '') }} | {{ (s.state | float(0)) | round(0) | int ~ ' %' if s.state | is_number else '-' }} | {{ online }} | {{ ok }} | {{ bad }} | {{ snr ~ ' dB' if snr | is_number else '-' }} | {{ hops if hops | is_number else '-' }} | {% if not hops | is_number %}no route{% elif hops | int == 0 %}direct{% else %}{% set w = (route | length) // (hops | int) %}{% for i in range(hops | int) %}{{ route[i * w:(i + 1) * w] }}{{ ' → ' if not loop.last else '' }}{% endfor %}{% endif %} |
+              {% endfor %}
 ```
 
-## Setup Instructions
+## Notes
 
-### Prerequisites
-This dashboard requires these custom cards from HACS:
-- **auto-entities**: Automatically populate cards with entities matching filters
-- **apexcharts-card**: Display battery and rate limiter history as line graphs
-- **flex-table-card**: Display repeater statistics in a custom table format
+- A message sensor exists only after the first message on that channel or with that contact.
+- **Add**, **Remove** and **Execute Command** call admin services. Only an administrator can use them.
+- The repeater table finds each repeater through `sensor.meshcore_<pk10>_battery_percentage_<name>`. To add a column, replace `_battery_percentage_` with another [repeater sensor](../sensors.md#repeater-sensors) key, for example `_noise_floor_`.
+- In the **Route** column, `no route` means that the companion has no route. `direct` means that it hears the repeater directly.
 
-### Configuration Steps
+### Two or more entries
 
-1. Replace placeholders:
-   - `<pubkey>` with your node's public key prefix (e.g., `a305ca`)
-   - `<node_name>` with your node's name (e.g., `ponybot`)
+Make one dashboard for each entry.
 
-2. The dashboard automatically discovers:
-   - All device batteries (repeaters and clients) sorted by battery level
-   - All contacts (repeaters, room servers, and clients)
-   - Battery percentage displayed as a 24-hour trend graph
-   - Rate limiting token availability displayed as a 24-hour trend graph
-   - Repeater statistics in a detailed table view
-
-3. Contact management:
-   - Select a discovered contact and click "➕ Add Contact" to add it to your node
-   - Select an added contact and click "➖ Remove Contact" to remove it from your node
-
-4. CLI commands:
-   - Enter any MeshCore CLI command in the text field
-   - Click "Execute Command" to run it
-   - View available commands in the documentation links
-
-## Advanced: Repeater Table with Sparklines
-
-For an even more advanced view with sparklines showing battery trends, use this alternative:
+1. Replace each helper ID with the ID of entry 2, for example `select.meshcore_channel_2`.
+2. Add `entry_id` to the 4 button actions: **Send Message**, **Execute Command**, **Add** and **Remove**.
+3. Replace `abc123` and `mynode` with the values of the second companion.
 
 ```yaml
-  - type: grid
-    columns: 2
-    cards:
-      - type: custom:flex-table-card
-        title: Repeater Statistics
-        entities:
-          include: sensor.meshcore_*_repeater*_battery_percentage*
-        columns:
-          - name: Repeater
-            data: friendly_name
-            modify: x.replace('Battery Percentage', '').replace('MeshCore', '').trim()
-          - name: ''
-            data: entity
-            modify: '''<ha-chart-base entity="'' + x + ''" height="40" sparkline></ha-chart-base>'''
-          - name: Battery
-            data: state
-            suffix: '%'
-            align: center
-          - name: ✓
-            data: request_successes
-            align: center
-          - name: ✗
-            data: request_failures
-            align: center
-          - name: SNR
-            data: last_snr
-            suffix: ' dB'
-            align: center
-          - name: Path
-            data: path
-            modify: x ? x.split(',').join(' → ') : 'Direct'
-        sort_by: state-
-        css:
-          table+: 'font-size: 12px; width: 100%;'
-          th+: 'background-color: var(--primary-color); color: white; padding: 8px;'
-          td+: 'padding: 4px;'
+tap_action:
+  action: perform-action
+  perform_action: meshcore.send_ui_message
+  data:
+    entry_id: YOUR_ENTRY_ID
 ```
 
-This version includes:
-- **Sparkline column**: Shows battery trend over time
-- **Sorted by battery**: Lowest battery first (descending)
-- **Compact symbols**: ✓/✗ for success/failed
-- **Path formatting**: Converts comma-separated to arrows
-- **Full width**: Utilizes extra-wide space
+See [Two or more entries](overview.md#two-or-more-entries).
+
+## Battery history for all battery sensors
+
+This card shows every MeshCore battery sensor in one graph.
+
+```yaml
+type: custom:auto-entities
+filter:
+  include:
+    - integration: meshcore
+      domain: sensor
+      attributes:
+        device_class: battery
+card:
+  type: history-graph
+  title: Battery history (48 h)
+  hours_to_show: 48
+```

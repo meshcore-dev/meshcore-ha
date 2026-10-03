@@ -3,181 +3,160 @@ sidebar_position: 1
 title: Installation
 ---
 
-# Getting Started with Meshcore Home Assistant
+# Install and Configure MeshCore for Home Assistant
 
-This guide will help you install and configure the Meshcore integration for Home Assistant.
+If you upgrade from 2.x, read [Upgrade to 3.0](upgrade-3.0.md) first.
 
-## Prerequisites
+## Requirements
 
-- Home Assistant 2023.8.0 or newer
-- Meshcore node with firmware that supports API commands
-- Connection method requirements:
-  - **USB**: USB port on the Home Assistant host
-  - **BLE**: Bluetooth adapter on the Home Assistant host (direct connection only)
-  - **TCP**: Network connectivity to your Meshcore device
+| Item | Requirement |
+|---|---|
+| Home Assistant | 2025.6.0 or later |
+| `meshcore` Python library | 2.3.11 or later. Home Assistant installs it automatically. |
+| Companion | A MeshCore node with companion firmware for your connection type |
+| USB | A USB port on the Home Assistant host. The companion must have the USB companion firmware. |
+| BLE | A Bluetooth adapter on the Home Assistant host. A Bluetooth proxy does not work with PIN pairing. |
+| TCP | A network route to the companion (WiFi firmware) or to a TCP bridge |
 
-## Installation Methods
+Each integration entry connects to one companion, and the public key of the companion identifies the entry. To use two companions, add the integration two times. See [Two or more companions](multiple-companions.md).
 
-### Method 1: HACS (Recommended)
+## Install the integration
+
+### HACS (recommended)
 
 [![Add Repository](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=meshcore-dev&repository=meshcore-ha&category=integration)
 
-1. Make sure you have [HACS](https://hacs.xyz/) installed
-2. Add this repository as a custom repository in HACS:
-   - Go to HACS > Integrations
-   - Click on the three dots in the top right corner
-   - Select "Custom repositories"
-   - Add `https://github.com/meshcore-dev/meshcore-ha`
-   - Select "Integration" as the category
-3. Click "Install" on the Meshcore integration
-4. Restart Home Assistant
+1. Make sure that [HACS](https://hacs.xyz/) is installed.
+2. In HACS, open the three-dot menu.
+3. Select **Custom repositories**.
+4. Enter `https://github.com/meshcore-dev/meshcore-ha`.
+5. Select the type **Integration**.
+6. Select **Add**.
+7. Search for **MeshCore**.
+8. Select **Download**.
+9. Restart Home Assistant.
 
-### Method 2: Manual Installation
+### Manual installation
 
-1. Download the latest release from [GitHub](https://github.com/meshcore-dev/meshcore-ha)
-2. Copy the `custom_components/meshcore` directory to your Home Assistant `custom_components` directory
-3. Restart Home Assistant
+1. Download the latest release from [GitHub](https://github.com/meshcore-dev/meshcore-ha/releases).
+2. Copy `custom_components/meshcore` into the `custom_components` directory of your Home Assistant configuration.
+3. Restart Home Assistant.
 
-## Configuration
+## Add the integration
 
 [![Add Integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=meshcore)
 
-1. Go to **Settings** → **Devices & Services**
-2. Click **+ Add Integration** and search for "Meshcore"
-3. Follow the setup wizard to configure your connection type
+1. Go to **Settings > Devices & services**.
+2. Select **Add Integration**.
+3. Search for **MeshCore**.
+4. Select **MeshCore**.
+5. In **Connection Type**, select `usb`, `ble` or `tcp`.
+6. Complete the form.
+7. Select **Submit**.
 
-### Connection Types
+The connection must complete in 10 seconds. If you see "Failed to connect", correct the values and submit again.
 
-#### USB Connection
-- Enter the USB port path (e.g., `/dev/ttyUSB0` or `/dev/ttyACM0`)
-- Set the baud rate (default: 115200)
-- **Note**: If you flashed the 'Companion Bluetooth' firmware, this will fail to connect. Flash 'Companion USB' instead.
+| Connection | Field | Default |
+|---|---|---|
+| USB | USB Device Path, for example `/dev/ttyUSB0` or `/dev/ttyACM0` | (required) |
+| USB | Connection Speed | 115200 |
+| BLE | Bluetooth Device | (required) |
+| TCP | Host Address | (required) |
+| TCP | Port | 5000 |
 
-#### BLE Connection
-- Select your Meshcore device from discovered devices
-- Or enter the Bluetooth address manually
-- **Note**: BLE pairing over Home Assistant Bluetooth proxy is not currently working
+For BLE, the integration scans for 5 seconds. If it finds devices with "MeshCore" in the name, the field is a list. If not, type the address.
 
-##### Workaround for PIN-protected BLE devices
+All three forms also have Enable Self Telemetry, Enable Self Diagnostics, their intervals and Contact Discovery Mode. You can change these later in [Global Settings](#global-settings).
 
-Home Assistant Bluetooth Proxy does not currently pass through Meshcore's BLE
-PIN pairing flow. If your node requires a BLE PIN, the external
-[Meshcore BLE Bridge for ESPHome](https://github.com/matthew73210/meshcore-ble-bridge)
-project can keep the authenticated BLE connection on an ESP32 and expose it to
-this integration as a TCP connection.
+A new entry gets the title `MeshCore Node <name>`, the **Governed** traffic policy and no tracked nodes. See [Mesh Traffic Policy](traffic-policy.md). To add tracked nodes, see [Remote Node Tracking](remote-device-tracking.md).
 
-#### TCP Connection
-- Enter the hostname or IP address
-- Enter the port number (default: varies by device)
+## Reconfigure the connection
 
-### Configuration Options
+Use **Reconfigure** to change the connection type, port or host. The integration keeps all other settings, the tracked nodes and the MQTT brokers.
 
-During setup, you can configure:
+1. Go to **Settings > Devices & services > MeshCore**.
+2. Open the three-dot menu of the entry.
+3. Select **Reconfigure**.
+4. Select the connection type.
+5. Enter the new values.
+6. Select **Submit**.
 
-- **Self Telemetry Enabled**: Whether to collect telemetry from this node
-- **Self Telemetry Interval** (60-3600 seconds): How often to collect telemetry data from this node
-- **Self Diagnostics Enabled**: Whether to create local diagnostic sensors (uptime, radio, and packet statistics) for the companion node. Off by default; adds no mesh traffic (local radio queries only).
-- **Self Diagnostics Interval** (60-3600 seconds): How often to refresh the self-diagnostic sensors
+If the test passes, the entry reloads. If the new companion has a different public key, the integration changes the public key prefix in the entity IDs of the entry. It also creates the repair issue "MeshCore public key changed". Then do these steps:
 
-## Post-Installation Configuration
+1. Update the automations, scripts and dashboards that use the old entity IDs.
+2. Dismiss the repair issue.
 
-After initial setup, you can configure additional monitoring through the integration options:
+## Configure the options {#post-installation-configuration}
 
-1. Go to the Meshcore integration
-2. Click "Configure"
-3. Choose from:
-   - **Add Repeater Station**: Monitor repeater nodes in your network
-   - **Add Tracked Client**: Track specific client devices
-   - **Manage Monitored Devices**: Edit or remove configured devices
-   - **Global Settings**: Adjust refresh intervals and discovery settings
+Go to **Settings > Devices & services > MeshCore > Configure**. In **Choose an action**, select one of these actions:
 
-### Repeater Configuration
-- Select repeater from your contacts
-- Enter password (if required)
-- Enable/disable telemetry collection
-- Set update interval (minimum 300 seconds)
+| Action | Use |
+|---|---|
+| Add Repeater Station | Track a repeater, room server or sensor node. See [Remote Node Tracking](remote-device-tracking.md). |
+| Add Tracked Client | Track a client. See [Remote Node Tracking](remote-device-tracking.md). |
+| Manage Monitored Devices | Edit or remove a tracked node |
+| Global Settings | Change the settings of the entry |
+| Manage MQTT Brokers | Add, edit or remove a maximum of 4 MQTT brokers. See [MQTT Upload](mqtt.md). |
 
-### Client Tracking
-- Select client device from your contacts
-- Set update interval (minimum 300 seconds)
+Each **Submit** saves the change. To close the menu, select **Done**.
+
+Most changes apply immediately, without a reload. A change to **Enable Self Diagnostics** or **Enable CLI Console** reloads the entry.
+
+### Reload the entry
+
+1. Go to **Settings > Devices & services > MeshCore**.
+2. Open the three-dot menu of the entry.
+3. Select **Reload**.
 
 ### Global Settings
 
-Configure integration-wide settings:
+| Field | Range | Default | Description |
+|---|---|---|---|
+| Message Poll Interval (seconds) | 1 to 300 | 5 | The scheduling tick. The integration reads queued messages when the companion reports them, and after 60 seconds with no message. No mesh traffic. |
+| Contact Discovery Mode | Entity per contact, Data only, Disabled | Entity per contact | How the integration keeps discovered contacts. See [Contact Discovery Mode](contacts.md#contact-discovery-mode). |
+| Limit Discovered Contacts | on / off | off | Limits the number of discovered contacts |
+| Maximum Discovered Contacts | 1 to 10000 | 100 | The limit. The integration removes the oldest contacts first. |
+| Enable Self Telemetry | on / off | off | Requests telemetry from the companion itself |
+| Self Telemetry Interval (seconds) | 60 to 3600 | 300 | The time between self telemetry requests |
+| Enable Self Diagnostics | on / off | off | Creates 14 diagnostic sensors and 3 radio fault binary sensors for the companion. No mesh traffic. |
+| Self Diagnostics Interval (seconds) | 60 to 3600 | 300 | The time between diagnostic queries |
+| Enable CLI Console | on / off | off | Creates the CLI Console sensor. See [CLI Command Reference](cli-commands.md). |
+| Enable Map Auto Uploader (map.meshcore.io) | on / off | off | Uploads repeater, room server and sensor adverts. The firmware must have `ENABLE_PRIVATE_KEY_EXPORT=1`. See [Map Auto Uploader](map-upload.md). |
+| Auto-Cleanup Stale Discovered Contacts (runs daily) | on / off | off | Removes discovered contacts older than the threshold. Contacts on the companion stay. |
+| Stale Contact Threshold (days) | 1 to 365 | 30 | The age for the contact cleanup |
+| Retrieve queued incoming messages | on / off | on | Disable this setting when a phone must get the queued messages. See [Share the companion with a phone](messaging.md#sharing-a-companion-with-a-phone). |
+| Adaptive Channel Message Delivery | on / off | off | Fires an incoming channel message at the first reception data, in place of a fixed 500 ms wait. See [RX_LOG correlation](messaging.md#rx_log-correlation). |
+| Flood Scope Allowlist | text | blank | Comma-separated region scope names, for example `myregion`. The integration compares incoming scoped channel messages with these names. The `flood_scope` field of each `rx_log_data` entry gives the matched name, or `null`. |
+| Expose Node Secrets in Events | on / off | off | Sends channel secrets and private key exports to the event bus and MQTT raw payloads |
+| Auto-Remove Stale Neighbors | on / off | off | Removes neighbor entries and their sensors, one time each day, after the threshold |
+| Stale Neighbor Threshold (days) | 1 to 365 | 7 | The age for the neighbor cleanup |
+| Mesh Traffic Policy | Governed | Governed | The budget and the retry rules for mesh traffic. See [Mesh Traffic Policy](traffic-policy.md). |
 
-- **Disable Contact Discovery**: Stop automatically creating contact sensors (useful for large networks)
-- **Enable Self Telemetry**: Collect telemetry from this node
-- **Self Telemetry Interval** (60-3600 seconds): How often to collect self telemetry data
-- **Enable Self Diagnostics**: Create ~15 local diagnostic sensors (uptime, TX queue, noise floor, RSSI/SNR, TX/RX airtime, packet counters) for the companion node, giving it the same diagnostic tiles a managed repeater has. Off by default. Adds no mesh traffic — these are local queries to the attached radio, not mesh requests.
-- **Self Diagnostics Interval** (60-3600 seconds): How often to refresh the self-diagnostic sensors
-- **Enable Map Upload (map.meshcore.io)**: When enabled, adverts from repeaters and room servers you receive are uploaded to [map.meshcore.io](https://map.meshcore.io). Those nodes appear on the official MeshCore map for the community. See [Map Auto Uploader](./map-upload) for details.
-- **Adaptive Channel Message Delivery**: When enabled, incoming channel messages fire as soon as RX_LOG radio reception data arrives (typically ~50ms) instead of always waiting the full 500ms. Late-arriving repeater data is delivered progressively via `meshcore_delivery_update` events. Disabled by default. See [Messaging — RX_LOG Correlation](./messaging#rx_log-correlation) for details.
+CAUTION: Do not enable **Expose Node Secrets in Events** on a system that other people can read. All users and tools that read the event bus or the MQTT broker will see the secrets.
 
-**Note:** Disabling contact discovery is recommended if you have 50+ contacts and only need to monitor specific tracked repeaters/clients.
+## Verify the installation
 
-## Verification
+1. Go to **Settings > Devices & services > MeshCore**.
+2. Open the device of the companion and make sure that its sensors show values.
+3. If you added tracked nodes, make sure that each node has a device.
 
-Once configured, you should see:
-- Your Meshcore device in the Devices list
-- Meshcore entities available for automations
-- Real-time status updates from your mesh network
-- Contact sensors for each node in your network
+## Solve problems
 
-## Troubleshooting
+| Message | Cause | Action |
+|---|---|---|
+| Failed to connect | No connection or node information in 10 seconds | Check the cable, power, port, address and companion firmware |
+| Device is already configured | An entry for this companion exists | Use Reconfigure on that entry |
+| Unexpected error | An error that the integration did not expect | Read the Home Assistant log |
 
-### Connection Issues
+- **USB**: make sure that the port path is correct and that Home Assistant has permission to use it. The Bluetooth companion firmware does not answer on USB.
+- **BLE**: use a direct adapter near the companion. For a companion that needs a PIN, you can use the external [MeshCore BLE Bridge for ESPHome](https://github.com/matthew73210/meshcore-ble-bridge), which gives a TCP connection.
+- **TCP**: make sure that the host and port are correct and that no firewall blocks the connection.
 
-#### USB Connection
-- Verify the device is properly connected and the correct port is selected
-- Try a different baud rate if the default doesn't work
-- Check permissions for USB device access
-- Make sure you flashed the 'Companion USB' firmware, instead of the 'Companion Bluetooth' firmware.
-- Common port paths:
-  - Linux: `/dev/ttyUSB0`, `/dev/ttyACM0`
-  - macOS: `/dev/tty.usbserial-*`
+For debug logging and other problems, see [Troubleshooting](troubleshooting.md).
 
-#### BLE Connection  
-- Ensure Bluetooth is enabled on your Home Assistant host
-- Move closer to the device if signal is weak
-- **Important**: BLE pairing over Home Assistant Bluetooth proxy is not currently working until Meshcore supports disabling the PIN requirement
-- Only direct connections are supported
+## Next steps
 
-#### TCP Connection
-- Verify hostname/IP and port are correct
-- Check for firewall rules blocking the connection
-- Ensure the Meshcore device is reachable on the network
-- Test connectivity with ping or telnet first
-
-### Integration Not Working
-
-- **Reload the integration**: If you experience issues, reload the integration to reset its state:
-  1. Go to Settings → Devices & Services
-  2. Find the Meshcore integration
-  3. Click the three dots menu
-  4. Select "Reload"
-- Check the Home Assistant logs for error messages related to Meshcore
-- Verify your Meshcore device is working correctly (try using the Meshcore CLI directly)
-- Ensure you have the required permissions to access the device (especially for USB)
-- Try restarting Home Assistant after installation
-
-### Repeater and Room Server Issues
-
-- If repeaters or room servers aren't appearing, check that your node has correct time synchronization
-- Verify the public key used for repeater/room server login is correct
-- Try increasing the repeater update interval if connections are unreliable
-- For room servers, make sure you've added them as repeaters first to establish the connection
-- Check the Home Assistant logs for detailed error messages related to repeater connections
-- Reload the integration if repeater connections become stuck
-
-### Common Error Messages
-
-- **"Cannot connect"**: Device is not responding - check physical connection and power
-- **"Failed to get node info"**: Communication established but device not responding to commands - may need firmware update
-- **"Connection timed out"**: Device took too long to respond - check baud rate for USB or signal strength for BLE
-- **"Failed to log in to repeater"**: Incorrect password or repeater not accepting connections
-
-## Next Steps
-
-- [Configure Sensors](./sensors) to monitor your devices
-- [Set up Services](./services) for device control
-- [Create Automations](./automation) for smart home scenarios
+- [First steps](first-steps.md)
+- [Concepts](concepts.md)
+- [Sensors](sensors.md)
+- [Automation](automation.md)

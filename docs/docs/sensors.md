@@ -1,354 +1,340 @@
 ---
-sidebar_position: 2
+sidebar_position: 10
 title: Sensors
 ---
 
-# Sensors
+# Sensors and Entities
 
-The Meshcore Home Assistant integration provides comprehensive monitoring of your mesh network through various sensor categories. Sensors are automatically discovered and created based on the devices and data available in your network.
+This page lists every entity that the integration creates. To find the exact IDs on your system, open **Developer Tools > States** and filter on `meshcore`.
 
-## Sensor Categories
+## Placeholders
 
-### Device Sensors (Main Node)
-These sensors monitor the main Meshcore device connected via USB, TCP, or BLE.
+The integration changes names to lowercase, changes accented letters to plain letters and replaces spaces and punctuation with `_`. For example, `My Café-Repeater` becomes `my_cafe_repeater`.
 
-#### Core Status
-- **Node Status** - Connection status (online/offline)
-  - Example: `sensor.meshcore_abc123_node_status_mynode`
+| Placeholder | Meaning | Example |
+|---|---|---|
+| `<pk6>` | First 6 hex characters of the companion public key | `abc123` |
+| `<pk10>` | First 10 hex characters of the public key of a tracked node or other node | `def456abc0` |
+| `<pk12>` | First 12 hex characters of the public key of a contact | `def456abc012` |
+| `<name>` | Name of the companion, of the tracked node or of the other node | `mynode`, `myrepeater`, `node_def456` |
+| `<node pk6>` | First 6 hex characters of the public key of another node | `def456` |
+| `<n>` | LPP channel number of a telemetry value | `1` |
+| `<channel_idx>` | Mesh channel slot on the companion | `0` |
 
-#### Power Management
-- **Battery Voltage** - Battery voltage in volts
-  - Example: `sensor.meshcore_abc123_battery_voltage_mynode`
-  - Unit: V (2 decimal precision)
-  - Device Class: Voltage
-  
-- **Battery Percentage** - Battery level percentage
-  - Example: `sensor.meshcore_abc123_battery_percentage_mynode`
-  - Unit: % (0-100)
-  - Device Class: Battery
+A node that you do not track has its advertised name. If the contact has no name, the name is `Node <node pk6>`. If the node is not in the contact list, the name is `Unknown Node <node pk6>`.
 
-#### Network Information
-- **Node Count** - Number of nodes in the mesh network
-  - Example: `sensor.meshcore_abc123_node_count_mynode`
-  
-- **TX Power** - Transmission power level
-  - Example: `sensor.meshcore_abc123_tx_power_mynode`
-  - Unit: dBm
-  - Device Class: Signal Strength
+## Devices
 
-#### Radio Configuration
-- **Frequency** - Radio operating frequency
-  - Example: `sensor.meshcore_abc123_frequency_mynode`
-  - Unit: MHz (3 decimal precision)
-  
-- **Bandwidth** - Radio bandwidth
-  - Example: `sensor.meshcore_abc123_bandwidth_mynode`
-  - Unit: kHz (1 decimal precision)
-  
-- **Spreading Factor** - LoRa spreading factor setting
-  - Example: `sensor.meshcore_abc123_spreading_factor_mynode`
+| Device | Name format | Entities on the device |
+|---|---|---|
+| Companion | `MeshCore <name> (<pk6>)` | Companion, Self Diagnostics, companion telemetry, contact, message, radio fault and MQTT broker sensors, companion GPS tracker |
+| Repeater | `MeshCore Repeater: <name> (<node pk6>)` | Repeater, route, reliability, Online and neighbor sensors, telemetry sensors, GPS tracker, Refresh firmware version button |
+| Client | `MeshCore Client: <name> (<node pk6>)` | Route, reliability and Online sensors, telemetry sensors, GPS tracker |
+| Other node | `MeshCore Node: <name> (<node pk6>)` | Telemetry sensors and GPS tracker of a node that you do not track |
+| No device | - | Select and text helpers, CLI Console sensor, CLI buttons |
 
-#### Location
-- **Latitude** - Node latitude coordinate
-  - Example: `sensor.meshcore_abc123_latitude_mynode`
-  
-- **Longitude** - Node longitude coordinate
-  - Example: `sensor.meshcore_abc123_longitude_mynode`
+A room server or sensor node that you add with **Add Repeater Station** gets a repeater device. When you remove a tracked node, the integration removes its device and entities. The contact sensor of the node stays.
 
-### Contact Sensors (Remote Clients)
-These sensors monitor remote nodes discovered in the mesh network.
+## Availability summary
 
-#### Node Status
-- **Status** - Node connectivity status
-  - Entity: `sensor.meshcore_<pubkey>_<name>_status`
+| Entity group | Unavailable when |
+|---|---|
+| Companion, Self Diagnostics, route, reliability, Online, message and radio fault sensors, Companion Prefix, Neighbor Count, Discovered Contacts, CLI Console, buttons | The companion is disconnected (the last coordinator update failed) |
+| Repeater sensors | No status response in 3 x the update interval (6 h at the default 7200 s). After a restart, until the first status response. |
+| Telemetry sensors | No telemetry reading in 3 x the update interval (default 6 h). After a restart, until the first reading. |
+| GPS trackers | No GPS reading in 1.5 x the update interval (default 3 h) |
+| Neighbor SNR and Neighbor Seen | The repeater last heard the neighbor 72 h ago or more |
+| Contact sensors | The contact is not in the contact list of the integration |
+| MQTT broker sensors | The broker was removed, or the MQTT uploader did not start |
+| Request Rate Limiter, Last Message Delivery, select and text helpers | Never |
 
-#### Power & Signal
-- **Battery** - Remote node battery voltage
-  - Unit: V (2 decimal precision)
-  - Device Class: Voltage
-  
-- **Battery Percentage** - Calculated battery percentage
-  - Unit: % (0-100)
-  - Device Class: Battery
-  
-- **Last RSSI** - Last received signal strength
-  - Unit: dBm
-  
-- **Last SNR** - Last signal-to-noise ratio
-  - Unit: dB (1 decimal precision)
+The update interval is **Telemetry Refresh Rate (seconds)** for a tracked repeater and **Update Frequency (seconds)** for a tracked client. The companion telemetry sensors and GPS tracker use 7200 s.
 
-#### Routing & Network Topology  
-- **Routing Path** (`out_path`) - Current routing path to reach this client
-  - Shows the sequence of node public key prefixes used to route messages
-  - Example: "abc123,def456" (message routes through abc123 then def456)  
-  - Empty if client is directly reachable
-  
-- **Path Length** (`out_path_len`) - Number of hops to reach this client
-  - Unit: hops
-  - Value: Number of intermediate nodes (0 = direct, -1 = unreachable)
-  - State Class: Measurement
+## Companion sensors
 
-### Repeater Sensors
-Repeaters provide detailed operational statistics when subscribed.
+| Sensor | Entity ID format | State and unit | Precision | Source |
+|---|---|---|---|---|
+| Node Status | `sensor.meshcore_<pk6>_node_status_<name>` | `online` or `offline` | - | Link state of the companion |
+| Battery Voltage | `sensor.meshcore_<pk6>_battery_voltage_<name>` | V | 3 | Battery reading of the companion |
+| Battery Percentage | `sensor.meshcore_<pk6>_battery_percentage_<name>` | % | 2 | Linear scale: 3.0 V is 0 %, 4.2 V is 100 % |
+| Node Count | `sensor.meshcore_<pk6>_node_count_<name>` | Number | - | Contacts added to the companion, plus 1 |
+| TX Power | `sensor.meshcore_<pk6>_tx_power_<name>` | dBm | 0 | Radio settings of the companion |
+| Latitude | `sensor.meshcore_<pk6>_latitude_<name>` | Degrees | - | Advertised position |
+| Longitude | `sensor.meshcore_<pk6>_longitude_<name>` | Degrees | - | Advertised position |
+| Frequency | `sensor.meshcore_<pk6>_frequency_<name>` | MHz | 3 | Radio settings of the companion |
+| Bandwidth | `sensor.meshcore_<pk6>_bandwidth_<name>` | kHz | 1 | Radio settings of the companion |
+| Spreading Factor | `sensor.meshcore_<pk6>_spreading_factor_<name>` | Number | - | Radio settings of the companion |
+| Request Rate Limiter | `sensor.meshcore_<pk6>_rate_limiter_tokens_<name>` | tokens | 1 | See [Request Rate Limiter](#request-rate-limiter) |
+| Companion Prefix | `sensor.meshcore_<pk6>_companion_prefix` | Hex text | - | See [Companion Prefix](#companion-prefix) |
+| Last Message Delivery | `sensor.meshcore_<pk6>_last_message_delivery_<name>` | Text | - | See [Last Message Delivery](#last-message-delivery) |
+| Discovered Contacts | `sensor.meshcore_<pk6>_discovered_summary_<name>` | Number | - | See [Discovered Contacts](#discovered-contacts) |
 
-#### Power & Uptime
-- **Battery Voltage** (`bat`) - Repeater battery voltage
-  - Unit: V (converted from mV)
-  - Device Class: Voltage
-  
-- **Battery Percentage** - Calculated from voltage
-  - Unit: % (0-100)
-  - Device Class: Battery
-  
-- **Uptime** - Operating time
-  - Unit: min (converted from seconds)
-  - Suggested Unit: days
-  - Attributes: Human-readable format
+Example: `sensor.meshcore_abc123_battery_voltage_mynode`.
 
-#### Airtime Metrics
-- **Airtime** - Total transmission time
-  - Unit: min (1 decimal precision)
-  
-- **RX Airtime** - Total receive time
-  - Unit: min (1 decimal precision)
-  
-- **Airtime Utilization** - Percentage of time transmitting
-  - Unit: % (1 decimal precision)
-  - Device Class: Power Factor
-  
-- **RX Airtime Utilization** - Percentage of time receiving
-  - Unit: % (1 decimal precision)
-  - Device Class: Power Factor
+### Request Rate Limiter
 
-#### Message Counters
-- **Messages Sent** (`nb_sent`) - Total messages transmitted
-- **Messages Received** (`nb_recv`) - Total messages received
-- **Sent Flood Messages** (`sent_flood`) - Broadcast messages sent
-- **Sent Direct Messages** (`sent_direct`) - Direct messages sent
-- **Received Flood Messages** (`recv_flood`) - Broadcast messages received
-- **Received Direct Messages** (`recv_direct`) - Direct messages received
+The state is the credits in the direct lane (0 to 20). For the attributes, see [Mesh Traffic Policy](traffic-policy.md#watching-the-budget). For the state on installs from 2.x that still use the deprecated Legacy policy, see [Legacy traffic policy](legacy-traffic-policy.md).
 
-All counters use State Class: Total Increasing
+### Companion Prefix
 
-#### Queue & System
-- **TX Queue Length** (`tx_queue_len`) - Messages waiting to transmit
-  
-- **Noise Floor** (`noise_floor`) - Background radio noise level
-  - Unit: dBm
-  
-- **Full Events** (`full_evts`) - Queue saturation events
-  - State Class: Total Increasing
+The state is the routing prefix of the companion in uppercase hex. Other nodes show this prefix in a route. The `path_hash_mode` setting of the companion firmware sets the length.
 
-#### Routing & Network Topology
-- **Routing Path** (`out_path`) - Current routing path to reach this node
-  - Shows the sequence of node public key prefixes used to route messages
-  - Example: "abc123,def456" (message routes through abc123 then def456)
-  - Empty if node is directly reachable
-  
-- **Path Length** (`out_path_len`) - Number of hops to reach this node
-  - Unit: hops
-  - Value: Number of intermediate nodes (0 = direct, -1 = unreachable)
-  - State Class: Measurement
+| `path_hash_mode` | Prefix length | Example state |
+|---|---|---|
+| 0, or not reported | 1 byte | `AB` |
+| 1 | 2 bytes | `ABC1` |
+| 2 | 3 bytes | `ABC123` |
 
-#### Duplicate Detection
-- **Direct Duplicates** (`direct_dups`) - Filtered direct message duplicates
-- **Flood Duplicates** (`flood_dups`) - Filtered broadcast duplicates
+Attributes: `public_key`, `path_hash_mode`, `prefix_length`.
 
-Both use State Class: Total Increasing
+### Last Message Delivery
 
-#### Rate Metrics
-All message counters automatically generate rate sensors:
-- **Messages Sent/Received Rate** - msg/min
-- **Direct/Flood Messages Rate** - msg/min
-- **Duplicate Messages Rate** - msg/min
+This sensor shows the result of the last message that this entry sent. For the delivery events, see [Events](events.md).
 
-All rates use 1 decimal precision.
+| State | Message type | Meaning |
+|---|---|---|
+| `Idle` | - | No message sent since the entry loaded |
+| `Waiting` | Both | The companion accepted the message. For a channel message, the integration still listens for repeats. |
+| `1 Repeater`, `2 Repeaters`, and so on | Channel | The number of repeats that the companion heard |
+| `0 Repeaters` | Channel | No repeat heard |
+| `Unconfirmed` | Channel | No repeat heard, and the message is too long for the companion to report a repeat |
+| `Delivered` | Direct | The recipient sent an acknowledgement |
+| `Unconfirmed` | Direct | No acknowledgement arrived |
+| `Sent` | Direct | The send ended with no acknowledgement result |
 
-### Telemetry Sensors (Cayenne LPP)
-Automatically discovered from telemetry data using Cayenne LPP format.
+Attributes: `message_type`, `last_message`, `last_send_time`. Channel messages add `repeater_count`, `channel`, `rx_log_data` and `repeater_details` (one item per repeat, with `snr`, `rssi`, `path_len` and `path`). Direct messages add `ack_received` and `receiver`.
 
-#### Environmental
-- **Temperature** (Type 103)
-  - Unit: °C (1 decimal precision)
-  - Device Class: Temperature
-  
-- **Humidity** (Type 104)
-  - Unit: % (1 decimal precision)
-  - Device Class: Humidity
-  
-- **Illuminance** (Type 101)
-  - Unit: lx
-  - Device Class: Illuminance
-  
-- **Presence** (Type 102)
-  - Binary state sensor
+### Discovered Contacts
 
-#### Electrical
-- **Voltage** (Type 116)
-  - Unit: V (2 decimal precision)
-  - Device Class: Voltage
-  - Note: Channel 1 voltage on clients creates battery percentage sensor
-  
-- **Current** (Type 117)
-  - Unit: A (2 decimal precision)
-  - Device Class: Current
+The state is the number of contacts in the discovered list. The integration disables this diagnostic sensor by default. For the attributes, see [Contact Management](contacts.md#discovered-contact-summary-sensor).
 
-#### Analog/Digital I/O
-- **Digital Input** (Type 0) - Binary state
-- **Digital Output** (Type 1) - Binary state
-- **Analog Input** (Type 2) - V, 2 decimal precision
-- **Analog Output** (Type 3) - V, 2 decimal precision
+## Self Diagnostics sensors
 
-#### Multi-Value Sensors
-- **Accelerometer** (Type 113)
-  - Creates separate X, Y, Z sensors
-  - Unit: G (3 decimal precision)
-  
-- **Color** (Type 135)
-  - Creates separate R, G, B sensors
+These 14 sensors exist only when **Enable Self Diagnostics** is set in **Global Settings**. The integration reads them from the companion with local queries. These queries send nothing over the mesh. **Self Diagnostics Interval (seconds)** sets the refresh rate (default 300 s). The same setting creates the [radio fault sensors](#radio-fault-sensors).
 
-#### Generic
-- **Generic Sensor** (Type 100)
-  - State Class: Measurement
+The entity ID format is `sensor.meshcore_<pk6>_<key>_<name>`, for example `sensor.meshcore_abc123_noise_floor_mynode`. The keys are `uptime`, `tx_queue_len`, `noise_floor`, `last_rssi`, `last_snr`, `tx_airtime`, `rx_airtime`, `nb_recv`, `nb_sent`, `sent_flood`, `sent_direct`, `recv_flood`, `recv_direct` and `recv_errors`. Each sensor has the unit, precision and state class of the [repeater sensor](#repeater-sensors) with the same key. `tx_airtime` matches `airtime`.
 
-### Binary Sensors
+## Repeater sensors
 
-#### Contact Status (Diagnostic)
-Binary sensors showing node freshness:
-- **Entity**: `binary_sensor.meshcore_<pubkey>_<name>_status`
-- **Device Class**: Connectivity
-- **Category**: Diagnostic
-- **States**: 
-  - On = Fresh (recent activity within 12 hours)
-  - Off = Stale (no recent activity)
+The values come from the status response of each tracked repeater, once per update interval. The entity ID format is `sensor.meshcore_<pk10>_<key>_<name>`, for example `sensor.meshcore_def456abc0_noise_floor_myrepeater`.
 
-:::note
-In [Data only mode](contacts.md#contact-discovery-mode) these per-contact binary sensors are **not** created for discovered (un-added) contacts — they are tracked as data only. Added contacts keep their status sensor. The aggregate [Discovered Contact Summary sensor](contacts.md#discovered-contact-summary-sensor) provides a rollup count in every mode.
-:::
+| Sensor | Key | Unit | Precision | State class |
+|---|---|---|---|---|
+| Battery Voltage | `bat` | V | 3 | Measurement |
+| Battery Percentage | `battery_percentage` | % | 2 | Measurement |
+| Uptime | `uptime` | min (shown as days) | - | Measurement |
+| Airtime | `airtime` | min | 1 | Total increasing |
+| RX Airtime | `rx_airtime` | min | 1 | Total increasing |
+| Airtime Utilization | `airtime_utilization` | % | 1 | Measurement |
+| RX Airtime Utilization | `rx_airtime_utilization` | % | 1 | Measurement |
+| Messages Sent | `nb_sent` | - | - | Total increasing |
+| Messages Received | `nb_recv` | - | - | Total increasing |
+| Sent Flood Messages | `sent_flood` | - | - | Total increasing |
+| Sent Direct Messages | `sent_direct` | - | - | Total increasing |
+| Received Flood Messages | `recv_flood` | - | - | Total increasing |
+| Received Direct Messages | `recv_direct` | - | - | Total increasing |
+| Direct Duplicates | `direct_dups` | - | - | Total increasing |
+| Flood Duplicates | `flood_dups` | - | - | Total increasing |
+| Full Events | `full_evts` | - | - | Total increasing |
+| Receive Errors | `recv_errors` | - | - | Total increasing |
+| TX Queue Length | `tx_queue_len` | - | - | Measurement |
+| Noise Floor | `noise_floor` | dBm | 0 | Measurement |
+| Last RSSI | `last_rssi` | dBm | 0 | Measurement |
+| Last SNR | `last_snr` | dB | 1 | Measurement |
 
-#### Radio Fault Flags (Diagnostic)
+All repeater sensors have the attribute `last_updated`. Battery Voltage adds `raw_millivolts`. Uptime adds `human_readable`, for example `3d 4h 5m 6s`.
 
-Three binary sensors decode the companion radio's `errors` bitmask. They are created only when **Self Diagnostics** is enabled. The firmware latches each flag on first occurrence and clears it only on a radio reboot, so **On** means "this fault has occurred at least once since the radio last booted," not "is occurring now."
+### Rate and utilization sensors
 
-- **Entities**: `binary_sensor.meshcore_<pubkey>_err_pool_full_<name>`, `..._err_cad_timeout_...`, `..._err_rx_timeout_...`
-- **Device Class**: Problem
-- **Category**: Diagnostic
-- **Flags**:
-  - **Packet Pool Exhausted** — the packet buffer pool ran out and a packet was dropped.
-  - **CAD Timeout** — Channel Activity Detection stayed busy too long (channel congested, or the radio may be wedged).
-  - **RX-Start Timeout** — the radio failed to (re)enter receive mode (possible radio hang).
+These 9 counters also get a rate sensor (unit msg/min, precision 1): `nb_sent`, `nb_recv`, `sent_flood`, `sent_direct`, `recv_flood`, `recv_direct`, `direct_dups`, `flood_dups` and `recv_errors`. The key is the counter key with `_rate` added, for example `sensor.meshcore_def456abc0_nb_recv_rate_myrepeater`.
 
-#### Device Online Status
+The integration calculates each rate from the last two status responses: the counter change divided by the uptime change, times 60. Utilization is the airtime change divided by the uptime change, times 100. The state is 0 after the first response and after a counter goes down, for example after a repeater restart.
 
-A per-device connectivity sensor for each managed repeater and client. Unlike the integration-level connection sensor (which reports whether the companion device itself is reachable via USB/TCP/BLE), this sensor reflects whether a specific managed node is being successfully polled.
+## Route and reliability sensors
 
-- **Entity**: `binary_sensor.meshcore_<pubkey>_online_<name>`
-- **Device Class**: Connectivity
-- **States**:
-  - **On** — the last successful poll for this device was within the staleness window
-  - **Off** — the companion device is disconnected, or no successful poll within the staleness window
-  - **Unknown** — the device has never been successfully polled this session
+The integration creates these 4 sensors for each tracked repeater and tracked client. The entity ID format is `sensor.meshcore_<pk10>_<key>_<name>`.
 
-**Staleness window**: `2.5 × max(device_update_interval, 300s)`. Defaults to 12.5 minutes for a device on the default 5-minute update cadence. Increases proportionally for devices configured with slower refresh rates.
+| Sensor | Key | State | Unit | State class |
+|---|---|---|---|---|
+| Routing Path | `out_path` | The route as one hex string, with no separators | - | - |
+| Path Length | `out_path_len` | The number of hops on the route | hops | Measurement |
+| Request Successes | `request_successes` | Successful requests to the node | requests | Total increasing |
+| Request Failures | `request_failures` | Failed requests to the node | requests | Total increasing |
 
-**Attributes**
-- `last_successful_request` — ISO 8601 timestamp of the most recent successful poll
-- `update_interval` — the device's configured telemetry refresh rate, in seconds
-- `staleness_window` — the current threshold, in seconds
+- Path Length `0` means that the companion hears the node directly. Routing Path is then empty.
+- Path Length `unknown` means that the companion has no route. Requests to the node are then flood requests.
+- To get the hex characters per hop, divide the length of Routing Path by Path Length.
+- The reliability counters start again at 0 after a Home Assistant restart.
 
-**Why this exists alongside the node status sensor**: The `sensor.meshcore_..._node_status` entity reports the companion device's own connection state (USB / TCP / BLE link up). A repeater or client tracked by the integration can stop responding while the companion stays connected — for example, when the remote node is out of range, powered off, or when its routing path has degraded. This sensor distinguishes those two failure modes.
+## Neighbor sensors
 
-#### Message Tracking
-Binary sensors created on first message:
+A repeater with **Enable Neighbor Entities** set gets the Neighbor Count, Neighbor SNR and Neighbor Seen sensors. For the entity IDs, states and attributes, see [Repeater Neighbors](repeater-neighbors.md#sensors).
 
-**Channel Messages**
-- **Entity**: `binary_sensor.meshcore_<device>_ch_<number>_messages`
-- **Device Class**: Connectivity
-- **Created**: On first message in channel
+## Telemetry sensors (Cayenne LPP)
 
-**Contact Messages**
-- **Entity**: `binary_sensor.meshcore_<pubkey>_messages`
-- **Device Class**: Connectivity
-- **Created**: On first message from contact
+The integration creates a telemetry sensor when a node first sends a reading with a new channel and type. It requests telemetry from each tracked client and from each tracked repeater with **Enable Telemetry Polling** set. It also requests it from the companion when **Enable Self Telemetry** is set. A node can also send telemetry with no request.
 
-### Device Trackers (GPS)
+| Node | Entity ID format | Example |
+|---|---|---|
+| Tracked or other node | `sensor.meshcore_<pk10>_ch<n>_<type>_<name>` | `sensor.meshcore_def456abc0_ch1_temperature_myrepeater` |
+| Multi-value type | `sensor.meshcore_<pk10>_ch<n>_<type>_<axis>_<name>` | `sensor.meshcore_def456abc0_ch1_accelerometer_x_myrepeater` |
+| Companion | `sensor.meshcore_<pk6>_<type>_ch<n>_<name>` | `sensor.meshcore_abc123_temperature_ch1_mynode` |
 
-GPS telemetry automatically creates device tracker entities:
-- **Entity**: `device_tracker.meshcore_<pubkey>_<name>_gps`
-- **Source Type**: GPS
-- **Attributes**:
-  - Latitude
-  - Longitude
-  - Altitude (if available)
-  - Accuracy (if available)
-  - Node information
+### Supported LPP types
 
-## Automatic Discovery
+| LPP code | Type part of the entity ID | Unit | Precision | Device class |
+|---|---|---|---|---|
+| 0 | `digital_input` | - | - | - |
+| 1 | `digital_output` | - | - | - |
+| 2 | `analog_input` | V | 2 | - |
+| 3 | `analog_output` | V | 2 | - |
+| 100 | `generic_sensor` | - | - | - |
+| 101 | `illuminance` | lx | - | Illuminance |
+| 102 | `presence` | - | - | - |
+| 103 | `temperature` | °C | 1 | Temperature |
+| 104 | `humidity` | % | 1 | Humidity |
+| 113 | `accelerometer_x`, `accelerometer_y`, `accelerometer_z` | G | 3 | - |
+| 115 | `barometer` | hPa | 1 | Atmospheric pressure |
+| 116 | `voltage` | V | 2 | Voltage |
+| 117 | `current` | A (shown as mA) | 1 | Current |
+| 118 | `frequency` | Hz | 0 | Frequency |
+| 120 | `percentage` | % | 0 | - |
+| 121 | `altitude` | m | 1 | Distance |
+| 122 | `load` | kg | 3 | Weight |
+| 125 | `concentration` | ppm | 0 | - |
+| 128 | `power` | W | 0 | Power |
+| 130 | `distance` | m | 3 | Distance |
+| 131 | `energy` | kWh | 3 | Energy |
+| 132 | `direction` | ° | 0 | - |
+| 133 | `time` | - | - | - |
+| 134 | `gyrometer_x`, `gyrometer_y`, `gyrometer_z` | °/s | 2 | - |
+| 135 | `color_red`, `color_green`, `color_blue` | - | - | - |
+| 142 | `switch` | - | - | - |
 
-Sensors are created dynamically as data becomes available:
+- Presence, Digital Input, Digital Output and Switch are numeric sensors, not binary sensors.
+- GPS (LPP code 136) creates a [GPS tracker](#gps-trackers), not a sensor.
+- An LPP type that is not in the table creates a generic sensor.
+- A tracked client that sends a voltage on channel 1 gets 2 sensors in place of the voltage sensor: `sensor.meshcore_<pk10>_ch1_battery_voltage_<name>` (V) and `sensor.meshcore_<pk10>_ch1_battery_<name>`. The second sensor has the device class Battery and uses the 3.0 V to 4.2 V scale.
 
-1. **Initial Connection** - Core device sensors created immediately
-2. **Network Discovery** - Contact sensors added as nodes are discovered
-3. **First Telemetry** - Telemetry sensors created on first data reception
-4. **First Message** - Message binary sensors created on activity
-5. **GPS Data** - Device trackers created on first GPS telemetry
+Attributes: `channel`, `lpp_type`, `pubkey_prefix`, `node_type` (`root`, `repeater`, `client`, `contact` or `unknown`), `node_name`, `field` (multi-value types only), `last_updated`, `raw_value`.
 
-## Sensor Naming Convention
+## Binary sensors
 
-Consistent naming patterns for easy identification:
-- **Root node sensors**: `sensor.meshcore_<pubkey>_<sensor_name>_<device_name>`
-- **Remote nodes**: `sensor.meshcore_<pubkey>_<node_name>_<sensor_name>`
-- **Telemetry**: `sensor.meshcore_<pubkey>_<device_name>_ch<number>_<type>_<field>`
-- **GPS trackers**: `device_tracker.meshcore_<pubkey>_<name>_gps`
+| Binary sensor | Entity ID format | Device | States | When created |
+|---|---|---|---|---|
+| Contact | `binary_sensor.meshcore_<adv name>_<pk12>_contact` | Companion | `fresh`, `stale`, `discovered` | See [Contact sensors](#contact-sensors) |
+| Online | `binary_sensor.meshcore_<pk10>_online_<name>` | Tracked node | `on`, `off`, `unknown` | For each tracked repeater and tracked client |
+| Channel messages | `binary_sensor.meshcore_<pk6>_ch_<channel_idx>_messages` | Companion | `Active` | At the first message on the channel |
+| Contact messages | `binary_sensor.meshcore_<pk6>_<node pk6>_messages` | Companion | `Active` | At the first direct message with the contact |
+| MQTT broker | `binary_sensor.meshcore_<pk6>_mqtt_broker_<number>_connection` | Companion | `on`, `off` | For each MQTT broker that the uploader loads |
+| Radio fault | `binary_sensor.meshcore_<pk6>_<fault key>_<name>` | Companion | `on`, `off`, `unknown` | When **Enable Self Diagnostics** is set |
 
-## Data Freshness
+### Contact sensors
 
-Sensors implement freshness tracking:
-- **Tracked device sensors** (repeaters/clients/telemetry): Mark unavailable after 3x the configured update interval without data
-- **Contact binary sensors**: Show stale after 12 hours without advertisement
-- **GPS trackers**: Update on each telemetry reception
+Example: `binary_sensor.meshcore_myrepeater_def456abc012_contact`. For the states, the attributes and the **Contact Discovery Mode** rules, see [Contact Management](contacts.md#contact-entities).
 
-## Entity Organization
+### Online sensors
 
-All entities are organized under appropriate devices:
-- **Meshcore Device** - Main node sensors
-- **Repeater Devices** - Per-repeater statistics and telemetry
-- **Client Devices** - Per-client telemetry sensors
-- **Contact Devices** - Remote node diagnostic sensors
+The Online sensor shows if a tracked node answers the requests of the integration. Node Status shows only the link between Home Assistant and the companion.
 
-## Performance Considerations
+| State | Condition |
+|---|---|
+| `on` | The last successful request is in the staleness window |
+| `off` | The last successful request is older than the staleness window |
+| `unknown` | No successful request since Home Assistant started |
 
-- Telemetry updates are batched to reduce database writes
-- Rate calculations use sliding windows for accuracy
-- Sensors mark unavailable rather than showing stale data
-- Binary sensors minimize state changes
-- Duplicate telemetry is filtered automatically
+The staleness window is 2.5 x the update interval of the node, with a minimum interval of 300 s. At the default of 7200 s, the window is 5 h.
 
-## Usage Examples
+Attributes: `last_successful_request`, `update_interval`, `staleness_window` (seconds).
 
-### Monitor Battery Health
+### Message sensors
+
+The state is always `Active`. The logbook uses these sensors to show the messages. See [Messaging](messaging.md).
+
+- Channel messages: attribute `channel_index`.
+- Contact messages: attribute `public_key` (12-character prefix). A sender that is not a contact gets no sensor.
+
+### Radio fault sensors
+
+These 3 sensors decode the `errors` value of the companion. The firmware clears a flag only when the companion restarts. Thus `on` means that the fault occurred at least one time since the companion started. The state is `unknown` until the first Self Diagnostics reading.
+
+| Fault key | Name | Meaning |
+|---|---|---|
+| `err_pool_full` | Radio Fault: Packet Pool Exhausted | The packet pool was full, and the companion dropped a packet |
+| `err_cad_timeout` | Radio Fault: CAD Timeout | Channel Activity Detection stayed busy for too long |
+| `err_rx_timeout` | Radio Fault: RX-Start Timeout | The companion did not go back into receive mode |
+
+### MQTT broker sensors
+
+Attributes: `broker_number`, `server`. The sensors follow broker changes without a reload. See [MQTT](mqtt.md).
+
+## GPS trackers
+
+The integration creates a GPS tracker when a node first sends a GPS reading (LPP code 136).
+
+| Node | Entity ID format |
+|---|---|
+| Tracked or other node | `device_tracker.meshcore_<pk10>_gps_<name>` |
+| Companion | `device_tracker.meshcore_<pk6>_gps_<name>` |
+
+Companion telemetry sensors and the companion GPS tracker from before 3.0 keep their old entity IDs. See [Upgrade to 3.0](upgrade-3.0.md).
+
+The location accuracy is 10 m when the reading gives no accuracy. Attributes: `pubkey_prefix`, `node_type`, `node_name`, `altitude` (when present), `last_updated`.
+
+## Buttons
+
+| Button | Entity ID format | Device | When created |
+|---|---|---|---|
+| Refresh firmware version | `button.meshcore_<pk10>_refresh_firmware` | Repeater | For each tracked repeater |
+| CLI Run Command | `button.meshcore_<pk6>_cli_run` | None (hidden) | When **Enable CLI Console** is set |
+| CLI Clear Console | `button.meshcore_<pk6>_cli_clear` | None (hidden) | When **Enable CLI Console** is set |
+
+A press of **Refresh firmware version** costs one credit. If the lane has no credit, the press fails with an error.
+
+## CLI Console sensor
+
+| Item | Value |
+|---|---|
+| Entity ID | `sensor.meshcore_<pk6>_cli_console` (no device, hidden) |
+| When created | When **Enable CLI Console** is set in **Global Settings** |
+| State | The number of command and response pairs in the transcript (last 50 kept) |
+| Attributes | `history`, `transcript`, `last_command`, `last_response`, `last_is_error`, `command_count`, `max_lines` |
+
+The recorder does not store the transcript attributes, because a command can contain a password. For a card, see [Dashboard cards](dashboard/overview.md#cli-console).
+
+## Select and text helpers
+
+These helpers have no device, are hidden by default and are always available.
+
+| Entity | Options or value | Attributes |
+|---|---|---|
+| `select.meshcore_recipient_type` | `Channel`, `Contact` | - |
+| `select.meshcore_channel` | One option per channel slot, as `<channel name> (<index>)` | `channel_idx` |
+| `select.meshcore_contact` | Added contacts that are not repeaters, as `<name> (<pk12>)` | `public_key_prefix`, `public_key`, `contact_name` |
+| `select.meshcore_discovered_contact` | Discovered contacts, as `<name> (<pk12>)` | `pubkey_prefix`, `public_key`, `contact_name` |
+| `select.meshcore_added_contact` | All added contacts, as `<name> (<pk12>)` | `pubkey_prefix`, `public_key`, `contact_name` |
+| `text.meshcore_message` | The message text, 200 characters maximum | - |
+| `text.meshcore_command` | The command text, 255 characters maximum | - |
+
+With two entries, the helpers of the second entry get a suffix such as `_2`. See [Two or more companions](multiple-companions.md).
+
+## Usage examples
+
+This template sensor counts the MeshCore battery sensors below 20 %. It ignores `unknown` and `unavailable`.
+
 ```yaml
-sensor:
-  - platform: template
-    sensors:
-      mesh_low_battery_count:
-        friendly_name: "Low Battery Nodes"
-        value_template: >
-          {{ states.sensor 
-             | selectattr('entity_id', 'match', 'sensor.meshcore_.*_battery_percentage')
-             | selectattr('state', 'lt', '20')
-             | list | count }}
-```
-
-### Track Network Activity
-```yaml
-sensor:
-  - platform: template
-    sensors:
-      mesh_message_rate:
-        friendly_name: "Network Message Rate"
-        unit_of_measurement: "msg/min"
-        value_template: >
-          {{ states('sensor.meshcore_abc123_repeater1_nb_recv_rate') | float(0) +
-             states('sensor.meshcore_abc123_repeater1_nb_sent_rate') | float(0) }}
+template:
+  - sensor:
+      - name: "Mesh low battery nodes"
+        unique_id: mesh_low_battery_nodes
+        state: >
+          {% set ns = namespace(count=0) %}
+          {% for id in integration_entities('meshcore') | select('match', 'sensor[.]') %}
+            {% if state_attr(id, 'device_class') == 'battery'
+                  and states(id) | is_number
+                  and states(id) | float < 20 %}
+              {% set ns.count = ns.count + 1 %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.count }}
 ```

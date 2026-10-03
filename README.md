@@ -5,145 +5,90 @@
 [![Add Integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=meshcore)
 [![Add Repository](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=meshcore-dev&repository=meshcore-ha&category=integration)
 
-This is a custom Home Assistant integration for MeshCore mesh radio nodes. It allows you to monitor and control MeshCore nodes via USB, BLE, or TCP connections.
+This custom integration connects Home Assistant to a MeshCore companion over USB, BLE or TCP. The companion is the radio that sends and receives on the mesh for Home Assistant. Use it to monitor and control the nodes of your MeshCore mesh.
 
-> :warning: **Work in Progress**: This integration is under active development. BLE connection method hasn't been thoroughly tested yet.
+The integration uses the [meshcore-py](https://github.com/meshcore-dev/meshcore_py) library.
 
-Core integration is powered by [meshcore-py](https://github.com/meshcore-dev/meshcore_py).
+## Documentation
 
----
+The full documentation is at **[meshcore-dev.github.io/meshcore-ha](https://meshcore-dev.github.io/meshcore-ha/)**. If you upgrade from 2.x, read [Upgrade to 3.0](https://meshcore-dev.github.io/meshcore-ha/docs/ha/upgrade-3.0) first.
 
-## 📖 Documentation
+## What is new in 3.0
 
-### **[➡️ View Full Documentation](https://meshcore-dev.github.io/meshcore-ha/)**
-
-**Everything you need to know:**
-- ✅ Complete feature list
-- ✅ Configuration guides  
-- ✅ Sensor documentation
-- ✅ Service descriptions
-- ✅ Automation examples
-- ✅ Dashboard templates
-- ✅ Troubleshooting guides
-
----
-
-## Lovelace Card
-
-A companion Lovelace card is available at [meshcore-card](https://github.com/jpettitt/meshcore-card) for displaying MeshCore node data in your Home Assistant dashboards.
-
----
-
-## Installation
-
-### HACS Installation (Recommended)
-
-1. Make sure you have [HACS](https://hacs.xyz/) installed
-2. Add this repository as a custom repository in HACS:
-   - Go to HACS > Integrations
-   - Click on the three dots in the top right corner
-   - Select "Custom repositories"
-   - Add the URL of this repository
-   - Select "Integration" as the category
-3. Click "Install" on the MeshCore integration
-
-### Manual Installation
-
-1. Copy the `custom_components/meshcore` directory to your Home Assistant `custom_components` directory
-2. Restart Home Assistant
-
-## Quick Start
-
-1. Go to **Settings** > **Devices & Services**
-2. Click **+ Add Integration** and search for "MeshCore"
-3. Follow the setup wizard to configure your connection
-
-For detailed configuration instructions, see the [documentation](https://meshcore-dev.github.io/meshcore-ha/).
-
-## Sharing a Companion with a phone
-
-To keep Home Assistant connected for repeater monitoring while a phone retrieves chat messages over BLE, turn off **Configure → Global Settings → Retrieve queued incoming messages** (enabled by default). HA stops retrieving queued channel/public and direct messages, while status, telemetry, contacts and sending commands remain available.
-
-Messages delivered by the device may still appear in HA: this controls **queue retrieval, not message visibility**. Text replies to commands may remain queued for the phone too. See the [setup, limitations and verification guide](docs/docs/messaging.md#sharing-a-companion-with-a-phone).
-
-## Contact Discovery Mode
-
-A single **Contact Discovery Mode** setting controls how much per-discovered-contact machinery the integration creates, with three choices:
-
-- **Entity per contact** (default) — every discovered contact gets its own diagnostic binary sensor, as before.
-- **Data only** — discovered (un-added) contacts are tracked as data only, with no per-contact entity, while contacts you add to your node keep their entities as usual. On dense meshes this avoids hundreds of low-utility entities and the entity-registry churn they drive.
-- **Disabled** — no discovered-contact processing at all (no contact sensors, no persistence, empty selectors) — for when you only track specific repeaters or clients.
-
-Set it at install time or later in **Configure → Global Settings**. In **Data only** mode the discovered-contact dropdown, messaging, services, and the chat panel all keep working, and the data-only contacts stay inspectable via an aggregate summary sensor and the `meshcore.get_discovered_contact` service; the only trade-off is no individual connectivity sensor / charting / automation for un-added contacts. See [Contact Management → Contact Discovery Mode](https://meshcore-dev.github.io/meshcore-ha/contacts#contact-discovery-mode).
-
-## MQTT Upload (Addon/Container Env)
-
-Configuration can be done in the Home Assistant Web UI:
-
-- Settings -> Devices & Services -> MeshCore -> Configure
-- MQTT Global Settings
-- MQTT Broker Settings (Broker 1-4)
-
-Auth-token mode is easy install by default:
-
-- `meshcore-decoder` is optional.
-- If `meshcore-decoder` is not available, the integration automatically falls back to in-process Python signing (`PyNaCl`).
-- Signing key is pulled from the connected node via `export_private_key()`.
-- If private key export is disabled/blocked on firmware, auth-token upload cannot start.
-
-## Map Auto Uploader (map.meshcore.io)
-
-When enabled (off by default), the integration automatically uploads repeater and room server adverts to [map.meshcore.io](https://map.meshcore.io) when your Companion hears them. A standalone alternative is [map.meshcore.io-uploader](https://github.com/recrof/map.meshcore.io-uploader). Enable in Global Settings if you want Map Auto Uploader.
-
-- Uses the same connection as Home Assistant (USB, BLE, or TCP)
-- Requires private key export on firmware (`ENABLE_PRIVATE_KEY_EXPORT=1`)
-- Replay protection and signature verification built-in
-
-## Self Diagnostics
-
-When enabled (off by default), the integration polls the locally-attached companion node's own statistics and exposes them as sensor entities — giving the companion the same rich diagnostic tiles a managed repeater has. Enable it in the integration's **Global Settings** (or during initial setup).
-
-- **No mesh traffic.** The polls are local queries to the attached radio (`get_stats_core` / `get_stats_radio` / `get_stats_packets`) — they add no LoRa-mesh traffic and consume no airtime or duty-cycle.
-- **Off by default.** No new entities are created until you opt in, so existing installs are unaffected.
-- **Poll interval.** Configurable from 60 to 3600 seconds (default 300 s / 5 minutes).
-- **Entities created (~14 sensors).** Core: uptime, TX queue length. Radio: noise floor, last RSSI, last SNR, TX airtime, RX airtime. Packets: received, sent, flood/direct TX, flood/direct RX, receive errors. Battery is not duplicated — the companion already exposes battery voltage and percentage.
-- **Radio fault flags (3 `problem` binary sensors).** The radio's `errors` field is a bitmask of dispatcher fault events, not a count, so it is decoded into three diagnostic binary sensors with `device_class: problem`:
-  - **Packet Pool Exhausted** — the packet buffer pool ran out and a packet was dropped.
-  - **CAD Timeout** — Channel Activity Detection stayed busy too long (channel congested, or the radio may be wedged).
-  - **RX-Start Timeout** — the radio failed to (re)enter receive mode (possible radio hang).
-
-  Each flag **latches**: the firmware sets it on the first occurrence and clears it only when the radio reboots, so `on` means "this fault has happened at least once since the radio last booted," not "is happening now."
-
-## Development
-
-### Local Development Setup
-
-1. Clone this repository
-2. Copy `custom_components/meshcore` to your Home Assistant config directory
-3. Restart Home Assistant
-4. Add the integration through the UI
-
-### Testing
-
-Run tests with pytest:
-```bash
-pytest tests/
-```
-
-## Support and Development
-
-- Chat with the community on [Discord](https://discord.com/channels/1495203904898728149/1508972219202535475)
-- Report issues on [GitHub Issues](https://github.com/meshcore-dev/meshcore-ha/issues)
-- Contributions are welcome via pull requests
-- Documentation contributions are also welcome!
+- **Mesh Traffic Policy.** New installs get a fixed budget for flood traffic for each companion. This protects the shared mesh. See [Mesh Traffic Policy](https://meshcore-dev.github.io/meshcore-ha/docs/ha/traffic-policy).
+- **Most options apply without a reload**, including add, edit and remove of tracked nodes.
+- **Event changes.** Each `meshcore_*` event has `entry_id` and `device_id`. Outgoing message events changed, and a failed send fires `meshcore_message_send_failed`.
+- **Secrets stay hidden.** Events and MQTT raw payloads do not contain channel secrets, unless you enable **Expose Node Secrets in Events**.
 
 ## Requirements
 
-- Home Assistant (version 2025.6.0 or newer)
-- MeshCore node with firmware that supports API commands
-- For BLE: Bluetooth adapter on the Home Assistant host (direct connection only; proxy connections don't work with PIN pairing)
-- For USB: USB port on the Home Assistant host
+- Home Assistant 2025.6.0 or later.
+- A MeshCore companion with the companion firmware for your connection type (USB, Bluetooth or WiFi).
+- For BLE: a direct Bluetooth adapter on the host. A Bluetooth proxy does not work with PIN pairing. BLE has had less testing than USB and TCP.
+
+## Installation
+
+1. In HACS, add `https://github.com/meshcore-dev/meshcore-ha` as a custom repository of type **Integration**.
+2. Download **MeshCore**.
+3. Restart Home Assistant.
+4. Go to **Settings > Devices & services > Add Integration**.
+5. Select **MeshCore**.
+6. Select the connection type.
+7. Complete the form.
+
+For manual installation and all options, see [Installation](https://meshcore-dev.github.io/meshcore-ha/docs/ha/installation). For the tasks after setup, see [First steps](https://meshcore-dev.github.io/meshcore-ha/docs/ha/first-steps).
+
+## Lovelace card
+
+For a companion Lovelace card that shows MeshCore node data, see [meshcore-card](https://github.com/jpettitt/meshcore-card).
+
+## Share the companion with a phone
+
+To let a phone get the chat messages while Home Assistant monitors repeaters, disable **Global Settings > Retrieve queued incoming messages**. Status, telemetry, contacts and commands continue to work. See [Share the companion with a phone](https://meshcore-dev.github.io/meshcore-ha/docs/ha/messaging#sharing-a-companion-with-a-phone).
+
+## Contact Discovery Mode
+
+**Contact Discovery Mode** controls what the integration keeps for discovered contacts: Entity per contact (default), Data only or Disabled. On a large mesh, use Data only to prevent hundreds of entities. See [Contact Discovery Mode](https://meshcore-dev.github.io/meshcore-ha/docs/ha/contacts#contact-discovery-mode).
+
+## MQTT upload
+
+Configure a maximum of 4 brokers in **Manage MQTT Brokers**. The auth token mode needs firmware that permits private key export. Broker changes apply without a reload. See [MQTT Upload](https://meshcore-dev.github.io/meshcore-ha/docs/ha/mqtt).
+
+## Map Auto Uploader (map.meshcore.io)
+
+When enabled in Global Settings, the integration uploads the repeater, room server and sensor adverts that your companion receives to [map.meshcore.io](https://map.meshcore.io). The firmware must have `ENABLE_PRIVATE_KEY_EXPORT=1`. For a standalone uploader, see [map.meshcore.io-uploader](https://github.com/recrof/map.meshcore.io-uploader).
+
+## Self Diagnostics
+
+When enabled, the integration shows the statistics of the companion as 14 sensors and 3 radio fault binary sensors. The queries go to the companion only and use no airtime on the mesh. Each fault flag stays on until the companion reboots. See [Sensors](https://meshcore-dev.github.io/meshcore-ha/docs/ha/sensors#self-diagnostics-sensors).
+
+## Development
+
+### Local development
+
+1. Clone this repository.
+2. Copy `custom_components/meshcore` into the configuration directory of your Home Assistant.
+3. Restart Home Assistant.
+4. Add the integration in the UI.
+
+### Tests
+
+The tests have two tiers. Run each tier as a separate pytest command.
+
+```bash
+pip install -r requirements-test.txt
+pytest tests
+
+pip install -r requirements-test-integration.txt
+pytest tests_integration
+```
+
+## Support
+
+- Talk with the community on [Discord](https://discord.com/channels/1495203904898728149/1508972219202535475).
+- Report problems on [GitHub Issues](https://github.com/meshcore-dev/meshcore-ha/issues).
+- Send code and documentation changes as pull requests.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project uses the MIT License. See the LICENSE file.

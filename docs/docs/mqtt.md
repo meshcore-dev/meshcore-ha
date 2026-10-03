@@ -1,146 +1,177 @@
 ---
-sidebar_position: 8
+sidebar_position: 17
 title: MQTT Upload
 ---
 
 # MQTT Upload
 
-The Meshcore Home Assistant integration can publish Meshcore packet data to MQTT brokers directly from the integration.
+The integration can publish MeshCore packets and events to a maximum of 4 MQTT brokers. It connects to the brokers directly. It does not use the Home Assistant MQTT integration. Each broker has its own server, authentication, topics and payload mode.
 
-## Overview
+## Configure a broker
 
-MQTT upload supports:
+1. Go to **Settings > Devices & services > MeshCore > Configure**.
+2. Select **Manage MQTT Brokers**.
+3. If you edit or remove a broker, select it in **Broker**.
+4. In **Action**, select **Add Broker**, **Edit Broker** or **Remove Broker**.
+5. Select **Submit**.
+6. If you add or edit a broker, complete the **MQTT Broker Settings** form.
+7. If you add or edit a broker, select **Submit**.
 
-- Up to 4 brokers
-- Dynamic broker management (add/edit/remove)
-- Custom MQTT brokers (username/password or no auth)
-- LetsMesh brokers using MeshCore auth-token mode
-- Per-broker topic templates and auth settings
-- Per-broker payload mode (`packet` or `raw`)
-- Per-broker connection binary sensors under the main node device
+The change applies at once, without a reload. The [connection sensors](#connection-sensors) follow the new broker list.
 
-## Configure in Home Assistant
+## Broker settings
 
-1. Go to **Settings** -> **Devices & Services**
-2. Open your **Meshcore** integration
-3. Click **Configure**
-4. Open **Manage MQTT Brokers**
-5. Use **Add Broker**, **Edit Broker**, or **Remove Broker**
+| Field | Default | Notes |
+|---|---|---|
+| **Enabled** | Off | The integration skips a disabled broker. |
+| **Server** | Empty | Host name or IP address. The integration skips an enabled broker with no server. |
+| **Port** | 1883 | 1 to 65535. |
+| **Transport** | `tcp` | `tcp` or `websockets`. The WebSocket path is `/`. |
+| **Use TLS** | Off | |
+| **Verify TLS Certificate** | On | If off, the integration accepts any certificate and logs a warning. |
+| **Keepalive (seconds)** | 60 | 15 to 300. |
+| **Username (not needed with Auth Token)** | Empty | Used only when **Use MeshCore Auth Token** is off. |
+| **Password (not needed with Auth Token)** | Empty | Used only with a username. |
+| **Use MeshCore Auth Token** | Off | See [Auth token](#auth-token). |
+| **Token Audience** | Empty | Sent as the `aud` claim of the token. |
+| **Owner Public Key (JWT owner claim)** | Empty | Optional, 64 hex characters. Sent only when **Use TLS** and **Verify TLS Certificate** are on. |
+| **Owner Email (JWT email claim)** | Empty | Optional. Sent only when **Use TLS** and **Verify TLS Certificate** are on. |
+| **Payload Mode** | Packet (LetsMesh-compatible) | Or Raw Event. See [Payloads](#payloads). |
+| **Auth Token TTL (seconds)** | 3600 | 60 to 86400. |
+| **Status Topic** | `meshcore/{IATA}/{PUBLIC_KEY}/status` | See [Topics](#topics). If empty, the broker starts without a last will and the integration logs a warning. |
+| **Packets Topic** | `meshcore/{IATA}/{PUBLIC_KEY}/packets` | See [Topics](#topics). |
+| **Broker IATA Code** | `XYZ` | The region code for the topics. See [IATA code](#iata-code). |
 
-## Broker Settings
+The integration publishes with QoS 0. It sets the retain flag on status messages, but not on packet messages.
 
-Per broker, configure:
+## Topics
 
-- **Enabled**
-- **Server**
-- **Port**
-- **Transport** (`tcp` or `websockets`)
-- **Use TLS**
-- **TLS Verify**
-- **Username / Password** (not needed when using auth token)
-- **Use MeshCore Auth Token**
-- **Token Audience** (usually broker hostname for token-based setups)
-- **Owner Public Key** (optional JWT `owner` claim; sent only with TLS + TLS Verify)
-- **Owner Email** (optional JWT `email` claim; sent only with TLS + TLS Verify)
-- **Auth Token TTL** (seconds)
-- **Payload Mode**:
-  - `packet` = normalized packet payloads (LetsMesh-compatible behavior)
-  - `raw` = raw MeshCore event payloads
-- **Status Topic**
-- **Packets Topic**
-- **IATA** (per-broker topic region code)
-- **Client ID Prefix**
+| Placeholder | Value |
+|---|---|
+| `{IATA}` | The **Broker IATA Code** in upper case, for example `LAX`. |
+| `{IATA_lower}` | The **Broker IATA Code** in lower case, for example `lax`. |
+| `{PUBLIC_KEY}` | The full public key of the companion (64 hex characters, upper case). |
 
-## LetsMesh Setup
+### IATA code
 
-Typical LetsMesh settings:
+If the **Broker IATA Code** is empty or `XYZ`, the integration uses the IATA code from the 2.x MQTT settings of the entry. If the entry has no 2.x code, the code stays `XYZ`.
 
-- `Server`: `mqtt-us-v1.letsmesh.net` (or regional LetsMesh endpoint)
-- `Port`: `443`
-- `Transport`: `websockets`
-- `Use TLS`: enabled
-- `Use MeshCore Auth Token`: enabled
-- `Token Audience`: same as broker hostname
-- `Payload Mode`: `packet`
-- `Packets Topic`: `meshcore/{IATA}/{PUBLIC_KEY}/packets`
+## LetsMesh setup
 
-:::info
-When uploading to LetsMesh, you do not need to provide a username or password. Authentication is handled automatically when **Use MeshCore Auth Token** is enabled.
-:::
+The integration treats a broker as a LetsMesh broker when **Server** or **Token Audience** contains `letsmesh.net`.
 
-:::info
-If a LetsMesh broker is configured with an `/events` packets topic, the integration auto-corrects it to `/packets`.
-:::
+CAUTION: Set **Broker IATA Code** to your region code before you enable a LetsMesh broker. If the code stays `XYZ`, the integration skips the broker.
 
-## Auth Token Behavior
+| Field | Value |
+|---|---|
+| **Server** | `mqtt-us-v1.letsmesh.net`, or the LetsMesh server for your region |
+| **Port** | `443` |
+| **Transport** | `websockets` |
+| **Use TLS** | On |
+| **Verify TLS Certificate** | On |
+| **Use MeshCore Auth Token** | On |
+| **Token Audience** | The host name in **Server** |
+| **Payload Mode** | Packet (LetsMesh-compatible) |
+| **Broker IATA Code** | The IATA airport code near your companion, for example `LAX` |
 
-Auth-token mode works as follows:
+You do not need a username or password. The companion firmware must allow private key export (`ENABLE_PRIVATE_KEY_EXPORT=1`).
 
-1. Integration requests private key from the connected node via `export_private_key()`
-2. It tries `meshcore-decoder` first if available
-3. If `meshcore-decoder` is missing/unavailable, it falls back to in-process Python signing (`PyNaCl`)
-4. If the broker rejects auth (for example after token expiry), the integration refreshes token credentials and attempts reconnect automatically
+## Auth token
 
-Optional owner claims for LetsMesh:
+When **Use MeshCore Auth Token** is on, the integration signs a JSON Web Token with the private key of the companion:
 
-- `Owner Public Key` is sent as JWT claim `owner` only when **Use TLS** and **TLS Verify** are both enabled
-- `Owner Email` is sent as JWT claim `email` only when **Use TLS** and **TLS Verify** are both enabled
-- `Owner Public Key` must be 64 hex characters
-- `Owner Email` must be a valid email format
-- Invalid owner values are ignored with warning logs
-- Owner-claim behavior is the same for both `meshcore-decoder` and Python fallback token generation paths
+1. The integration asks the companion for its private key. If the companion does not supply the key, the broker does not start.
+2. The integration makes the token with `meshcore-decoder` if it is on the PATH. Otherwise, it signs the token in Python.
+3. The integration connects with the username `v1_<PUBLIC_KEY>` and the token as the password.
+4. If the broker refuses the token, the integration makes a new token and connects again.
 
-`meshcore-decoder` is optional for normal installs.
+The token contains `aud` (the **Token Audience**) and `client` (`meshcore-dev/meshcore-ha:<version>`). It contains `owner` and `email` only when **Use TLS** and **Verify TLS Certificate** are on.
 
-:::warning
-If the node cannot export its private key (firmware/export disabled), auth-token upload cannot start.
-:::
+## Payloads
 
-## Published Payload Behavior
+| Payload Mode | What the integration publishes to **Packets Topic** |
+|---|---|
+| Packet (LetsMesh-compatible) | Packet log events (`RX_LOG_DATA` and RF or raw logs) that have a payload, in the packet JSON format that LetsMesh uses. Duplicates within 1 second are dropped. |
+| Raw Event | Every MeshCore event, including received direct and channel messages. |
 
-MQTT publishing behavior depends on broker `Payload Mode`.
+CAUTION: Do not send Raw Event payloads to a public broker. Raw events contain the text of your messages and of decrypted channel messages.
 
-MQTT payload timestamps are UTC offset-aware ISO 8601 strings, for example `2026-06-04T21:42:31+00:00`.
+Packet example:
 
-### `packet` mode
+```json
+{
+  "timestamp": "2026-06-04T21:42:31.123456+00:00",
+  "origin": "mynode",
+  "origin_id": "<PUBLIC_KEY>",
+  "type": "PACKET",
+  "direction": "rx",
+  "time": "21:42:31",
+  "date": "4/6/2026",
+  "len": "52",
+  "packet_type": "4",
+  "route": "F",
+  "payload_len": "48",
+  "raw": "<packet hex>",
+  "SNR": "7.25",
+  "RSSI": "-92",
+  "score": "1000",
+  "duration": "0",
+  "hash": "<16 hex characters>"
+}
+```
 
-- Publishes packet-style payloads only (RX/RF/PACKET path)
-- Uses topic shape `meshcore/{IATA}/{PUBLIC_KEY}/packets` by default
-- Normalizes RX/RF packet data into legacy packet JSON fields (`type=PACKET`, `direction`, `route`, `packet_type`, `hash`, etc.)
-- Applies duplicate suppression to reduce duplicate callback publishes
+`route` is `F` for flood and transport flood packets, or `D` for direct and transport direct packets. A packet with `route` `D` also has a `path` field.
 
-### `raw` mode
+Raw Event example:
 
-- Publishes raw event payloads without packet normalization
-- Payload includes:
-  - `event_type`
-  - `payload` (sanitized MeshCore event payload)
-  - `timestamp`
-  - `origin` / `origin_id`
+```json
+{
+  "timestamp": "2026-06-04T21:42:31.123456+00:00",
+  "origin": "mynode",
+  "origin_id": "<PUBLIC_KEY>",
+  "source": "meshcore-ha",
+  "event_type": "EVENTTYPE.RX_LOG_DATA",
+  "payload": {}
+}
+```
 
-Packet publishes are non-retained. Status publishes (`online` / `offline` / LWT) are retained.
+### Status messages
 
-## MQTT Connection Sensors
+The integration publishes a retained `online` status to **Status Topic** when the broker connects, and every 5 minutes after. It publishes `offline` when it stops. The broker publishes `offline` (the last will) if the connection drops. The message includes the `model`, `firmware_version` and `radio` of the companion, and its `stats`.
 
-For each configured broker, the integration exposes a connection binary sensor under the main MeshCore device:
+The publish queue holds a maximum of 500 events. When it is full, the integration drops the oldest `RX_LOG_DATA` event.
 
-- `binary_sensor.meshcore_*_mqtt_broker_1_connection`
-- `binary_sensor.meshcore_*_mqtt_broker_2_connection`
-- etc.
+## Secrets
 
-## Troubleshooting
+The integration removes node secrets before an event reaches the Home Assistant event bus or MQTT. It does not forward private key export events. It replaces `channel_secret` and `secret` values with `<redacted>`. **Expose Node Secrets in Events** in **Global Settings** stops this redaction.
 
-If MQTT upload is not working:
+CAUTION: Do not enable **Expose Node Secrets in Events** when a broker uses Raw Event mode. The broker can receive your channel secrets and the private key of your companion.
 
-1. Confirm broker is **Enabled**
-2. Check Home Assistant logs for `[MQTT1]`, `[MQTT2]`, etc.
-3. Verify auth-token broker has valid `Token Audience` and `Auth Token TTL`
-4. Verify private key export works on the connected node
-5. Check broker connection diagnostic sensors in Home Assistant
+## Connection sensors
 
-Common log examples:
+Each broker has a connection binary sensor on the companion device, for example `binary_sensor.meshcore_abc123_mqtt_broker_1_connection`. It is on when the broker is connected. Its attributes are `broker_number` and `server`.
 
-- `meshcore-decoder not found ... will try Python fallback signer`
-- `Private key export command failed`
-- `Auth token requested but token generation failed`
-- `Refreshed auth token; attempting reconnect`
+The integration creates the sensor for each enabled broker with a **Server**. A LetsMesh broker also needs an IATA code that is not `XYZ`. After a broker change, a new broker gets a sensor at once, and the sensor of a removed broker becomes unavailable. A broker that fails to start keeps its sensor, but the sensor stays off.
+
+## Solve problems
+
+1. Make sure that the broker is **Enabled** and has a **Server**.
+2. For LetsMesh, make sure that **Broker IATA Code** is a real code, not `XYZ`.
+3. For auth token brokers, make sure that the companion allows private key export.
+4. Look in the log for lines that start with `[MQTT1]` to `[MQTT4]`.
+
+| Message | Meaning |
+|---|---|
+| `[MQTTn] Disabled: Let's Mesh broker requires a non-default IATA code` | Set **Broker IATA Code**. |
+| `[MQTTn] Private key export disabled on firmware (needs ENABLE_PRIVATE_KEY_EXPORT=1)` | The companion refused the key export. |
+| `[MQTTn] Auth token requested but token generation failed` | No token. The broker does not start. |
+| `meshcore-decoder not found in runtime PATH, will try Python fallback signer` | Normal. The integration signs the token in Python. |
+| `[MQTTn] Connect failed: <reason>` | The broker refused the connection. |
+| `[MQTTn] Connection timed out after 10s; paho keeps retrying` | The broker did not answer in 10 seconds. |
+| `[MQTTn] Empty status topic; skipping MQTT will` | **Status Topic** is empty. The broker starts without a last will. |
+
+## Related pages
+
+- [Events](events.md): the event types that Raw Event mode publishes.
+- [Map Auto Uploader](map-upload.md): the other feature that uses private key export.
+- [Troubleshooting](troubleshooting.md): general problems with the integration.

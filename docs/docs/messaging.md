@@ -1,529 +1,213 @@
 ---
-sidebar_position: 5
+sidebar_position: 9
 title: Messaging
 ---
 
 # Messaging
 
-The Meshcore Home Assistant integration provides comprehensive messaging capabilities for your mesh network, including sending, receiving, and logging messages.
+The integration sends and receives MeshCore direct messages and channel messages. It logs each message in the logbook and fires events for automations. For the event fields, see [Events](events.md). For the service fields, see [Services](services.md).
 
-## Sharing a Companion with a phone
+## Send messages
 
-Use **Configure → Global Settings → Retrieve queued incoming messages** to choose whether Home Assistant retrieves incoming chat messages from the connected Companion. It is **enabled by default**, including existing installations.
+The recipient of a direct message must be a contact on the companion. Identify it by `node_id` (the contact name, not case-sensitive) or by `pubkey_prefix`.
 
-Turn it **off** when Home Assistant stays connected over USB for repeater monitoring while another client, such as a phone over BLE, should retrieve channel/public and direct messages. Configure this separately for each Companion connection. This setting does not enable simultaneous USB/BLE support on firmware that lacks it.
+```yaml
+action: meshcore.send_message
+data:
+  pubkey_prefix: def456abc012
+  message: Hello from Home Assistant
+```
 
-| Setting | Behavior |
-| --- | --- |
-| Enabled (default) | HA retrieves queued messages at startup, on message notifications, and during fallback polling. Use this when HA is your chat client or runs bots that need incoming messages. |
-| Disabled | HA does not request messages from the chat queue. Another client can retrieve them. Repeater status, telemetry, contacts, node information and sending commands remain enabled. |
+To send to a channel, give the channel index. To send a region-scoped flood, add `scope`.
 
-### Messages can still appear in Home Assistant
+```yaml
+action: meshcore.send_channel_message
+data:
+  channel_idx: 1
+  message: Test message
+  scope: myregion
+```
 
-This is a **queue retrieval setting, not a visibility filter**. Existing message event handlers remain active. If the device delivers a message event to HA, HA can still display and log it. Seeing a message in HA does not by itself mean HA removed it from the queue. Delivery to multiple connected clients depends on the device firmware; this option does not promise exclusive delivery to the phone.
+With more than one companion, add `entry_id`. See [Select the entry](services.md#select-the-entry).
 
-Raw radio logs and their channel-payload decoding also remain active. These do not themselves request a queued message. A raw radio log is distinct from a regular incoming chat event.
+What happens after a send:
 
-### Commands and limitations
+- When the companion accepts the message, the integration fires `meshcore_message_sent`. This event does not confirm delivery.
+- If the message does not leave the companion, the integration fires `meshcore_message_send_failed`, and `reason` gives the cause. The call does not raise an error, except for a traffic policy refusal.
+- Under Governed, each message uses one credit from the messages lane. See [Mesh Traffic Policy](traffic-policy.md).
+- A message that you send with `execute_command` (for example `send_msg`) fires no events and makes no logbook entry.
 
-- `meshcore.execute_command`, its UI wrapper, and `send_cmd` remain available. Requests for repeater status and telemetry continue independently of chat retrieval.
-- `get_msg` and raw `send` calls with the `SYNC_NEXT_MESSAGE` opcode are rejected while retrieval is disabled.
-- Text replies to commands can be queued chat messages too. They may remain for the phone instead of reaching an HA automation. Repeater version detection that waits for a text reply may time out.
-- Disabling retrieval does not restore messages already read, cancel an already-sent request, or prevent another client from reading the queue. The device queue has finite capacity.
+For the event order, see [Message event order](events.md#message-event-order).
 
-### Apply and verify
+## Receive messages
 
-1. After updating the integration files, restart Home Assistant. Reload the browser page; if the field shows `consume_incoming_messages`, clear the browser cache or test in a private window. This is the internal setting key, not the intended label.
-2. Open **Configure → Global Settings**, disable **Retrieve queued incoming messages**, and save. Reopen the form to verify it stayed disabled. The setting is read from the current configuration before each retrieval and persists across restarts.
-3. Disconnect the phone from BLE, leave HA connected, and send a new channel or direct message to the Companion.
-4. Wait more than 60 seconds, then reconnect the phone. Confirm it receives the message and that HA still updates repeater telemetry. Repeat after restarting HA.
+The companion keeps incoming messages in a queue. The integration reads the queue when the companion reports a waiting message and after each connection. It also reads the queue on the next scheduled update after 60 seconds without message activity. For each message, it fires `meshcore_message`.
 
-Before the first save, the default behavior still retrieves messages. Retrieve important queued messages with the phone before upgrading. Re-enable this option to resume HA chat retrieval.
+| Message type | How the integration finds the sender |
+|---|---|
+| Direct | The firmware gives the public key prefix. If no contact has that prefix, `sender_name` is `null`. |
+| Channel | The packet carries `Name: message`. If the name is not a contact name, `sender_name` is `"Unknown"` and `message` holds the full text. |
 
-## Message Flow
-
-### Sending Messages
-
-Messages can be sent using the integration's [services](./services.md#send-message):
-
-1. **Direct Messages** - Send to specific nodes by name or public key
-2. **Channel Messages** - Broadcast to all nodes on a channel
-
-When you send a message:
-1. The service validates the recipient and message
-2. The message is transmitted via the Meshcore device
-3. A `meshcore_message_sent` event is fired
-4. The message appears in the Home Assistant logbook
-
-### Receiving Messages
-
-When messages are received:
-1. Raw SDK events (`EventType.CONTACT_MSG_RECV` or `EventType.CHANNEL_MSG_RECV`) are processed
-2. Contact information is resolved (name lookup from public key)
-3. A `meshcore_message` event is fired with simplified data
-4. The message is logged to the Home Assistant logbook
-5. Binary sensor entities track message activity
+`pubkey_prefix` is on each incoming direct message. It is on an incoming channel message only when the sender is a contact. A text reply from a repeater to `send_cmd` also arrives as a direct message.
 
 ### RX_LOG Correlation
 
-When a channel message is received over the mesh network, it may arrive via multiple paths — directly from the sender and relayed through one or more repeaters. Each reception generates an RX_LOG entry containing radio metrics: signal-to-noise ratio (SNR), received signal strength (RSSI), hop count, and the routing path taken.
+A channel message can reach the companion more than one time: from the sender and as relayed copies from repeaters. The integration decrypts each copy and attaches it to the message in `rx_log_data`, with SNR, RSSI and the route of the copy. It matches copies by channel index and sender timestamp, not by text.
 
-The integration automatically correlates these RX_LOG entries with the corresponding `meshcore_message` event and attaches them as `rx_log_data`. This gives automations and bots visibility into how a message traveled through the mesh.
-
-#### Default Mode (Fixed Wait)
-
-By default, the integration waits a fixed 500ms after receiving a channel message before firing the `meshcore_message` event. During this window, RX_LOG entries from repeater relays accumulate. After 500ms, all collected entries are attached to the event as `rx_log_data`.
-
-This mode is simple and predictable. All available path data is present on the initial event, which is what most bots and automations expect.
-
-#### Adaptive Mode (Opt-In)
-
-When **Adaptive Channel Message Delivery** is enabled in Global Settings, the integration polls for RX_LOG data every 50ms instead of waiting the full 500ms. As soon as data arrives, the `meshcore_message` event fires immediately.
-
-After the initial event, a background task makes two additional collection passes (at 0.5s and 1.0s) to pick up late-arriving repeater RX_LOGs. These are delivered via `meshcore_delivery_update` events — the same progressive pattern used for outgoing message delivery tracking.
-
-In testing, RX_LOG data consistently arrived within the first 50ms poll, even for messages routed through 5 repeaters. This reduces typical message delivery latency from 500ms to ~50ms.
-
-#### Tradeoffs
-
-| | Default (Fixed Wait) | Adaptive |
+| | Default | Adaptive |
 |---|---|---|
-| Latency | Always 500ms | ~50ms typical, 500ms ceiling |
-| `rx_log_data` on initial event | All available paths | First path(s) only |
-| Late-arriving repeater data | Missed if >500ms | Delivered via `meshcore_delivery_update` |
-| Automation complexity | Listen to one event | May need to handle progressive updates |
+| Delay before `meshcore_message` | 500 ms | 50 ms to 500 ms |
+| `rx_log_data` on `meshcore_message` | All copies in 500 ms | The first copies only |
+| Later copies | Not reported | In `meshcore_delivery_update`, from checks 0.5 s and 1.5 s after the event |
 
-#### When to Enable Adaptive Mode
+Keep the default if an automation reads the number of copies from `meshcore_message`. Use adaptive mode for less delay if your automations handle `meshcore_delivery_update`.
 
-Enable adaptive mode if:
+To enable adaptive mode, go to **Settings > Devices & services > MeshCore > Configure > Global Settings**. Enable **Adaptive Channel Message Delivery**. The setting applies to the next channel message.
 
-- You want lower-latency message delivery for dashboards or notifications
-- Your automations don't depend on having all paths present on the initial event
-- You're willing to listen for `meshcore_delivery_update` events to get complete path data
+## Delivery status
 
-Keep the default if:
+The **Last Message Delivery** sensor, `sensor.meshcore_<pk6>_last_message_delivery_<name>`, shows the result of the last message that this entry sent. For the states, see [Sensors: Last Message Delivery](sensors.md#last-message-delivery).
 
-- Your bots or automations report total path counts from the initial event
-- You want the simplest integration with no progressive events to handle
-- The 500ms delay is acceptable for your use case
+## Logbook
 
-#### Enabling Adaptive Mode
+The integration writes each `meshcore_message` event to the logbook of the message entity.
 
-1. Go to **Settings** → **Devices & Services** → **Meshcore**
-2. Click **Configure** → **Global Settings**
-3. Enable **Adaptive Channel Message Delivery**
+| Message | Logbook text |
+|---|---|
+| Channel | `<channel> sender: message` |
+| Direct | `sender: message` |
 
-No restart required. The change takes effect on the next received channel message.
+- For an outgoing message, the sender is the companion name that the entry stored at setup or at the last reconfigure. The logbook does not show the recipient.
+- A sender that is not a contact shows as `Unknown` (channel) or `Unknown (<pk6>)` (direct), for example `Unknown (def456)`.
+- A channel slot with an empty name shows as `public` for channel 0, and as its index for other channels. This applies to incoming and outgoing messages.
 
-#### Outgoing Message Delivery Tracking
+## Message entities
 
-Outgoing channel messages also use progressive RX_LOG collection, regardless of the adaptive mode setting. The message is logged as `meshcore_message` the moment the radio accepts it, carrying `"outgoing": true`, `"repeater_count": 0` and `"collecting": true`. The integration then makes 4 collection passes over 4 seconds, each firing a `meshcore_delivery_update`; the last carries `"progressive": false` and the final count. A restart mid-collection publishes the count reached so far instead of losing it.
+The integration creates a binary sensor for each conversation, on the first message in either direction.
 
-This allows dashboards and bots to show delivery status updates in real time — for example, displaying how many repeaters relayed your message and which paths it took.
+| Conversation | Entity ID | Attribute |
+|---|---|---|
+| Channel | `binary_sensor.meshcore_<pk6>_ch_<channel_idx>_messages` | `channel_index` (string) |
+| Contact | `binary_sensor.meshcore_<pk6>_<node pk6>_messages` | `public_key` (12-character prefix) |
 
-See [Events — meshcore_delivery_update](./events#meshcore_delivery_update) for the full event field reference.
+The state is always `Active`. A sender that is not a contact gets no entity, but the event still fires.
 
-## Logbook Integration
+## Channels
 
-All messages automatically appear in the Home Assistant logbook with appropriate formatting and icons.
+A MeshCore channel has an index, a name and a 16-byte secret key. All nodes that have the same key can read the channel.
 
-### Message Format in Logbook
+| Channel type | Name | Key |
+|---|---|---|
+| Public | Channel 0 | A fixed key that the firmware sets |
+| Hashtag | Starts with `#`, for example `#mychannel` | The first 16 bytes of the SHA-256 hash of the name (case-sensitive). All nodes that use the same name share the channel. |
+| Private | Does not start with `#` | A random secret that you share with the members |
 
-#### Channel Messages
-Display with channel prefix and sender name:
-- **Format**: `<channel> Sender: Message`
-- **Icon**: `mdi:message-bulleted`
-- **Examples**:
-  - `<public> PonyBot: back at you`
-  - `<public> 🦄: Ignore this testing 2`
-  - `<public> Iris03: Good morning Tigard.`
+CAUTION: Do not use `set_channel` on channel 0. If the key changes, the companion cannot read or send on the Public channel.
 
-Channel 0 displays as `<public>`, other channels show as `<1>`, `<2>`, etc.
+### Add a hashtag channel
 
-#### Direct Messages
-Display as simple sender and message:
-- **Format**: `Sender: Message`
-- **Icon**: `mdi:message-text`
-- **Examples**:
-  - `PonyBot: test`
-  - `🦄: Test 2`
-  - `Weather Station: Temperature 72°F`
-
-### Outgoing Messages
-When your node (e.g., "PonyBot") sends messages, they appear in the logbook with your node name as the sender:
-- Channel: `<public> PonyBot: Your message here`
-- Direct: `PonyBot: Your reply here`
-
-### Logbook Features
-
-- **Automatic Sender Resolution** - Public keys are resolved to friendly names
-- **Emoji Support** - Full support for emoji in node names and messages
-- **Channel Identification** - Channel 0 shows as "public"
-- **Message Truncation** - Long messages are truncated with "..." in debug logs
-- **Timestamp Tracking** - Shows relative time (e.g., "1 minute ago", "3 hours ago")
-- **Date Grouping** - Messages grouped by date in the logbook
-- **Entity Linking** - Messages link to their binary sensor entities
-
-## Message Events
-
-The integration provides two types of message events for automations:
-
-### meshcore_message Event
-Fired when any message is received. See [Events documentation](./events.md#meshcore_message) for field details.
-
-**Key Fields:**
-- `message` - The message text
-- `sender_name` - Resolved sender name (e.g., "🦄", "PonyBot")
-- `message_type` - "channel" or "direct"
-- `entity_id` - Related binary sensor
-
-### meshcore_message_sent Event
-Fired when a message is sent. See [Events documentation](./events.md#meshcore_message_sent) for field details.
-
-**Key Fields:**
-- `message` - The sent message
-- `receiver` - Recipient name or channel
-- `message_type` - "channel" or "direct"
-
-## Binary Sensor Entities
-
-Message activity creates binary sensor entities that track communication:
-
-### Channel Message Sensors
-- **Entity ID**: `binary_sensor.meshcore_<device_pubkey>_ch_<number>_messages`
-- **Example**: `binary_sensor.meshcore_a305ca_ch_0_messages`
-- **Created**: On first message in channel
-- **State**: Always "Active" when messages exist
-- **Attributes**: Channel index
-
-### Contact Message Sensors
-- **Entity ID**: `binary_sensor.meshcore_<device_pubkey>_<contact_pubkey>_messages`
-- **Example**: `binary_sensor.meshcore_a305ca_f293ac_messages`
-- **Created**: On first message from contact
-- **State**: Always "Active" when messages exist
-- **Attributes**: Public key
-
-## Channel Configuration
-
-Meshcore devices support multiple channels with configurable names and hash-based encryption.
-
-### Hash-Based Channel Encryption
-
-Channels use hash-based encryption where the channel name is hashed to derive the encryption key. Only nodes with the exact channel name can decrypt messages on that channel.
-
-**How it works:**
-- Each channel has a name and a hash derived from that name
-- The hash is used as the encryption key for the channel
-- Only devices configured with the same name+hash combination can communicate
-- You can create private channels by using unique names and sharing them securely
-
-### Setting Channel Names
-
-Use the `set_channel` command to configure channel names:
+Quote the full command in YAML. If not, YAML reads `#` as the start of a comment.
 
 ```yaml
-service: meshcore.execute_command
+action: meshcore.execute_command
 data:
-  command: "set_channel 1 #pdx {{ '#pdx' | sha256 | truncate(32, true, '') }}"
+  command: "set_channel 1 #mychannel"
 ```
 
-**Important**: When using `#` in YAML, the entire command must be quoted (as shown above) since `#` starts a comment in YAML.
+### Add a private channel
 
-#### Command Format
+1. Make a secret of 16 bytes on a computer: `openssl rand -hex 16`
+2. Run `set_channel` with the index, the name and the secret:
 
-```
-set_channel <channel_idx> <name> <hash>
-```
+   ```yaml
+   action: meshcore.execute_command
+   data:
+     command: "set_channel 2 mygroup 0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+   ```
 
-- **channel_idx**: Channel number (e.g., 0, 1, 2, etc.)
-- **name**: Display name (e.g., `#pdx`, `private`, `work`, `my-secret-channel`)
-- **hash**: SHA256 hash of the channel name, truncated to 32 characters
+3. Give the name and the secret to each member. Use a secure method.
 
-The template `{{ '#pdx' | sha256 | truncate(32, true, '') }}` automatically generates the correct hash from the name.
+CAUTION: Do not start the name of a private channel with `#`, and do not omit the secret. In both cases, the library makes the key from the name, and any person who knows the name can read the channel.
 
-**Note**: The `#` prefix is a convention for public/community channels but is not required. You can name channels anything you want.
+CAUTION: Do not use the secret from the example.
 
-### Channel Management UI Card
+The library uses a maximum of 32 bytes of the name. If the name has spaces, put it in double quotes inside the command.
 
-Create a dashboard card to manage your channels:
+### Add a hashtag channel from a dashboard
 
-```yaml
-type: vertical-stack
-cards:
-  - type: markdown
-    content: |
-      ## Channel Configuration
-      Configure channels with hash-based encryption.
-  - type: entities
-    entities:
-      - entity: input_text.meshcore_channel_name
-      - entity: input_number.meshcore_channel_index
-  - type: button
-    name: Set Channel
-    icon: mdi:pound
-    tap_action:
-      action: call-service
-      service: meshcore.execute_command
-      data:
-        command: >
-          set_channel {{ states('input_number.meshcore_channel_index') | int }}
-          {{ states('input_text.meshcore_channel_name') }}
-          {{ states('input_text.meshcore_channel_name') | sha256 | truncate(32, true, '') }}
-```
+A dashboard card cannot render templates in an action. Use a script that reads two helpers.
 
-**Required Helper Entities** (create in Settings → Devices & Services → Helpers):
+To find a free slot, open the **MeshCore Channel** select. It lists each slot of the companion, from 0 to the last index. A free slot shows as `(unused)`. `get_channels` does not show free slots.
 
-1. **Channel Index** (Number):
-   - Name: `Meshcore Channel Index`
-   - Entity ID: `input_number.meshcore_channel_index`
-   - Min: 0, Max: 99, Step: 1
-   - Icon: `mdi:numeric`
+1. Create a **Number** helper `input_number.meshcore_channel_index`. Set the minimum to 1 to protect channel 0. Set the maximum to the last slot index in the select, and the step to 1.
+2. Create a **Text** helper `input_text.meshcore_channel_name` with a maximum length of 32.
+3. Add this script to `scripts.yaml`:
 
-2. **Channel Name** (Text):
-   - Name: `Meshcore Channel Name`
-   - Entity ID: `input_text.meshcore_channel_name`
-   - Max length: 32
-   - Icon: `mdi:pound`
+   ```yaml
+   meshcore_set_hashtag_channel:
+     alias: Set MeshCore hashtag channel
+     sequence:
+       - condition: template
+         value_template: >-
+           {{ states('input_text.meshcore_channel_name').startswith('#')
+              and states('input_number.meshcore_channel_index') | int(0) >= 1 }}
+       - action: meshcore.execute_command
+         data:
+           command: >-
+             set_channel {{ states('input_number.meshcore_channel_index') | int }}
+             "{{ states('input_text.meshcore_channel_name') }}"
+   ```
 
-### Example Channel Configurations
+4. Add this card to a dashboard:
 
-#### Public Channel (Convention: # prefix)
-```yaml
-service: meshcore.execute_command
-data:
-  command: "set_channel 0 #public {{ '#public' | sha256 | truncate(32, true, '') }}"
-```
+   ```yaml
+   type: vertical-stack
+   cards:
+     - type: entities
+       entities:
+         - entity: input_number.meshcore_channel_index
+         - entity: input_text.meshcore_channel_name
+     - type: button
+       name: Set channel
+       icon: mdi:pound
+       tap_action:
+         action: perform-action
+         perform_action: script.meshcore_set_hashtag_channel
+   ```
 
-#### Regional Channel
-```yaml
-service: meshcore.execute_command
-data:
-  command: "set_channel 1 #pdx {{ '#pdx' | sha256 | truncate(32, true, '') }}"
-```
+`meshcore.execute_command` is an admin action. The button fails for a user who is not an administrator.
 
-#### Private Channel (Any name)
-```yaml
-service: meshcore.execute_command
-data:
-  command: "set_channel 2 my-secret-channel {{ 'my-secret-channel' | sha256 | truncate(32, true, '') }}"
-```
+### View the channels
 
-### Viewing Configured Channels
+The **MeshCore Channel** select shows each slot as `Name (index)`, for example `#mychannel (1)`. A slot with no name, or that the integration did not read, shows `(unused) (index)`. After a successful `set_channel`, the select updates.
 
-To see your currently configured channels, use the **MeshCore Channel** select entity:
-- Entity ID: `select.meshcore_channel`
-- Shows all configured channels with their names
-- Displays as "Name (idx)" format (e.g., "#pdx (1)", "work (2)")
-- Updates automatically when channels are configured
+In a script, use `meshcore.get_channels`. It returns the index, the name and `shared_secret_present` of each named channel, but not the secret.
 
-Use this select entity in your messaging UI to choose which channel to send to.
+## Share the companion with a phone {#sharing-a-companion-with-a-phone}
 
-## Message Services
+**Global Settings > Retrieve queued incoming messages** controls whether Home Assistant reads the message queue on the companion. The default is enabled. Each entry has its own setting.
 
-Send messages using these services:
+Disable it when another client (for example a phone over BLE) must read the messages. Home Assistant stays connected (for example over USB) for repeater monitoring. This setting does not add simultaneous USB and BLE support to firmware that does not have it.
 
-### Send Direct Message
-```yaml
-service: meshcore.send_message
-data:
-  node_id: "🦄"
-  message: "Hello from PonyBot!"
-```
+When the setting is disabled:
 
-### Send Channel Message
-```yaml
-service: meshcore.send_channel_message
-data:
-  channel_idx: 0  # Public channel
-  message: "Good morning mesh!"
-```
+- Home Assistant does not read the queue. Repeater status, telemetry, contacts and commands continue to operate.
+- `execute_command` refuses `get_msg`, with `{"error": "Incoming message consumption is disabled"}`.
+- If the companion pushes a message to Home Assistant, Home Assistant still shows and logs it. The firmware controls delivery to more than one client.
+- A text reply to a command can stay in the queue for the phone. To detect the firmware version of a repeater, the integration waits for a text reply, so the detection can time out.
+- Messages that Home Assistant already read do not return to the queue. Before you disable the setting, read important queued messages with the phone.
 
-See [Services documentation](./services.md) for complete service details.
+To make sure that the phone gets the messages:
 
-## Automation Examples
-
-### Forward Messages to Notifications
-```yaml
-alias: Mesh Message Notifications
-trigger:
-  - platform: event
-    event_type: meshcore_message
-action:
-  - service: notify.mobile_app
-    data:
-      title: >
-        {% if trigger.event.data.message_type == 'channel' %}
-          Mesh Channel {{ trigger.event.data.channel_idx }}
-        {% else %}
-          DM from {{ trigger.event.data.sender_name }}
-        {% endif %}
-      message: "{{ trigger.event.data.message }}"
-```
-
-### Auto-Reply to Direct Messages
-```yaml
-alias: Auto Reply to Status Requests
-trigger:
-  - platform: event
-    event_type: meshcore_message
-    event_data:
-      message_type: "direct"
-condition:
-  - condition: template
-    value_template: "{{ 'status' in trigger.event.data.message.lower() }}"
-action:
-  - service: meshcore.send_message
-    data:
-      pubkey_prefix: "{{ trigger.event.data.pubkey_prefix }}"
-      message: "PonyBot Status: Online, Battery: 95%, Temp: 72°F"
-```
-
-### Morning Greeting
-```yaml
-alias: Morning Mesh Greeting
-trigger:
-  - platform: time
-    at: "08:00:00"
-action:
-  - service: meshcore.send_channel_message
-    data:
-      channel_idx: 0
-      message: "Good morning mesh! ☀️"
-```
-
-### Message Rate Limiting
-```yaml
-alias: Hourly Status Broadcast
-trigger:
-  - platform: time_pattern
-    hours: "*"
-    minutes: "0"
-action:
-  - service: meshcore.send_channel_message
-    data:
-      channel_idx: 0
-      message: >
-        PonyBot Status: {{ states('sensor.meshcore_battery_percentage') }}% battery,
-        {{ states('sensor.meshcore_node_count') }} nodes online
-```
-
-## Message Filtering
-
-### By Specific Sender
-```yaml
-trigger:
-  - platform: event
-    event_type: meshcore_message
-condition:
-  - condition: template
-    value_template: "{{ trigger.event.data.sender_name == '🦄' }}"
-```
-
-### By Channel
-```yaml
-trigger:
-  - platform: event
-    event_type: meshcore_message
-    event_data:
-      message_type: "channel"
-      channel_idx: 0  # Public channel
-```
-
-### By Message Content
-```yaml
-trigger:
-  - platform: event
-    event_type: meshcore_message
-condition:
-  - condition: template
-    value_template: "{{ 'test' in trigger.event.data.message.lower() }}"
-```
-
-### Exclude Own Messages
-```yaml
-trigger:
-  - platform: event
-    event_type: meshcore_message
-condition:
-  - condition: template
-    value_template: "{{ trigger.event.data.sender_name != 'PonyBot' }}"
-```
-
-## Message History
-
-### Viewing in Logbook
-1. Navigate to **History** in Home Assistant
-2. Select the **Logbook** tab
-3. Filter by "Meshcore" domain to see only mesh messages
-4. Messages show with relative timestamps and are grouped by date
-
-### Recent Messages Example
-```
-<public> PonyBot: back at you
-11:17:11 AM - 1 minute ago
-
-<public> 🦄: Ignore this testing 2
-11:08:47 AM - 9 minutes ago
-
-<public> Roamer 2: Ack
-10:17:55 AM - 1 hour ago
-
-<public> Iris03: Good morning Tigard.
-8:31:03 AM - 3 hours ago
-```
-
-### Querying via Templates
-```yaml
-# Count today's messages
-{{ states.binary_sensor 
-   | selectattr('entity_id', 'match', 'binary_sensor.meshcore.*messages')
-   | list | length }}
-
-# Check if specific contact sent messages
-{{ states('binary_sensor.meshcore_abc123_messages') }}
-```
-
-## Performance Considerations
-
-### Message Processing
-- Messages are processed asynchronously to avoid blocking
-- Sender name resolution is cached for performance
-- Long messages (>50 chars) are truncated in debug logs only
-
-### Event Handling
-- Use event filters to reduce automation triggers
-- Consider using `mode: queued` for message handlers
-- Batch message processing when handling multiple messages
-
-### Binary Sensors
-- Created dynamically on first message
-- Minimal state changes (always "Active")
-- Use attributes for additional data without state changes
+1. Disable **Retrieve queued incoming messages**.
+2. Select **Submit**.
+3. Disconnect the phone from BLE. Home Assistant stays connected.
+4. Send a message to the companion from a different node.
+5. Wait more than 60 seconds.
+6. Connect the phone again.
+7. Make sure that the phone receives the message.
+8. Make sure that Home Assistant continues to update repeater telemetry.
 
 ## Troubleshooting
 
-### Messages Not Appearing in Logbook
-- Verify the Meshcore device is connected
-- Check that the sender exists in contacts
-- Review debug logs for processing errors
-
-### Missing Sender Names
-- Sender must be in the contact list for name resolution
-- Unknown senders show as "Unknown (pubkey)"
-- Channel messages extract sender from "Name: Message" format
-
-### Binary Sensors Not Created
-- Sensors are created on first message only
-- Check entity registry for existing sensors
-- Verify entity naming follows the pattern
-
-### Own Messages Not Showing
-- Ensure your node name is configured correctly
-- Check that message send services complete successfully
-- Verify `meshcore_message_sent` events are firing
-
-## Related Documentation
-
-- [Services](./services.md) - Sending messages
-- [Events](./events.md) - Message event details
-- [Automation](./automation.md) - Message automation examples
+For messaging problems, see [Troubleshooting: Messages and delivery](troubleshooting.md#messages-and-delivery).

@@ -1,518 +1,180 @@
 ---
-sidebar_position: 7
+sidebar_position: 6
 title: Remote Node Tracking
 ---
 
 # Remote Node Tracking
 
-The Meshcore Home Assistant integration can monitor and collect data from remote nodes in your mesh network, including Repeaters, Room Servers, and Client devices.
+The integration can monitor other nodes in your mesh. A node that you add for monitoring is a tracked node. The integration sends polls to each tracked node on a schedule and shows the results as sensors. For the terms on this page, see [Concepts](concepts.md).
 
-## Overview
-
-Remote node tracking allows you to:
-- Monitor repeater statistics and performance metrics
-- Collect telemetry from client devices (sensors, GPS, etc.)
-- Track battery levels and uptime across the network
-- Receive real-time updates based on configured intervals
-
-## Node Types
-
-### Repeaters
-Full-featured mesh nodes that relay messages and provide detailed statistics.
-
-**Features:**
-- Login authentication support
-- Comprehensive statistics (messages, airtime, queue status)
-- Telemetry collection capability
-- Automatic reconnection on failure
-
-### Room Servers
-Full mesh nodes with store-and-forward message capabilities.
-
-**Features:**
-- Store and forward message handling
-- Login authentication support
-- Fewer statistics than repeaters
-- No telemetry collection
-
-### Clients
-End devices that primarily send telemetry data.
-
-**Features:**
-- Telemetry data collection only
-- No login required (but may have ACL restrictions)
-- Battery monitoring
-- Sensor data (temperature, humidity, GPS, etc.)
-
-## Configuration
-
-### Adding a Repeater
-
-1. Navigate to **Settings → Devices & Services**
-2. Find your Meshcore integration
-3. Click **Configure**
-4. Select **Add Repeater Station**
-5. Choose the repeater from your contacts list
-6. Configure:
-   - **Password**: Required if the repeater has authentication
-   - **Enable Telemetry**: Collect sensor data from the repeater
-   - **Update Interval**: Minimum 300 seconds (default: 7200 seconds / 2 hours)
-7. Click **Submit**
-
-**Note**: Advanced options like "Disable Path Reset" and "Disabled" can be configured after adding the repeater by editing it in **Manage Monitored Devices**.
-
-The integration will:
-- Attempt to log into the repeater
-- Verify connectivity
-- Retrieve firmware version
-- Begin collecting statistics
-
-### Adding a Client
-
-1. Navigate to **Settings → Devices & Services**
-2. Find your Meshcore integration
-3. Click **Configure**
-4. Select **Add Tracked Client**
-5. Choose the client from your contacts list
-6. Configure:
-   - **Update Interval**: Minimum 300 seconds (default: 7200 seconds / 2 hours)
-7. Click **Submit**
-
-**Note**: Advanced options like "Disable Path Reset" and "Disabled" can be configured after adding the client by editing it in **Manage Monitored Devices**.
-
-The integration will:
-- Send telemetry requests at the configured interval
-- Create sensors for received data
-- Monitor connection status
-
-### When a Change Takes Effect
-
-Adding, removing or editing a monitored device is applied to the running
-integration straight away. Nothing reloads, so the mesh traffic budget and
-every other node's schedule survive the edit:
-
-- **Add**: the node's sensors, its online binary sensor and its firmware
-  refresh button appear at once, and its first poll is due immediately.
-- **Remove**: polling stops and the node's entities and device are deleted.
-  The node stays in your contacts.
-- **Edit**: the new update interval, telemetry, neighbours, path-reset and
-  disabled values are used from the next cycle. Turning neighbours on creates
-  the neighbour counter; turning it off removes the neighbour sensors.
-
-Only two kinds of change rebuild the integration:
-
-- the connection settings (USB path, BLE address, TCP host and port), which
-  are what the entry is built around;
-- **CLI Console** and **Self Diagnostics**, whose entities sit on the
-  companion device and are only created when the integration starts.
-
-## Update Intervals
-
-### Recommended Settings
-
-**Repeaters:**
-- High activity networks: 300-600 seconds
-- Normal networks: 900-1800 seconds
-- Low activity/battery conscious: 1800+ seconds
-
-**Clients:**
-- Critical sensors: 300-1200 seconds
-- Standard monitoring: 1800-3600 seconds
-- Battery-powered repeaters: 3600+ seconds
-
-### Interval Considerations
-
-- Shorter intervals provide more real-time data but increase network traffic
-- Network congestion may require longer intervals
-- Failed updates trigger exponential backoff
-
-## Authentication & Permissions
-
-### Repeater Authentication
-
-Repeaters typically require a password for login:
-1. The integration sends a login command with the password
-2. On success, a session is established
-3. The session persists until the repeater/room server reboots or evicts the session due to limited storage
-4. Automatic re-login occurs after failures
-
-### Client Permissions
-
-Clients may have Access Control Lists (ACLs) that restrict:
-- Who can request telemetry
-- What data is shared
-
-If a client doesn't respond to telemetry requests:
-- Check if your node is authorized in the client's ACL
-- Verify the client is within radio range
-- Ensure the client has telemetry enabled
-
-## Failure Handling
-
-### Exponential Backoff
-
-When updates fail, the integration implements smart exponential backoff:
-
-1. **Dynamic Base Interval**: Calculates backoff timing to fit 5 retries within the configured interval
-2. **Path Reset**: After 3 failures, automatically resets the routing path to the node (if established)
-3. **Recovery**: Resets to normal interval on success
-
-### Automatic Re-login
-
-For repeaters, the integration automatically re-logs in after 5 consecutive failures.
-
-### Auto-Disable for Inactive Devices
-
-To protect network resources, tracked devices are automatically disabled if they haven't had a successful request in 5 days (120 hours):
-
-**How It Works:**
-- The integration tracks the last successful request timestamp for each device
-- Every update cycle checks if 5 days have passed since the last success
-- If the threshold is exceeded, the device is automatically marked as disabled
-- Disabled devices stop making requests to reduce network traffic
-- Auto-disabled devices automatically re-enable on integration reload (restart or reload integration)
-
-**Manual Re-enabling:**
-If you want to re-enable before the next integration reload:
-1. Go to **Settings → Devices & Services**
-2. Click **Configure** on Meshcore integration
-3. Select **Manage Monitored Devices**
-4. Select the auto-disabled device and edit
-5. Uncheck **Disabled** and submit
-
-**Why This Helps:**
-- Prevents continuous failed requests to permanently offline nodes
-- Reduces network congestion from unreachable devices
-- Conserves rate limiter tokens for active devices
-- Auto-recovery on integration reload means no manual intervention needed when devices come back online
-
-## Mesh Traffic Policy
-
-**Settings → Devices & Services → MeshCore → Configure → Global Settings → Mesh Traffic Policy**
-
-The policy decides how much airtime the integration may spend and how it reacts
-when it runs out. New installs start on **Governed**. Installs created before
-3.0 have no setting and stay on **Legacy**, which is exactly the behaviour
-described above and in the rest of this page; nothing about it has changed.
-
-| | Legacy (existing installs) | Governed (new installs) |
+| You add it with | Node types | Polls |
 |---|---|---|
-| Budget | 20 requests, refilling one every 2 minutes | three lanes, flat per radio (below) |
-| Request cost | 1 per mesh request | 1 per request in its own lane |
-| Budget exhausted | counted as a node failure, node backs off | the poll is deferred to when credit returns; no failure recorded |
-| Service calls | never metered | metered, in the lane they belong to |
-| Backoff | fits five retries inside the refresh interval | same as Legacy while the node has a known route; once polls flood, doubles the interval up to 24 h, with +/-10% jitter |
-| Path reset | next poll floods | up to 3 path discoveries sent at once, charged one flood credit; a route found means the node is polled again right away |
-| Auto-disable | repeaters only, status polling only | repeaters and clients, status and telemetry |
-| Node schedules | in memory, reset on restart | persisted, restored on restart |
+| **Add Repeater Station** | Repeaters, room servers, sensor nodes | Status, telemetry (optional), neighbors (optional), login when necessary |
+| **Add Tracked Client** | Clients | Telemetry |
 
-The budget is **flat per radio**. Tracking more nodes shares it rather than
-growing it: each node is simply polled less often. Mesh health does not care
-how many repeaters one Home Assistant tracks, it cares how much airtime the
-radio spends.
+The node must be in the contact list of the companion. If a repeater is only a discovered contact, the form shows `Contact not found`. If a client is only a discovered contact, the integration adds it but cannot poll it.
 
-### The three lanes
+## Add Repeater Station
 
-What actually costs the mesh is flood traffic, which every node in range
-repeats. A routed request reaches one node over a known path and costs the mesh
-very little, so it gets a much larger allowance. Each lane refills on its own:
-an empty flood lane can never hold up a routed poll or a message you sent.
+1. Go to **Settings > Devices & services > MeshCore > Configure**.
+2. Select **Add Repeater Station**.
+3. Complete the form (see the table below).
+4. Select **Submit**.
 
-| Lane | Capacity | Refill | Carries |
-|---|---|---|---|
-| Flood | 5 | 20/hour | automatic traffic that floods: polling a contact with no route, path discovery, the first probe after a path reset, adverts sent from automations |
-| Direct | 20 | 120/hour | automatic traffic over a known route: status, telemetry, login and neighbour paging for routed contacts |
-| Messages | 10 | 60/hour | `send_message`, `send_channel_message` and `trace`, from any caller |
+| Field | Default | Description |
+|---|---|---|
+| **Available Repeaters** | None | The node to track. The list shows repeaters, room servers, sensor nodes, and contacts with "repeater", "room server", "roomserver" or "sensor" in the name. |
+| **Password** | Empty | The login password. Leave it blank for a node that gives access by ACL. |
+| **Enable Telemetry Polling** | Off | Also send telemetry polls, at the same interval as the status polls. |
+| **Enable Neighbor Entities (creates SNR and activity sensors for each neighbor seen by the repeater)** | Off | Read the neighbor list after each successful status poll. The UI gives MeshCore firmware 1.14.0 or later as the requirement. See [Repeater Neighbors](repeater-neighbors.md). |
+| **Telemetry Refresh Rate (seconds)** | 7200 | The interval for all polls of this node. Minimum 300. |
+| **Disable Path Reset** | Off | Do not reset the route to this node after failures. See [Route reset](#route-reset). |
 
-When a lane is empty an automatic poll is **deferred**, not failed: the node's
-next attempt is moved to the moment its lane has credit again, and no failure is
-recorded against it. A service call cannot be deferred, so it raises an error
-naming the lane and the seconds to wait.
+When you select **Submit**, the integration logs in to the node with the password and asks for the firmware version. Each request costs one credit. If no credit is available for the version query, the integration skips it. The first status poll is due at once. The integration keeps the password for later logins.
 
-### Reading the budget
+| Error | Cause |
+|---|---|
+| `Repeater is already configured` | The node is a tracked node already. |
+| `Device not connected. Please ensure the MeshCore device is connected.` | The companion is not connected. |
+| `Contact not found` | The node is not in the contact list of the companion. |
+| `Mesh traffic <lane> lane is empty. Try again in <seconds> seconds.` | The lane has no credit for the login. |
+| `Failed to log in to repeater. Check password and try again.` | The node refused the login, or did not answer. |
 
-The **Request Rate Limiter** sensor keeps its Legacy value (the credits left in
-the direct lane) and, under Governed, carries the whole picture as attributes:
+## Add Tracked Client
 
-- `policy`
-- `flood_credits`, `flood_capacity`, `flood_refill_per_hour`, `flood_next_eligible`
-- the same four for `direct_` and `messages_`
-- `deferred_nodes` — every node currently waiting, as `{name, lane, until}`
+1. Go to **Settings > Devices & services > MeshCore > Configure**.
+2. Select **Add Tracked Client**.
+3. Complete the form (see the table below).
+4. Select **Submit**.
 
-`<lane>_next_eligible` is an ISO timestamp while the lane is empty and `null`
-while it has credit. Each deferral is also logged once per node per lane per
-10 minutes:
+| Field | Default | Description |
+|---|---|---|
+| **Available Clients** | None | The client to track. |
+| **Update Frequency (seconds)** | 7200 | The interval for telemetry polls. Minimum 300. |
+| **Disable Path Reset** | Off | Do not reset the route to this node after failures. |
 
+The integration sends no mesh traffic when you add a client. The first telemetry poll is due at once. The client firmware decides who can request its telemetry. If the client does not answer, make sure that its ACL allows your companion.
+
+## Manage Monitored Devices
+
+1. Go to **Settings > Devices & services > MeshCore > Configure**.
+2. Select **Manage Monitored Devices**.
+3. In **Select Device**, select a tracked node.
+4. In **Action**, select **Edit Device Settings** or **Remove Device**.
+5. Select **Submit**.
+
+The edit forms have the same fields as the add forms, plus these fields:
+
+| Field | Description |
+|---|---|
+| **Update Password (leave blank to keep current)** | Repeaters only. Leave it blank to keep the saved password. |
+| **Disable Device** | Stop all polls to this node. The device and its entities stay in Home Assistant. |
+
+When you save a repeater with **Disable Device** off, the integration logs in and asks for the firmware version again (one credit). If the query fails, the edit stays. The **Refresh firmware version** button of the repeater sends the same requests.
+
+**Remove Device** stops all polls to the node and deletes the device and its entities. The node stays in the contact list of the companion.
+
+An add, edit or remove applies at once, without a reload. The schedules of the other nodes do not change. A new interval applies from the next poll. When you disable neighbors, the integration removes all neighbor sensors.
+
+## How the integration polls a node
+
+Each node has a status schedule (repeaters, room servers, sensor nodes) and a telemetry schedule (clients, and repeaters with telemetry on). Both schedules use the interval of the node. Each poll starts after a random delay of 0 to 30 seconds.
+
+```mermaid
+sequenceDiagram
+    participant HA as Integration
+    participant C as Companion
+    participant R as Repeater
+    Note over HA: status poll is due
+    opt 5+ failures and last login over 1 h ago
+        HA->>C: login (1 credit)
+        C->>R: login
+        R-->>HA: login result
+    end
+    HA->>C: status request (1 credit)
+    C->>R: status request
+    R-->>HA: status
+    opt status OK and neighbors enabled
+        HA->>C: neighbor page requests (1 credit each)
+        C->>R: neighbor page requests
+        R-->>HA: neighbor entries
+    end
+    Note over HA: telemetry poll is due (own schedule)
+    opt telemetry enabled
+        HA->>C: telemetry request (1 credit)
+        C->>R: telemetry request
+        R-->>HA: telemetry (Cayenne LPP)
+    end
 ```
-Deferring status for Repeater A (flood lane empty, next at 2026-09-20T18:55:37+00:00)
-```
 
-Seeing a node deferred in the flood lane means the mesh has no route to it. The
-fix is a route, not more budget: keep **Disable Path Reset** on (in each node's
-entry under **Manage Monitored Devices**) so a node with a good manual path is
-never dropped back to flooding.
+Every poll costs one credit from a lane of the traffic budget. A poll with no credit waits for credit. It is not a failure. For the lanes and the requests that cost credit, see [Mesh Traffic Policy](traffic-policy.md). For installs from 2.x that still use the deprecated Legacy policy, see [Legacy traffic policy](legacy-traffic-policy.md).
 
-Switch policies only if your mesh is congested; saving the setting is applied
-to the running integration, and every node keeps its schedule.
+## Failures
 
-## Data Collection
+A failure is a poll that gets no answer, a send that fails, or a status with an uptime of 0. After each failure, the wait to the next attempt doubles, to a maximum of 24 hours. A node with a known route retries sooner than the normal interval. See [Retry spacing](traffic-policy.md#retry-spacing).
 
-### Repeater Statistics
+### Route reset
 
-Updated at each interval:
-- Battery voltage and percentage
-- Uptime (minutes/days)
-- Message counters (sent, received, direct, flood)
-- Airtime utilization
-- Queue status
-- Duplicate message filtering stats
-- Noise floor measurements
+The route reset applies when a node with a known route has 3 or more failures in a row with no answer. The integration clears the route and sends up to 3 path discoveries, for one flood credit. If it finds no route, the next poll is a flood request. See [Route healing](traffic-policy.md#route-healing-governed).
 
-See [Sensors documentation](./sensors.md#repeater-sensors) for complete list.
+The reset does not occur when **Disable Path Reset** is on. Enable this option when you set a fixed route with the `change_contact_path` command of `meshcore.execute_command`. See [CLI Command Reference](cli-commands.md).
 
-### Client Telemetry
+### Login
 
-Collected when available:
-- Environmental sensors (temperature, humidity, light)
-- Electrical measurements (voltage, current)
-- Motion/presence detection
-- GPS location
-- Battery status
-- Custom Cayenne LPP data
+The integration logs in to a node again before a status poll when the node has 5 or more status failures in a row. The last login must be more than 1 hour ago. A successful login resets the failure count.
 
-See [Sensors documentation](./sensors.md#telemetry-sensors-cayenne-lpp) for supported types.
+### Auto-disable
 
-### Reliability Tracking
+If a tracked node has no successful request for 120 hours, the integration stops all its polls. The node resumes when you edit it or when the companion hears its next advert. See [Auto-disable](traffic-policy.md#auto-disable).
 
-Each tracked node provides reliability metrics:
+## Devices and entities
 
-- **Request Successes**: Total count of successful requests (login, status, telemetry)
-- **Request Failures**: Total count of failed requests (timeouts, errors, exceptions)
-- **Routing Path**: Current path through the mesh network
-- **Path Length**: Number of hops to reach the node
+Each tracked node gets its own device, connected through the companion device. The device name is `MeshCore Repeater: <name> (<node pk6>)` or `MeshCore Client: <name> (<node pk6>)`.
 
-These sensors help monitor network health and identify problematic nodes or routing issues.
+Entity IDs use `<pk10>`, the first 10 characters of the node public key. They also use `<name>`, the node name in lower case with special characters as `_`.
 
-### Sensor Availability
+| Entity | Example |
+|---|---|
+| Status sensors (repeater) | `sensor.meshcore_def456abc0_battery_percentage_myrepeater` |
+| **Routing Path** | `sensor.meshcore_def456abc0_out_path_myclient` |
+| **Path Length** | `sensor.meshcore_def456abc0_out_path_len_myclient` |
+| **Request Successes** | `sensor.meshcore_def456abc0_request_successes_myrepeater` |
+| **Request Failures** | `sensor.meshcore_def456abc0_request_failures_myrepeater` |
+| **Online** | `binary_sensor.meshcore_def456abc0_online_myrepeater` |
+| **Refresh firmware version** (repeater) | `button.meshcore_def456abc0_refresh_firmware` |
+| **Neighbor Count** (neighbors on) | `sensor.meshcore_def456abc0_neighbor_count` |
+| Telemetry sensors | `sensor.meshcore_def456abc0_ch1_temperature_myclient` |
+| GPS tracker | `device_tracker.meshcore_def456abc0_gps_myclient` |
 
-Tracked node sensors automatically mark as unavailable when data becomes stale:
+The integration creates telemetry sensors when the first data arrives, one for each Cayenne LPP value. For the full list of status sensor keys, see [Sensors](sensors.md).
 
-**Timeout Calculation:**
-- Sensors wait **3x the configured update interval** before marking unavailable
-- Example: 2-hour (7200s) interval = 6 hours before unavailable
-- Example: 5-minute (300s) interval = 15 minutes before unavailable
+### Availability
 
-## Managing Tracked Nodes
+- Status and telemetry sensors become unavailable after 3 intervals with no new data (6 hours at 7200 seconds).
+- **Online** is on when the last successful request is less than 2.5 intervals old. It is on at once after you add a node. After a restart, it is unknown until the first success.
+- **Request Failures** counts failed polls and failed logins.
 
-### View Current Configuration
+## Automation example
 
-1. Go to **Settings → Devices & Services**
-2. Click **Configure** on Meshcore integration
-3. Select **Manage Monitored Devices**
-4. View list of tracked repeaters and clients
+This automation sends a notification when a repeater does not answer:
 
-### Edit Node Settings
-
-1. In **Manage Monitored Devices**
-2. Select the node to edit
-3. Choose **Edit**
-4. Modify settings:
-   - **Update Interval**: How often to poll the device
-   - **Password**: Authentication password (repeaters only)
-   - **Telemetry Collection**: Enable/disable telemetry requests (repeaters only)
-   - **Disable Path Reset**: Prevent automatic path resets on failures
-   - **Disabled**: Temporarily stop all updates to this device
-5. Click **Submit**
-
-#### Device Options Explained
-
-**Disable Path Reset:**
-By default, after 3 consecutive failures, the integration automatically resets the routing path to the node. Enable this option to prevent path resets if you have a stable, manually-configured path using the `update_contact` command.
-
-**Disabled:**
-Temporarily stop all status, telemetry, and login requests to this device without removing it from your configuration. Useful when:
-- A node is temporarily offline for maintenance
-- You want to reduce network traffic temporarily
-- Testing network performance without a specific node
-- A device is causing excessive failures
-
-When disabled, the device and its sensors remain in Home Assistant but no updates are requested.
-
-### Remove Tracked Node
-
-1. In **Manage Monitored Devices**
-2. Select the node to remove
-3. Choose **Remove**
-4. Confirm removal
-
-## Performance Optimization
-
-### Network Traffic
-
-Each update cycle generates:
-- **Repeater Status**: 1 request + 1 response
-- **Repeater Telemetry**: 1 additional request + response
-- **Client Telemetry**: 1 request + possible response
-
-### Rate Limiting
-
-The integration implements a **token bucket rate limiter** to prevent overwhelming the mesh network with requests:
-
-**Configuration:**
-- **Burst Capacity**: 20 tokens (allows up to 20 rapid requests)
-- **Refill Rate**: 1 token per 2 minutes (120 seconds)
-- **Average Rate**: ~0.5 requests per minute (30 requests per hour)
-
-**How It Works:**
-
-1. Each mesh request (login, status, telemetry) consumes 1 token
-2. The bucket starts full with 20 tokens, allowing immediate bursts
-3. Tokens refill gradually at 1 per 2 minutes
-4. If no tokens are available, the request is skipped (not queued)
-5. Skipped requests count as failures and trigger exponential backoff
-
-**Practical Impact:**
-
-- Initial startup can process 20 requests rapidly
-- Sustained operation limited to ~30 requests/hour across all tracked devices
-- With default 2-hour update intervals:
-  - 15 repeaters = 7.5 requests/hour (well within limit)
-  - 30 devices = 15 requests/hour (manageable)
-  - 40+ devices may experience rate limiting
-
-**When Rate Limited:**
-- Requests are skipped and logged as debug messages
-- The update is counted as a failure
-- Exponential backoff increases retry delay
-- Network traffic is protected from excessive load
-
-**Adjusting for Large Networks:**
-
-If you're monitoring many devices and experiencing rate limiting:
-1. Increase update intervals (3-4 hours instead of 2)
-2. Disable telemetry on less-critical repeaters
-3. Use the "Disabled" option for devices that don't need constant monitoring
-4. Stagger device addition to avoid burst consumption
-
-### Best Practices
-
-Make the update interval as high as you can to support your needs to avoid excess mesh traffic.
-
-### Troubleshooting High Failure Rates
-
-If nodes frequently fail to update:
-1. Check radio signal strength (RSSI/SNR)
-2. Verify node is powered and online
-3. Check for rate limiting (review debug logs)
-4. Increase update interval
-5. Check for network congestion
-6. Review repeater passwords
-7. Verify client ACL permissions
-8. Set a direct path to the remote node via the `update_contact` command if you have a stable path
-9. Enable "Disable Path Reset" if you have a manually-configured stable path
-10. Temporarily disable problematic nodes to isolate network issues
-
-## Entity Organization
-
-Tracked nodes create organized entity structures:
-
-### Repeater Entities
-- Device: `Meshcore Repeater - [Name]`
-- Sensors: All statistics under this device
-- Telemetry: If enabled, appears under same device
-
-### Client Entities
-- Device: `Meshcore Client - [Name]`
-- Sensors: All telemetry under this device
-- GPS: Creates device_tracker if GPS data received
-
-## Automation Examples
-
-### Low Battery Alert
 ```yaml
-alias: Repeater Low Battery
-trigger:
-  - platform: numeric_state
-    entity_id: sensor.meshcore_abc123_repeater1_battery_percentage
-    below: 20
-action:
-  - service: notify.notify
-    data:
-      title: "Repeater Battery Low"
-      message: "{{ state_attr(trigger.entity_id, 'friendly_name') }} at {{ states(trigger.entity_id) }}%"
-```
-
-### Node Offline Detection
-```yaml
-alias: Node Went Offline
-trigger:
-  - platform: state
-    entity_id: sensor.meshcore_abc123_repeater1_uptime
-    to: 'unavailable'
+alias: Repeater offline
+triggers:
+  - trigger: state
+    entity_id: binary_sensor.meshcore_def456abc0_online_myrepeater
+    to: "off"
     for:
       minutes: 10
-action:
-  - service: notify.notify
+actions:
+  - action: notify.notify
     data:
-      title: "Node Offline"
-      message: "{{ state_attr(trigger.entity_id, 'friendly_name') }} is not responding"
+      title: Node offline
+      message: "{{ state_attr(trigger.entity_id, 'friendly_name') }} is not answering."
 ```
 
-### Telemetry Monitoring
-```yaml
-alias: High Temperature Alert
-trigger:
-  - platform: numeric_state
-    entity_id: sensor.meshcore_def456_sensor1_ch1_temperature
-    above: 30
-action:
-  - service: notify.notify
-    data:
-      message: "Temperature alert: {{ states(trigger.entity_id) }}°C"
-```
+For more examples, see [Automation](automation.md#sensor-automations).
 
-## Troubleshooting
+## Solve problems
 
-### Repeater Won't Connect
-- Verify password is correct
-- Check repeater is in contacts list
-- Ensure repeater is powered on
-- Review Home Assistant logs for login errors
-- Try removing and re-adding the repeater
-
-### Client Not Sending Telemetry
-- Verify client is configured to send telemetry
-- Check ACL permissions on the client
-- Ensure client is within radio range
-- Confirm client battery is not depleted
-- Review telemetry event logs
-
-### Excessive Backoff
-- Check for consistent connection issues
-- Verify radio path between nodes
-- Consider increasing base update interval
-- Review network congestion
-- Check for repeater firmware issues
-
-### Rate Limiting Issues
-To check if rate limiting is affecting your network:
-- Monitor the **Rate Limiter Tokens** sensor (shows current available tokens)
-- If tokens frequently reach 0, you're hitting the rate limit
-- Calculate your total requests per hour (devices × updates/hour)
-- Ensure you're under 20 requests/hour sustained
-- Increase update intervals on less critical devices
-- Disable telemetry collection where not needed
-- Consider temporarily disabling some devices
-
-### Missing Sensors
-- Sensors are created on first data reception
-- Wait for at least one update cycle
-- Check that telemetry is enabled (repeaters)
-- Verify the node is sending expected data types
-- Review debug logs for parsing errors
-
-## Related Documentation
-
-- [Installation](./installation.md#post-installation-configuration) - Initial setup
-- [Sensors](./sensors.md#repeater-sensors) - Available sensor types
-- [Events](./events.md) - Telemetry and status events
+For problems with tracked nodes, see [Troubleshooting](troubleshooting.md#repeaters-and-polling).

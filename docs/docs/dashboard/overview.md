@@ -1,27 +1,35 @@
 ---
 sidebar_position: 1
-title: Overview
+title: Dashboard cards
 ---
 
-# Overview
+# Dashboard cards
 
-The Meshcore Home Assistant integration provides UI components and helper entities for building custom dashboards.
+This page gives small cards. For full dashboards, see [Basic Node](basic-node.md) and [Basic Repeater](basic-repeater.md). Replace `abc123`, `def456abc0`, `mynode` and `myrepeater` with your values from **Developer Tools > States**. For all entity ID formats, see [Sensors](../sensors.md). The `custom:auto-entities` cards need the [auto-entities](https://github.com/thomasloven/lovelace-auto-entities) custom card from HACS.
 
-## Helper Entities
+## Helper entities
 
-The integration creates helper entities for UI interactions:
+These helpers exist for each entry. They are hidden by default and are always available.
 
-- `select.meshcore_recipient_type` - Choose between Channel or Contact
-- `select.meshcore_channel` - Select channel (0-3)
-- `select.meshcore_contact` - Select from available contacts
-- `text.meshcore_message` - Message input field
-- `text.meshcore_command` - Command input field
+| Entity | Use |
+|---|---|
+| `select.meshcore_recipient_type` | Select `Channel` or `Contact` |
+| `select.meshcore_channel` | Select a channel, as `<channel name> (<index>)` |
+| `select.meshcore_contact` | Select an added contact that is not a repeater |
+| `select.meshcore_discovered_contact` | Select a discovered contact to add |
+| `select.meshcore_added_contact` | Select an added contact to remove |
+| `text.meshcore_message` | Message text (200 characters maximum) |
+| `text.meshcore_command` | Command text (255 characters maximum) |
 
-## Basic UI Components
+### Two or more entries
 
-### Messaging Card
+The helpers of the second entry get a suffix such as `_2`, for example `select.meshcore_channel_2`. Each card must use the helpers and the `entry_id` of its own entry.
 
-A complete messaging interface for sending messages to channels or contacts:
+- Without `entry_id`, `send_ui_message`, `execute_command_ui`, `add_selected_contact` and `remove_selected_contact` fail with `ambiguous_config_entry`.
+
+See [Two or more companions](../multiple-companions.md).
+
+## Messaging card
 
 ```yaml
 type: vertical-stack
@@ -33,7 +41,8 @@ cards:
         name: Send To
   - type: conditional
     conditions:
-      - entity: select.meshcore_recipient_type
+      - condition: state
+        entity: select.meshcore_recipient_type
         state: Channel
     card:
       type: entities
@@ -42,7 +51,8 @@ cards:
           name: Channel
   - type: conditional
     conditions:
-      - entity: select.meshcore_recipient_type
+      - condition: state
+        entity: select.meshcore_recipient_type
         state: Contact
     card:
       type: entities
@@ -53,20 +63,23 @@ cards:
     entities:
       - entity: text.meshcore_message
         name: Message
-  - show_name: true
-    show_icon: true
-    type: button
+  - type: button
     name: Send Message
     icon: mdi:send
-    tap_action:
-      action: call-service
-      service: meshcore.send_ui_message
+    show_name: true
+    show_icon: true
     icon_height: 24px
+    tap_action:
+      action: perform-action
+      perform_action: meshcore.send_ui_message
+      # Required only with two or more entries:
+      # data:
+      #   entry_id: YOUR_ENTRY_ID
 ```
 
-### Command Interface
+## Command card
 
-Execute Meshcore commands directly from the UI:
+This card runs the command in `text.meshcore_command`. See [CLI Command Reference](../cli-commands.md).
 
 ```yaml
 type: vertical-stack
@@ -75,40 +88,25 @@ cards:
     entities:
       - entity: text.meshcore_command
         name: MeshCore Command
-  - show_name: true
-    show_icon: true
-    type: button
-    tap_action:
-      action: call-service
-      service: meshcore.execute_command_ui
+  - type: button
     name: Execute Command
     icon: mdi:console
+    show_name: true
+    show_icon: true
     icon_height: 24px
+    tap_action:
+      action: perform-action
+      perform_action: meshcore.execute_command_ui
+      # Required only with two or more entries:
+      # data:
+      #   entry_id: YOUR_ENTRY_ID
 ```
 
-### CLI Console
+This card does not show the response. To see the response, use the [CLI Console](#cli-console). Only an administrator can run commands.
 
-The `execute_command` / `execute_command_ui` services run a command but the
-response is only visible in Developer Tools or the logs. The **CLI Console**
-gives you an interactive terminal-style surface that shows the output of each
-command directly on the dashboard. See the
-[CLI Command Reference](../cli-commands) for what you can type.
+## CLI Console
 
-Enable it first under **Settings → Devices & Services → MeshCore → Configure →
-Global Settings → Enable CLI Console**. That creates a `sensor.*_cli_console`
-entity whose `transcript` attribute holds a rolling log of the commands you run
-and their responses (it records only command/response pairs — it does **not**
-stream the radio's continuous diagnostic/noise-floor output), plus two compact
-button entities: **CLI Run Command** and **CLI Clear Console**.
-
-These entities are intentionally **hidden by default and not shown on the device
-page** — the console only works as a dashboard card (a device page can't render
-the transcript), so you reference them by entity_id in the card below. Find the
-exact ids in Developer Tools → States (filter `cli`).
-
-The recommended card puts the input and the **button entities** in a single
-`entities` card (compact rows) so you don't get the oversized `button` *card*,
-then renders the transcript with a markdown card:
+The CLI Console shows each command and its response. To enable it, set **Enable CLI Console** in **Global Settings**. The integration then creates `sensor.meshcore_abc123_cli_console` and the run and clear buttons. They are hidden. Use their entity IDs in the card. For the second entry, use its own command helper, buttons and sensor.
 
 ````yaml
 type: vertical-stack
@@ -117,49 +115,24 @@ cards:
     entities:
       - entity: text.meshcore_command
         name: Command
-      - entity: button.YOUR_NODE_cli_run
+      - entity: button.meshcore_abc123_cli_run
         name: Run
-      - entity: button.YOUR_NODE_cli_clear
+      - entity: button.meshcore_abc123_cli_clear
         name: Clear
   - type: markdown
     content: |
       ```
-      {{ state_attr('sensor.YOUR_NODE_cli_console', 'transcript') }}
+      {{ state_attr('sensor.meshcore_abc123_cli_console', 'transcript') }}
       ```
 ````
 
-Notes:
-- Replace `YOUR_NODE` with your node's prefix (e.g. `meshcore_49d715_…`) — find
-  the exact ids in Developer Tools → States (filter `cli`).
-- The markdown `content` uses a literal block (`|`), not a folded one (`>-`); a
-  folded scalar collapses the newlines and renders the transcript on one line.
-- Prefer the **button entities** over a `type: button` card — the button card
-  renders as a large full-width tile, while the entity rows are compact.
+Use a literal block (`|`) for the markdown `content`. A folded block (`>-`) puts the transcript on one line.
 
-### Placing it on the right
+To record a command from an automation, add `record_to_console: true` to `meshcore.execute_command`.
 
-The console lives on a **dashboard**, not the auto-generated device page (a
-device page can't render the transcript card or control placement). For a
-console on the right, use a two-column
-[sections view](https://www.home-assistant.io/dashboards/sections/) or a
-`horizontal-stack`, and put the `vertical-stack` above in the right column.
+## Network map
 
-You can also call the services directly with a command, e.g. from an automation
-or script:
-
-```yaml
-action: meshcore.execute_command
-data:
-  command: get_stats_radio
-  record_to_console: true
-```
-
-### Network Map
-
-Display all Meshcore contacts on a map using their location data.
-
-**Requirements:**
-- Install [auto-entities](https://github.com/thomasloven/lovelace-auto-entities) custom card
+This card shows the contacts that advertise a position.
 
 ```yaml
 type: custom:auto-entities
@@ -168,24 +141,17 @@ filter:
     - integration: meshcore
       entity_id: binary_sensor.meshcore_*_contact
       options:
-        label_mod: icon
+        label_mode: icon
 card:
   type: map
   default_zoom: 15
-  label_mode: icon
 ```
 
-Features:
-- Automatically shows contacts with GPS location
-- Icons indicate node type (client, repeater, room server)
-- Real-time location updates
-- Adjustable zoom level
+A contact with an advertised coordinate of 0 has no `latitude` or `longitude` attribute and does not show on the map.
 
-## Contact List Cards
+## Contact lists
 
-### Simple Contact List
-
-Display all contacts with their status:
+### Simple contact list
 
 ```yaml
 type: custom:auto-entities
@@ -193,14 +159,14 @@ filter:
   include:
     - integration: meshcore
       entity_id: binary_sensor.meshcore_*_contact
+sort:
+  method: name
 card:
   type: entities
   title: Mesh Contacts
 ```
 
-### Contact Grid
-
-Display contacts in a grid layout:
+### Contact grid
 
 ```yaml
 type: custom:auto-entities
@@ -208,108 +174,93 @@ filter:
   include:
     - integration: meshcore
       entity_id: binary_sensor.meshcore_*_contact
+      options:
+        type: tile
+sort:
+  method: name
 card:
   type: grid
   columns: 3
   square: false
+card_param: cards
 ```
 
-## Status Cards
+## Status cards
 
-### Device Status
-
-Monitor your Meshcore device status:
+### Companion status
 
 ```yaml
 type: entities
-title: Meshcore Status
+title: MeshCore Status
 entities:
+  - entity: sensor.meshcore_abc123_node_status_mynode
   - entity: sensor.meshcore_abc123_battery_voltage_mynode
   - entity: sensor.meshcore_abc123_battery_percentage_mynode
   - entity: sensor.meshcore_abc123_node_count_mynode
   - entity: sensor.meshcore_abc123_tx_power_mynode
+  - entity: sensor.meshcore_abc123_rate_limiter_tokens_mynode
+  - entity: sensor.meshcore_abc123_last_message_delivery_mynode
 ```
 
-### Network Statistics
-
-Track repeater network performance:
+### Repeater statistics
 
 ```yaml
 type: entities
-title: Network Stats
+title: myrepeater
 entities:
-  - entity: sensor.meshcore_abc123_repeater1_messages_received
-  - entity: sensor.meshcore_abc123_repeater1_messages_sent
-  - entity: sensor.meshcore_abc123_repeater1_airtime_utilization
-  - entity: sensor.meshcore_abc123_repeater1_noise_floor
+  - entity: binary_sensor.meshcore_def456abc0_online_myrepeater
+  - entity: sensor.meshcore_def456abc0_nb_recv_myrepeater
+  - entity: sensor.meshcore_def456abc0_nb_sent_myrepeater
+  - entity: sensor.meshcore_def456abc0_airtime_utilization_myrepeater
+  - entity: sensor.meshcore_def456abc0_noise_floor_myrepeater
+  - entity: sensor.meshcore_def456abc0_out_path_len_myrepeater
 ```
 
-## Message History
+## Message history
 
-### Recent Messages Card
-
-Display message history using the logbook:
+### All messages
 
 ```yaml
 type: custom:auto-entities
-card:
-  type: logbook
 filter:
   include:
-    - entity_id: binary_sensor.meshcore_*_messages
-  exclude: []
+    - integration: meshcore
+      entity_id: binary_sensor.meshcore_*_messages
+card:
+  type: logbook
+  hours_to_show: 24
 ```
-If you wish you can limit this view for each of your channels. For this you need the following card.
+
+### One channel
+
+This card shows channel 0 when `select.meshcore_channel` selects it. The `state` must match the option text exactly.
 
 ```yaml
 type: logbook
+hours_to_show: 24
+target:
+  entity_id:
+    - binary_sensor.meshcore_abc123_ch_0_messages
 visibility:
   - condition: state
     entity: select.meshcore_channel
     state: Public (0)
-target:
-  entity_id:
-    - binary_sensor.meshcore_696e4b_ch_0_messages
 ```
-You need to duplicate this card for each channel you have. When you select a channel in the message card you logbook focus will be automaticly on the correct channel.
-Make sure that visibility and target are in line.
 
-## Dashboard Examples
+Make one card for each channel. A channel message sensor exists only after the first message on that channel.
 
-For complete dashboard configurations, see:
+## Compact status for phones
 
-- [Basic Node](./basic-node) - Main node dashboard with messaging and monitoring
-- [Basic Repeater](./basic-repeater) - Detailed repeater statistics and performance
-
-## Tips for UI Development
-
-1. **Use Conditional Cards**: Show/hide elements based on state
-2. **Auto-entities**: Automatically discover and display Meshcore entities
-3. **Custom Icons**: Use MDI icons for better visualization
-4. **Grid Layouts**: Organize cards for different screen sizes
-5. **Template Sensors**: Create custom sensors for complex data
-
-## Mobile Optimization
-
-For mobile-friendly dashboards:
+This card requires the [Mushroom](https://github.com/piitaya/lovelace-mushroom) custom cards from HACS.
 
 ```yaml
-type: vertical-stack
-cards:
-  - type: custom:mushroom-chips-card
-    chips:
-      - type: entity
-        entity: sensor.meshcore_contact_count
-      - type: entity
-        entity: sensor.meshcore_battery_percentage
-  - type: custom:swipe-card
-    cards:
-      # Your message cards here
+type: custom:mushroom-chips-card
+chips:
+  - type: entity
+    entity: sensor.meshcore_abc123_node_status_mynode
+  - type: entity
+    entity: sensor.meshcore_abc123_battery_percentage_mynode
+  - type: entity
+    entity: sensor.meshcore_abc123_node_count_mynode
+    icon: mdi:account-group
 ```
-
-## Related Documentation
-
-- [Services](../services.md) - Available services for UI actions
-- [Sensors](../sensors.md) - Sensor entities for display
-- [Events](../events.md) - Events for dynamic updates
-- [Automation](../automation.md) - Automation examples

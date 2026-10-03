@@ -1,100 +1,112 @@
 ---
-sidebar_position: 6
+sidebar_position: 8
 title: Contact Management
 ---
 
 # Contact Management
 
-The MeshCore integration uses **manual contact management mode** to give you full control over which devices are added to your node's contact list.
+The integration keeps two contact lists for each entry:
 
-## How It Works
+- **Added contacts** are the contacts that the companion stores. You can send messages to them.
+- **Discovered contacts** are nodes that the companion heard but did not store. Home Assistant keeps this list.
 
-### Manual Mode
+The integration puts the companion in manual contact mode each time it connects. The firmware then does not store a new node by itself. It reports the advert to Home Assistant, and the integration adds the node to the discovered list. You decide which discovered contacts to add to the companion.
 
-When the integration starts, it automatically sets your node to manual contact management mode using `set_manual_add_contacts(True)`. This means:
+## Contact states
 
-- **Discovered contacts** are NOT automatically added to your node
-- You must explicitly add contacts you want to communicate with
-- Contacts remain in "discovered" state until you manually add them
+| State | Meaning |
+|---|---|
+| `discovered` | The node is in the discovered list, and it is not on the companion. You cannot send a direct message to it. |
+| `fresh` | The contact is on the companion, and its last advert is less than 12 hours old. |
+| `stale` | The contact is on the companion, and its last advert is 12 hours old or older. The node can be offline. |
 
-### Contact States
+The advert time (`last_advert`) comes from the clock of the node that sent the advert. A node with a wrong clock can show the wrong state.
 
-Contacts can be in one of three states:
+## Contact Discovery Mode
 
-1. **Discovered** - Device has been seen on the mesh network but not added to your node
-   - Shown with state `discovered`
-   - Cannot send/receive messages until added
-   - Persisted across Home Assistant restarts
+**Contact Discovery Mode** sets what the integration does with discovered contacts. Added contacts always get a contact entity.
 
-2. **Fresh** - Contact is added to your node and recently active
-   - Shown with state `fresh`
-   - Last advertisement within 12 hours
-   - Can send/receive messages
+| Mode | Stored value | Discovered list | Entity for each discovered contact | Use it when |
+|---|---|---|---|---|
+| **Entity per contact** (default) | `full` | Kept and saved | Yes | You want history and automations for each discovered contact. |
+| **Data only** | `data_only` | Kept and saved | No | You do not want an entity for each discovered contact, for example on a mesh with hundreds of nodes. |
+| **Disabled** | `off` | Cleared; new adverts are ignored | No | You only monitor tracked nodes. |
 
-3. **Stale** - Contact is added to your node but not recently seen
-   - Shown with state `stale`
-   - Last advertisement over 12 hours ago
-   - Can still send messages, but device may be offline
+To set the mode:
 
-### Contact Discovery
+1. Go to **Settings > Devices & services > MeshCore > Configure**.
+2. Select **Global Settings**.
+3. Select a **Contact Discovery Mode**.
+4. Select **Submit**.
 
-When a device broadcasts on the mesh network, the integration:
-1. Receives a `NEW_CONTACT` event from the SDK
-2. Stores the contact in `_discovered_contacts` (persisted to `.storage`)
-3. Creates a diagnostic binary sensor showing the contact as "discovered"
-4. Makes it available in the "Discovered Contacts" dropdown
+The new mode applies at once, without a reload. **Data only** and **Disabled** remove the entities of discovered contacts. This includes their telemetry and GPS entities, but not the entities of tracked nodes. **Disabled** also clears the discovered list.
 
-#### Contact Discovery Mode
+In **Data only** mode, the **MeshCore Discovered Contact** dropdown, **Add Contact** and all services work. Use the [Discovered Contact Summary sensor](#discovered-contact-summary-sensor) and the [`get_discovered_contact` service](#get-discovered-contact) to see the discovered contacts.
 
-How much per-discovered-contact machinery the integration creates is controlled by a single **Contact Discovery Mode** setting with three choices:
+In **Disabled** mode, a contact that another app adds gets its entity at the next start of the entry.
 
-- **Entity per contact** (default) — every discovered contact gets its own diagnostic binary sensor, exactly as before. Choose this if you rely on per-discovered-contact connectivity state, history charting, or per-contact automations.
-- **Data only** — discovered (un-added) contacts are tracked as data only, with no per-contact entity, while contacts you add to your node keep their entities exactly as before. This mirrors the firmware's own two-tier model: a transient "advert heard" tier (discovered → data only) versus a durable "stored contact" tier (added → always an entity). On dense meshes this avoids hundreds of low-utility binary sensors sitting permanently in the `discovered` state, and the entity-registry churn their create/evict/cleanup drives.
-- **Disabled** — no discovered-contact processing at all: no contact binary sensors are created, discovered contacts are not persisted to storage, and the discovered/added selectors do not populate. Choose this if you only ever track specific repeaters or clients and want the lowest possible entity count.
+## Limit the discovered contacts {#limiting-discovered-contacts}
 
-**To set it:**
-1. Go to **Settings → Devices & Services**
-2. Find your MeshCore integration
-3. Click **Configure**
-4. Select **Global Settings**
-5. Choose a **Contact Discovery Mode**
-6. Click **Submit**
+1. Go to **Settings > Devices & services > MeshCore > Configure**.
+2. Select **Global Settings**.
+3. Enable **Limit Discovered Contacts**.
+4. Set **Maximum Discovered Contacts** (default 100, range 1 to 10,000).
+5. Select **Submit**.
 
-It can also be set at install time — the **Contact Discovery Mode** selector appears in the USB, Bluetooth, and Network setup steps. The same setting is used either way, so it can be changed later in Global Settings.
+The list is first in, first out. A contact that advertises again moves to the end of the list, so active contacts stay. The integration removes the entity of an evicted contact.
 
-**What still works in Data only mode:**
-- The **Discovered Contacts** dropdown still lists every discovered contact (it reads coordinator data, not entities)
-- Adding a discovered contact still works — promotion to your node creates its entity exactly as before
-- Messaging, channels, repeater/neighbor telemetry, the chat panel, and all services are unaffected (none are per-discovered-contact)
-- The aggregate [Discovered Contact Summary sensor](#discovered-contact-summary-sensor) and the [`get_discovered_contact` service](#get-discovered-contact) keep the data-only contacts inspectable
+When the entry starts, the integration trims the list to the limit but does not remove the entities of the trimmed contacts. These entities become unavailable. To remove them, run [Cleanup Unavailable Contacts](#cleanup-unavailable-contacts).
 
-**The one trade-off (Data only):** discovered contacts no longer have an individual `binary_sensor`, so you lose per-discovered-contact connectivity state, history charting, and per-contact automations *for un-added contacts*. Added contacts are unaffected. If you rely on per-discovered-contact entities, use **Entity per contact** (the default).
+## Contact entities
 
-Switching an existing install to **Data only** or **Disabled** leaves any per-discovered-contact entities created under a previous mode in place until the next discovered-contact cleanup removes them; run the [Clear Discovered Contacts](#clearing-discovered-contacts) service after switching to remove them immediately. The contact-selector entities and all added-contact entities are always preserved.
+```text
+binary_sensor.meshcore_<adv name>_<pk12>_contact
+```
 
-#### Limiting Discovered Contacts
+Example: `binary_sensor.meshcore_myrepeater_def456abc012_contact`. `<adv name>` is the advertised name as a slug. `<pk12>` is the first 12 hex characters of the public key.
 
-If you want to keep contact discovery enabled but prevent thousands of contacts from accumulating, you can set a maximum limit:
+The entity is a diagnostic entity on the companion device. Its name is the advertised name plus the node type, for example `myrepeater (Repeater)`. Its state is `discovered`, `fresh` or `stale`. If the contact is in neither list, the entity is unavailable. For a known node type, the icon changes when the advert is 12 hours old or older.
 
-**To enable:**
-1. Go to **Settings → Devices & Services**
-2. Find your MeshCore integration
-3. Click **Configure**
-4. Select **Global Settings**
-5. Enable **Limit Discovered Contacts**
-6. Set **Maximum Discovered Contacts** (default: 100, range: 1–10,000)
-7. Click **Submit**
+### Attributes
 
-**How it works:**
-- Uses FIFO (first-in, first-out) eviction — the oldest discovered contacts are removed first
-- When a contact re-advertises, it moves to the back of the queue so active contacts are not evicted
-- Evicted contacts have their binary sensor entities automatically removed
-- The limit is enforced on startup and whenever a new contact is discovered
-- Changing the limit takes effect immediately
+The entity shows all fields of the contact record, plus fields that the integration adds.
 
-## Managing Contacts via UI
+| Attribute | Notes |
+|---|---|
+| `public_key` | Full public key, 64 hex characters. |
+| `pubkey_prefix` | First 12 hex characters of the public key. |
+| `pubkey_short` | First 2 hex characters. A route with 1-byte hashes shows this value for the node. |
+| `adv_name` | Advertised name. |
+| `type`, `node_type_str` | `1` `Client`, `2` `Repeater`, `3` `Room Server`, `4` `Sensor`. |
+| `added_to_node` | `true` if the contact is on the companion. |
+| `out_path_len` | `-1`: no known route. `0`: a direct neighbor. `N`: the number of hops. |
+| `out_path_hash_mode` | `-1`: no known route. Otherwise each hop hash is `out_path_hash_mode + 1` bytes. |
+| `out_path` | The route as hop hashes in hex. Empty if there is no route. |
+| `last_advert`, `last_advert_formatted` | Time of the last advert, from the clock of the advertising node. Unix time and ISO 8601. |
+| `lastmod` | Unix time of the last change to the record, from the companion clock. |
+| `latitude`, `longitude` | Advertised location. Only if the node sends a location. |
+| `adv_path`, `adv_path_len`, `adv_path_time` | The route, hop count and timestamp of the last advert. Absent until the integration gets an advert route after it starts. |
+| `entity_picture` | The icon of the node type. Green when the last advert is less than 12 hours old. Absent for an unknown node type. |
 
-Use this card to manage discovered and added contacts:
+The integration reads `adv_path` from the companion. This request sends no mesh traffic. If the firmware does not support the request, the integration stops after 3 failures in a row.
+
+### Discovered Contact Summary Sensor
+
+The integration creates one **Discovered Contacts** sensor for each entry, for example `sensor.meshcore_abc123_discovered_summary_mynode`. The state is the number of contacts in the discovered list.
+
+| Attribute | Notes |
+|---|---|
+| `fresh_count`, `stale_count` | Contacts with an advert less than 12 hours old, and all others. |
+| `by_type` | Counts with the keys `chat`, `repeater`, `room_server`, `sensor` and `unknown`. |
+| `newest` | The contact with the latest advert, as `adv_name`, `pubkey_short` (12 characters) and `last_advert`. Null if the list is empty. |
+| `capacity` | **Maximum Discovered Contacts** if the limit is enabled. Otherwise `unlimited`. |
+| `capacity_used_pct` | The percentage of the limit in use. Null if the limit is not enabled. |
+
+The default for this sensor is disabled. Its state changes on each advert, so the recorder writes many rows. Enable it only if you want to chart the count.
+
+## Manage contacts in the UI
+
+The integration creates two hidden dropdowns for each entry: `select.meshcore_discovered_contact` and `select.meshcore_added_contact`. With two or more entries, Home Assistant adds a suffix such as `_2` to the entity IDs of the second entry.
 
 ```yaml
 type: entities
@@ -102,316 +114,127 @@ title: Manage Contacts
 entities:
   - entity: select.meshcore_discovered_contact
     name: Discovered
-    secondary_info: last-changed
   - type: button
-    name: ➕ Add Contact
+    name: Add Contact
     action_name: Add
     tap_action:
-      action: call-service
-      service: meshcore.add_selected_contact
+      action: perform-action
+      perform_action: meshcore.add_selected_contact
   - type: button
-    name: 🗑️ Remove Discovered
+    name: Remove Discovered
     action_name: Remove
     tap_action:
-      action: call-service
-      service: meshcore.remove_discovered_contact
+      action: perform-action
+      perform_action: meshcore.remove_discovered_contact
   - entity: select.meshcore_added_contact
     name: Added
-    secondary_info: last-changed
   - type: button
-    name: ➖ Remove Contact
+    name: Remove Contact
     action_name: Remove
     tap_action:
-      action: call-service
-      service: meshcore.remove_selected_contact
+      action: perform-action
+      perform_action: meshcore.remove_selected_contact
 ```
 
-**Actions:**
+| Button | Result |
+|---|---|
+| **Add Contact** | Adds the selected discovered contact to the companion. |
+| **Remove Discovered** | Removes the selected contact from the discovered list and removes its entity. The companion does not change. |
+| **Remove Contact** | Removes the selected contact from the companion. In **Entity per contact** mode, if the contact is still in the discovered list, its entity changes to `discovered`. If the node advertises again, it comes back as a discovered contact, except in **Disabled** mode. |
 
-- **Add Contact**: Adds the selected discovered contact to your node
-  - Contact is added to node's contact list
-  - Sensor updates to show state `fresh` or `stale`
-  - You can now send/receive messages
-
-- **Remove Discovered**: Removes the selected discovered contact from Home Assistant
-  - Contact removed from discovered list
-  - Binary sensor entity removed
-  - **Does NOT remove from node** (use if never added)
-
-- **Remove Contact**: Removes the selected added contact from your node
-  - Contact removed from node's contact list
-  - Sensor becomes unavailable
-  - If device broadcasts again, reappears as "discovered"
-
-### Multiple Devices
-
-If you have multiple MeshCore devices, specify the `entry_id` in the service call:
+If you have two or more entries, add `entry_id` to each action. Without `entry_id`, the service uses the first dropdown that it finds, and can send the command to a different companion. To find the `entry_id`, see [Select the entry](services.md#select-the-entry).
 
 ```yaml
 tap_action:
-  action: call-service
-  service: meshcore.add_selected_contact
+  action: perform-action
+  perform_action: meshcore.add_selected_contact
   data:
-    entry_id: "abc123def456"  # Your config entry ID
+    entry_id: YOUR_ENTRY_ID
 ```
 
-You can find your `entry_id` in the URL when viewing the device in Settings → Devices & Services.
+## Contact services
 
-## Managing Contacts via Services
+| Service | Admin only | Response | Purpose |
+|---|---|---|---|
+| `meshcore.add_selected_contact` | yes | none | Add the contact selected in the discovered dropdown. |
+| `meshcore.remove_selected_contact` | yes | none | Remove the contact selected in the added dropdown from the companion. |
+| `meshcore.remove_discovered_contact` | no | none | Remove one contact from the discovered list. |
+| `meshcore.get_discovered_contact` | no | only | Return one discovered contact. |
+| `meshcore.get_contacts` | no | only | Return all contacts. See [Companion Integration API](companion-integration-api.md). |
+| `meshcore.clear_discovered_contacts` | no | none | Remove all, or only old, discovered contacts. |
+| `meshcore.cleanup_unavailable_contacts` | no | none | Remove unavailable contact entities. |
+| `meshcore.execute_command` | yes | optional | Run `add_contact` or `remove_contact` directly. |
 
-### Add Contact
+All of these services accept an optional `entry_id`.
 
-Manually add a discovered contact to your node:
+### Admin-only services
+
+Home Assistant refuses a call to an admin-only service from a user who is not an administrator. It accepts a call with no user, for example from an automation.
+
+### Add or remove a contact by key
 
 ```yaml
-service: meshcore.execute_command
+action: meshcore.execute_command
 data:
-  command: add_contact <pubkey_prefix>
+  command: add_contact def456abc012
 ```
 
-Example:
-```yaml
-service: meshcore.execute_command
-data:
-  command: add_contact 1a2b3c4d5e6f
-```
-
-### Remove Contact
-
-Remove a contact from your node:
-
-```yaml
-service: meshcore.execute_command
-data:
-  command: remove_contact <pubkey_prefix>
-```
-
-Example:
-```yaml
-service: meshcore.execute_command
-data:
-  command: remove_contact 1a2b3c4d5e6f
-```
+Use `remove_contact` in the same way. The argument is a public key prefix or the advertised name, with 6 or more characters. For a contact on the companion, the match is not case-sensitive. The search of the discovered list is case-sensitive: use the lowercase prefix or the exact name.
 
 ### Remove Discovered Contact
 
-Remove a discovered contact from Home Assistant (without removing from node):
-
 ```yaml
-service: meshcore.remove_discovered_contact
+action: meshcore.remove_discovered_contact
 data:
-  pubkey_prefix: <pubkey_prefix>
+  pubkey_prefix: def456abc012
 ```
 
-Example:
-```yaml
-service: meshcore.remove_discovered_contact
-data:
-  pubkey_prefix: 1a2b3c4d5e6f
-```
-
-Or use without specifying pubkey_prefix to use the selected contact from the discovered contact dropdown:
-
-```yaml
-service: meshcore.remove_discovered_contact
-```
-
-**Note**: This only removes the contact from Home Assistant's discovered list and removes the binary sensor entity. It does **NOT** remove the contact from your node's contact list. Use this to clean up discovered contacts you don't want to track.
+The prefix must match one discovered contact. The service removes the contact and its entity. A later advert from the node creates them again. If you do not give `pubkey_prefix`, the service uses the contact selected in the discovered dropdown.
 
 ### Get Discovered Contact
 
-Return the full data dict for a single discovered (un-added) contact, matched by public-key prefix. This is the supported way to inspect a discovered contact in [Data only mode](#contact-discovery-mode), where discovered contacts have no per-contact entity:
-
-```yaml
-service: meshcore.get_discovered_contact
-data:
-  pubkey_prefix: 1a2b3c4d5e6f
-```
-
-The `pubkey_prefix` accepts the 12-character prefix shown in the discovered-contact dropdown, or a full public key. This service returns a response (`SupportsResponse.ONLY`); call it from a script/automation with `response_variable`, or use **Developer Tools → Actions** and check **Return response**:
+This service returns the full record of one discovered contact. Use it in **Data only** mode, where discovered contacts have no entity.
 
 ```yaml
 action: meshcore.get_discovered_contact
 data:
-  pubkey_prefix: 1a2b3c4d5e6f
+  pubkey_prefix: def456abc012
 response_variable: result
 ```
 
-The response is `{"contact": { ...full contact dict... }}` on a match, or `{"contact": null, "error": "not_found", "pubkey_prefix": "..."}` when no discovered contact starts with that prefix. The returned data is the same already exposed via `get_contacts` and the dropdown — pubkeys are mesh-advertised, not secret.
-
-For multiple devices, specify the entry_id:
-```yaml
-service: meshcore.get_discovered_contact
-data:
-  pubkey_prefix: 1a2b3c4d5e6f
-  entry_id: "abc123def456"
-```
+For the prefix rules and the responses, see [Services](services.md#get-discovered-contact).
 
 ### Cleanup Unavailable Contacts
 
-After removing contacts, their sensors become unavailable but remain in your entity list. Use this service to remove all unavailable contact sensors at once:
-
 ```yaml
-service: meshcore.cleanup_unavailable_contacts
+action: meshcore.cleanup_unavailable_contacts
 ```
 
-**Dashboard Button:**
-```yaml
-type: button
-name: Cleanup Unavailable Contacts
-icon: mdi:broom
-tap_action:
-  action: call-service
-  service: meshcore.cleanup_unavailable_contacts
-```
+The service removes contact entities that are unavailable. It does not remove other MeshCore entities. Without `entry_id`, it acts on all entries.
 
-For multiple devices, specify the entry_id:
-```yaml
-service: meshcore.cleanup_unavailable_contacts
-data:
-  entry_id: "abc123def456"
-```
+## Cleanup of discovered contacts
 
-## Contact Persistence
+The integration saves the discovered list in Home Assistant storage and loads it when the entry starts.
 
-### Discovered Contacts
-
-Discovered contacts are persisted to Home Assistant's `.storage` directory:
-- Location: `.storage/meshcore.<entry_id>.discovered_contacts`
-- Format: JSON dictionary keyed by public key
-- Automatically saved when new contacts are discovered
-- Loaded on integration startup
-
-#### Clearing Discovered Contacts
-
-To remove all discovered contacts at once:
+### Clear the discovered contacts {#clearing-discovered-contacts}
 
 ```yaml
-service: meshcore.clear_discovered_contacts
-```
-
-This removes all discovered contacts and their binary sensor entities from Home Assistant. It does **NOT** remove contacts from your node's contact list.
-
-##### Clearing Only Stale Contacts
-
-To remove only contacts whose last update is older than a threshold, pass `days_threshold`. Contacts saved to the node (`added_to_node`) are always preserved:
-
-```yaml
-service: meshcore.clear_discovered_contacts
+action: meshcore.clear_discovered_contacts
 data:
   days_threshold: 30
 ```
 
-| Parameter | Required | Default | Description |
-|-----------|----------|---------|-------------|
-| `days_threshold` | No | — (clears all) | Remove contacts whose last update is older than this many days (1–365). When omitted, all discovered contacts are removed. |
-| `entry_id` | No | First available | Config entry ID for multi-device setups. |
+Without `days_threshold`, the service removes all discovered contacts. It removes their entities, except the entities of contacts on the companion. It also removes contact entities that have no contact in either list. The companion does not change.
 
-##### Automatic Cleanup
+With `days_threshold` (1 to 365), the service removes contacts whose `lastmod` is older than this number of days. It keeps contacts that you added through the integration, also after you remove them from the companion. It also removes contact entities that have no contact in either list.
 
-Enable automatic daily cleanup in **Integration Options → Global Settings**:
+### Automatic cleanup
 
-- **Auto-Cleanup Stale Discovered Contacts** — toggle to enable/disable
-- **Stale Contact Threshold (days)** — age threshold for removal (default: 30)
+Enable automatic cleanup in **Global Settings**:
 
-When enabled, stale contacts are removed once per day during the coordinator update cycle.
+| Setting | Default | Range |
+|---|---|---|
+| **Auto-Cleanup Stale Discovered Contacts (runs daily)** | Off | |
+| **Stale Contact Threshold (days)** | 30 | 1 to 365 |
 
-##### Recommended Automation
-
-If you prefer to control timing via an automation instead of the built-in auto-cleanup:
-
-```yaml
-alias: "Clear stale discovered MeshCore contacts"
-trigger:
-  - trigger: time
-    at: "03:00:00"
-action:
-  - action: meshcore.clear_discovered_contacts
-    data:
-      days_threshold: 30
-```
-
-**Dashboard Button:**
-```yaml
-type: button
-name: Clear Stale Contacts
-icon: mdi:account-clock
-tap_action:
-  action: perform-action
-  perform_action: meshcore.clear_discovered_contacts
-  data:
-    days_threshold: 30
-```
-
-For multiple devices, specify the entry_id:
-```yaml
-service: meshcore.clear_discovered_contacts
-data:
-  days_threshold: 30
-  entry_id: "abc123def456"
-```
-
-### Added Contacts
-
-Contacts added to your node are managed by the MeshCore device itself:
-- Stored in the device's internal memory
-- Synced to Home Assistant on startup
-- Re-synced whenever the contact list changes
-
-## Contact Sensors
-
-The integration creates diagnostic binary sensors for each contact:
-
-### Attributes
-
-Each contact sensor includes detailed attributes:
-- `public_key` - Full public key
-- `pubkey_prefix` - First 12 characters
-- `adv_name` - Advertised name
-- `added_to_node` - Whether contact is added (true/false)
-- `type` - Node type (1=Client, 2=Repeater, 3=Room Server, 4=Sensor)
-- `last_advert` - Unix timestamp of last advertisement
-- `last_advert_formatted` - ISO formatted timestamp
-- Location data (if available): `latitude`, `longitude`
-- Advert path (once an advert is heard while the integration is running; requires firmware with `GET_ADVERT_PATH` support):
-  - `adv_path` - Route the last advert took, as concatenated 1-byte hop hashes (hex); empty for zero-hop (direct) reception
-  - `adv_path_len` - Number of hops the advert traversed
-  - `adv_path_time` - Timestamp of that advert
-
-### Entity Icons
-
-Sensors show different icons based on node type and state:
-- **Client**: `mdi:account` (fresh) / `mdi:account-off` (stale)
-- **Repeater**: `mdi:radio-tower` (fresh) / `mdi:radio-tower-off` (stale)
-- **Room Server**: `mdi:forum` (fresh) / `mdi:forum-outline` (stale)
-- **Sensor**: `mdi:smoke-detector-variant` (fresh) / `mdi:smoke-detector-variant-off` (stale)
-- **Unknown**: `mdi:help-network`
-
-### Entity Pictures
-
-Contact sensors include custom entity pictures showing the node type and status with visual indicators.
-
-### Discovered Contact Summary Sensor
-
-The integration also creates one aggregate summary sensor per device, `sensor.meshcore_<node>_discovered_summary`, whose state is the total count of discovered contacts. It is useful in every mode — and is the at-a-glance rollup for the data-only contacts in [Data only mode](#contact-discovery-mode).
-
-Attributes are a small, bounded rollup (constant in size regardless of how many contacts are discovered):
-
-- `fresh_count` / `stale_count` — split on the 12-hour advert freshness window
-- `by_type` — counts by node type: `chat`, `repeater`, `room_server`, `sensor`, `unknown`
-- `newest` — the most-recently-heard advert: `adv_name`, `pubkey_short` (12-char prefix), `last_advert`
-- `capacity` — `max_discovered_contacts` when **Limit Discovered Contacts** is enabled, otherwise `unlimited`
-- `capacity_used_pct` — percent of capacity in use (only when the limit is enabled)
-
-This sensor is **disabled by default** and lives under the **diagnostic** category. Its state changes on every advert, so leaving it always-on would write a recorder time-series on every install — exactly the recorder churn the Data only and Disabled modes exist to reduce. Enable it from the entity's settings only if you want to chart the discovered count; the `by_type` / `newest` attributes are then chartable too.
-
-## Automatic Contact Syncing
-
-The integration automatically syncs contacts with your node:
-
-1. **On Startup**: Loads discovered contacts from storage and syncs added contacts from node
-2. **Periodic Updates**: Checks every update interval (default 10 seconds) if contacts need syncing
-3. **After Add/Remove**: Immediately syncs after manual contact changes
-4. **Dirty Flag Detection**: Uses SDK's internal `_contacts_dirty` flag to minimize unnecessary syncs
-
-The `ensure_contacts(follow=True)` method efficiently syncs only when changes are detected.
+The cleanup runs after the entry starts, and then every 24 hours. It does the same work as `clear_discovered_contacts` with `days_threshold`. To control the time of the cleanup, call the service from an automation with a time trigger instead.
