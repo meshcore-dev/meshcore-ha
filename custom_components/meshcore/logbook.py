@@ -36,7 +36,9 @@ def async_describe_events(
         data = event.data
         message = data.get("message", "")
         channel = data.get("channel", "")
-        sender = data.get("sender_name", "Unknown")
+        # A DM from a node we have no contact for carries sender_name None.
+        prefix = data.get("pubkey_prefix")
+        sender = data.get("sender_name") or (f"Unknown ({prefix[:6]})" if prefix else "Unknown")
 
         # Format description based on message type and direction
         if channel:
@@ -520,7 +522,7 @@ async def handle_outgoing_message(event_data, coordinator) -> None:
         channel_idx = event_data.get("channel_idx", 0)
         # Get actual channel name from stored channel info
         channel_info = await coordinator.get_channel_info(channel_idx)
-        channel_name = channel_info.get("channel_name", "public" if channel_idx == 0 else f"{channel_idx}")
+        channel_name = channel_label(channel_info, channel_idx)
 
         # Generate entity ID matching MeshCoreMessageEntity
         entity_id = get_channel_entity_id(

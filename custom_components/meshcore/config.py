@@ -585,16 +585,14 @@ def _add_node_entities(coordinator: Any, record: dict[str, Any], node_type: str)
 
 
 def _apply_node_edit(coordinator: Any, old: Any, new: Any) -> None:
-    """Follow one tracked node's own edits on the loaded entry.
-
-    Interval, telemetry, path-reset and disabled are read off the replaced
-    record on the next tick, so only the neighbours toggle needs doing here:
-    switching it on creates the counter a fresh setup would have built,
-    switching it off tears the neighbour sensors down.
-    """
+    """Re-arm an edited node and apply its neighbours toggle."""
     from .sensor import build_neighbor_count_sensors
 
-    if old == new or not isinstance(new, RepeaterConfig):
+    if old == new:
+        return
+    if coordinator.settings.traffic_policy == "governed":
+        coordinator.seed_tracked_node(new.pubkey_prefix)
+    if not isinstance(new, RepeaterConfig):
         return
     if new.neighbors_enabled and not old.neighbors_enabled:
         _add_entities(
@@ -620,6 +618,8 @@ async def _apply_uploaders(
     ):
         return
 
+    from homeassistant.helpers.dispatcher import async_dispatcher_send
+
     from .mqtt_uploader import MeshCoreMqttUploader
 
     previous = coordinator.mqtt_uploader
@@ -640,3 +640,5 @@ async def _apply_uploaders(
         coordinator.mqtt_uploader = uploader
     except Exception as ex:
         _LOGGER.warning("MQTT uploader failed to restart: %s - continuing without it", ex)
+    finally:
+        async_dispatcher_send(hass, f"meshcore_mqtt_uploaders_changed_{entry.entry_id}")

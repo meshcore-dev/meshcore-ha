@@ -669,21 +669,27 @@ async def async_setup_entry(
     def _handle_message_sent(event):
         """Immediately set sensor to 'waiting' when a message is sent."""
         data = event.data
-        if data.get("message_type"):
+        if data.get("entry_id") == entry.entry_id and data.get("message_type"):
             delivery_sensor.set_waiting(data)
 
     @callback
     def _handle_delivery_update(event):
         """Update delivery sensor on each progressive collection pass."""
         data = event.data
-        if data.get("outgoing") and data.get("message_type"):
+        if (
+            data.get("entry_id") == entry.entry_id
+            and data.get("outgoing") and data.get("message_type")
+        ):
             delivery_sensor.update_from_event(data)
 
     @callback
     def _handle_message_event(event):
         """Update delivery sensor on the final logbook event."""
         data = event.data
-        if data.get("outgoing") and data.get("message_type"):
+        if (
+            data.get("entry_id") == entry.entry_id
+            and data.get("outgoing") and data.get("message_type")
+        ):
             delivery_sensor.update_from_event(data)
 
     unsub_sent = hass.bus.async_listen(f"{DOMAIN}_message_sent", _handle_message_sent)
@@ -1991,7 +1997,7 @@ class MeshCoreNeighborSensor(CoordinatorEntity, SensorEntity):
         data = self._neighbor_data
         if data is None:
             return False
-        secs_ago = data.get("secs_ago", 0)
+        secs_ago = self.coordinator.neighbor_age(data)
         return secs_ago < NEIGHBOR_STALE_THRESHOLD
 
     @property
@@ -2009,7 +2015,7 @@ class MeshCoreNeighborSensor(CoordinatorEntity, SensorEntity):
         if data is None:
             return {}
 
-        secs_ago = data.get("secs_ago", 0)
+        secs_ago = self.coordinator.neighbor_age(data)
 
         # Human-readable last seen
         if secs_ago < 60:
@@ -2129,7 +2135,7 @@ class MeshCoreNeighborSeenSensor(CoordinatorEntity, SensorEntity):
         data = self._neighbor_data
         if data is None:
             return False
-        secs_ago = data.get("secs_ago", 0)
+        secs_ago = self.coordinator.neighbor_age(data)
         return secs_ago < NEIGHBOR_STALE_THRESHOLD
 
     @property
@@ -2206,7 +2212,7 @@ class MeshCoreNeighborCountSensor(CoordinatorEntity, SensorEntity):
         neighbors = self.coordinator._repeater_neighbors.get(self._repeater_pubkey, {})
         active = sum(
             1 for n in neighbors.values()
-            if n.get("secs_ago", 0) < NEIGHBOR_STALE_THRESHOLD
+            if self.coordinator.neighbor_age(n) < NEIGHBOR_STALE_THRESHOLD
         )
         return {"active": active, "stale": len(neighbors) - active}
 

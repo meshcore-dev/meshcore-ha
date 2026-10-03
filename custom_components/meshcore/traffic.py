@@ -137,7 +137,10 @@ def backoff_delay(
         return min(base_interval * (REPEATER_BACKOFF_BASE**failure_count), interval)
 
     delay = min(interval * (REPEATER_BACKOFF_BASE**failure_count), GOVERNED_BACKOFF_CAP_SECONDS)
-    return int(delay * (1 + random.uniform(-GOVERNED_BACKOFF_JITTER, GOVERNED_BACKOFF_JITTER)))
+    return min(
+        int(delay * (1 + random.uniform(-GOVERNED_BACKOFF_JITTER, GOVERNED_BACKOFF_JITTER))),
+        GOVERNED_BACKOFF_CAP_SECONDS,
+    )
 
 
 def should_login(
@@ -235,7 +238,12 @@ class MeshBudget:
     def next_eligible(self, lane: Lane = LANE_DIRECT) -> float:
         """Return the seconds until this lane can pay for one more request."""
         bucket = self._bucket(lane)
-        return max(0.0, (1 - bucket.get_tokens()) * bucket.refill_rate)
+        tokens = bucket.get_tokens()
+        if self._policy != POLICY_GOVERNED:
+            return max(0.0, (1 - tokens) * bucket.refill_rate)
+        if tokens:
+            return 0.0
+        return max(0.0, bucket.refill_rate - (bucket.now() - bucket.last_refill))
 
     def attributes(self) -> dict[str, Any] | None:
         """Return the per-lane rates for the sensor; legacy has no lanes."""

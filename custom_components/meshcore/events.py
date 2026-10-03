@@ -34,7 +34,7 @@ EVENT_DISCONNECTED: Final = f"{DOMAIN}_disconnected"
 # What a redacted value reads as, and the payload keys that carry a shared
 # secret. An SDK event that is nothing but a node secret is dropped whole.
 REDACTED: Final = "<redacted>"
-SECRET_KEYS: Final = frozenset({"channel_secret", "secret"})
+SECRET_KEYS: Final = frozenset({"channel_secret", "secret", "private_key"})
 SECRET_EVENT: Final = "PRIVATE_KEY"
 
 

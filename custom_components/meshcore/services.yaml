@@ -11,9 +11,9 @@ send_message:
         text:
     pubkey_prefix:
       name: Public Key Prefix
-      description: The public key prefix (at least 6 characters) of the node to send the message to.
+      description: The public key prefix of the contact to send the message to. Use 6 or more characters so that only one contact matches.
       required: false
-      example: "f293ac"
+      example: "def456"
       selector:
         text:
     message:
@@ -25,7 +25,7 @@ send_message:
         text:
     entry_id:
       name: Config Entry ID
-      description: The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device.
+      description: The entry ID of the companion to use. If you have more than one MeshCore entry, always set it. Without it, some actions use the first entry and others refuse the call.
       required: false
       example: "abc123def456"
       selector:
@@ -54,7 +54,7 @@ send_channel_message:
         text:
     entry_id:
       name: Config Entry ID
-      description: The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device.
+      description: The entry ID of the companion to use. If you have more than one MeshCore entry, always set it. Without it, some actions use the first entry and others refuse the call.
       required: false
       example: "abc123def456"
       selector:
@@ -98,17 +98,17 @@ execute_command:
         The command with parameters to execute. Format is "[command_name] [param1] [param2] ..."
         Examples:
         - set_name "MyDevice"
-        - send_msg "f293ac" "Hello from Home Assistant!"
+        - send_msg "def456" "Hello from Home Assistant!"
         - get_bat
         - set_tx_power 20
-        - set_coords 37.7749 -122.4194
+        - set_coords 12.345 -67.890
       required: true
       example: "set_name \"MyDevice\""
       selector:
         text:
     entry_id:
       name: Config Entry ID
-      description: The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device.
+      description: The entry ID of the companion to use. If you have more than one MeshCore entry, always set it. Without it, some actions use the first entry and others refuse the call.
       required: false
       example: "abc123def456"
       selector:
@@ -116,9 +116,9 @@ execute_command:
     record_to_console:
       name: Record to CLI Console
       description: >-
-        Record the command and its response to the CLI Console transcript and fire the
-        meshcore_cli_response event, so the output is visible in the UI. Requires the
-        CLI Console to be enabled in Global Settings. Defaults to false.
+        Records the command and its response and fires the meshcore_cli_response
+        event. The CLI Console sensor shows the transcript only when the CLI Console
+        is enabled in Global Settings. Defaults to false.
       required: false
       example: true
       default: false
@@ -142,9 +142,9 @@ execute_command_ui:
     record_to_console:
       name: Record to CLI Console
       description: >-
-        Record the command and its response to the CLI Console transcript and fire the
-        meshcore_cli_response event, so the output is visible in the UI. Requires the
-        CLI Console to be enabled in Global Settings. Defaults to false.
+        Records the command and its response and fires the meshcore_cli_response
+        event. The CLI Console sensor shows the transcript only when the CLI Console
+        is enabled in Global Settings. Defaults to false.
       required: false
       example: true
       default: false
@@ -170,7 +170,7 @@ add_selected_contact:
   fields:
     entry_id:
       name: Config Entry ID
-      description: The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device.
+      description: The entry ID of the companion to use. If you have more than one MeshCore entry, always set it. Without it, some actions use the first entry and others refuse the call.
       required: false
       example: "abc123def456"
       selector:
@@ -182,7 +182,7 @@ remove_selected_contact:
   fields:
     entry_id:
       name: Config Entry ID
-      description: The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device.
+      description: The entry ID of the companion to use. If you have more than one MeshCore entry, always set it. Without it, some actions use the first entry and others refuse the call.
       required: false
       example: "abc123def456"
       selector:
@@ -197,14 +197,14 @@ remove_discovered_contact:
   fields:
     pubkey_prefix:
       name: Public Key Prefix
-      description: The public key prefix (at least 6 characters) of the contact to remove. Leave empty to use the selected contact from the discovered contact select entity.
+      description: The public key prefix of the contact to remove. It must match only one contact. Leave empty to use the selected contact from the discovered contact select entity.
       required: false
-      example: "f293ac"
+      example: "def456"
       selector:
         text:
     entry_id:
       name: Config Entry ID
-      description: The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device.
+      description: The entry ID of the companion to use. If you have more than one MeshCore entry, always set it. Without it, some actions use the first entry and others refuse the call.
       required: false
       example: "abc123def456"
       selector:
@@ -232,7 +232,7 @@ get_contacts:
   fields:
     entry_id:
       name: Config Entry ID
-      description: The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device.
+      description: The entry ID of the companion to use. If you have more than one MeshCore entry, always set it. Without it, some actions use the first entry and others refuse the call.
       required: false
       example: "abc123def456"
       selector:
@@ -251,12 +251,12 @@ get_discovered_contact:
       name: Public Key Prefix
       description: The public key prefix (e.g. the 12-character prefix shown in the discovered-contact dropdown) of the contact to look up. A full public key also works.
       required: true
-      example: "f293ac1b2c3d"
+      example: "def456abc012"
       selector:
         text:
     entry_id:
       name: Config Entry ID
-      description: The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device.
+      description: The entry ID of the companion to use. If you have more than one MeshCore entry, always set it. Without it, some actions use the first entry and others refuse the call.
       required: false
       example: "abc123def456"
       selector:
@@ -271,7 +271,7 @@ get_channels:
   fields:
     entry_id:
       name: Config Entry ID
-      description: The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device.
+      description: The entry ID of the companion to use. If you have more than one MeshCore entry, always set it. Without it, some actions use the first entry and others refuse the call.
       required: false
       example: "abc123def456"
       selector:
@@ -289,9 +289,9 @@ trace:
   fields:
     pubkey_prefix:
       name: Public Key Prefix
-      description: The public key prefix (at least 6 characters) of the contact to trace.
+      description: The public key prefix of the contact to trace. Use 6 or more characters so that only one contact matches.
       required: true
-      example: "f293ac"
+      example: "def456"
       selector:
         text:
     timeout:
@@ -307,7 +307,7 @@ trace:
           unit_of_measurement: seconds
     entry_id:
       name: Config Entry ID
-      description: The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device.
+      description: The entry ID of the companion to use. If you have more than one MeshCore entry, always set it. Without it, some actions use the first entry and others refuse the call.
       required: false
       example: "abc123def456"
       selector:
@@ -333,7 +333,7 @@ clear_discovered_contacts:
           unit_of_measurement: days
     entry_id:
       name: Config Entry ID
-      description: The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device.
+      description: The entry ID of the companion to use. If you have more than one MeshCore entry, always set it. Without it, some actions use the first entry and others refuse the call.
       required: false
       example: "abc123def456"
       selector:

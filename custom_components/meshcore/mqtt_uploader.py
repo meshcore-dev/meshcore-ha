@@ -452,13 +452,16 @@ class MeshCoreMqttUploader:
 
         # Keep status retained so LetsMesh can resolve current connectivity state
         # even when subscribers come online after this client connects.
-        lwt_payload = json.dumps(self._build_status_payload("offline"))
-        client.will_set(
-            broker.topic_status,
-            lwt_payload,
-            qos=broker.qos,
-            retain=True,
-        )
+        if broker.topic_status:
+            lwt_payload = json.dumps(self._build_status_payload("offline"))
+            client.will_set(
+                broker.topic_status,
+                lwt_payload,
+                qos=broker.qos,
+                retain=True,
+            )
+        else:
+            self.logger.warning("[%s] Empty status topic; skipping MQTT will", broker.name)
 
         if broker.transport == "websockets":
             client.ws_set_options(path="/", headers=None)
@@ -1199,8 +1202,8 @@ class MeshCoreMqttUploader:
         if not isinstance(payload, dict):
             return None
 
-        et = (event_type or "").upper()
-        if "RX_LOG" not in et and "RF_LOG" not in et and "PACKET" not in et:
+        et = (event_type or "").upper().removeprefix("EVENTTYPE.")
+        if et not in {"RX_LOG_DATA", "RF_LOG", "RF_LOG_DATA", "RAW_LOG", "RAW_LOG_DATA"}:
             return None
 
         now = datetime.now(UTC)
@@ -1208,6 +1211,8 @@ class MeshCoreMqttUploader:
         raw_hex_fallback = str(payload.get("raw_hex") or "").strip()
         # Match packet-capture behavior: prefer payload, fallback to raw_hex without first 2 bytes.
         raw_hex = payload_hex or (raw_hex_fallback[4:] if len(raw_hex_fallback) > 4 else raw_hex_fallback)
+        if not raw_hex:
+            return None
         parsed = payload.get("parsed") if isinstance(payload.get("parsed"), dict) else {}
         decrypted = payload.get("decrypted") if isinstance(payload.get("decrypted"), dict) else {}
 
@@ -1233,8 +1238,9 @@ class MeshCoreMqttUploader:
 
                 route_map = {
                     0x00: "F",  # TRANSPORT_FLOOD
-                    0x01: "D",  # DIRECT
-                    0x03: "T",  # TRANSPORT_DIRECT
+                    0x01: "F",  # FLOOD
+                    0x02: "D",  # DIRECT
+                    0x03: "D",  # TRANSPORT_DIRECT
                 }
                 route = route_map.get(route_type, "U")
 

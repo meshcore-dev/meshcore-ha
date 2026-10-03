@@ -52,7 +52,7 @@ from .const import (
     SERVICE_TRACE,
     get_contact_discovery_mode,
 )
-from .events import fire_cli_response, fire_message_sent, fire_send_failed
+from .events import fire_cli_response, fire_message_sent, fire_send_failed, sanitize_event_data
 from .traffic import (
     OP_ADVERT,
     OP_CHANNEL_MESSAGE,
@@ -113,10 +113,26 @@ _MESH_LEASE_COMMANDS = frozenset({
     "send_statusreq",
     "send_telemetry_req",
     "send_trace",
+    "send_msg",
+    "send_cmd",
+    "send_chan_msg",
+    "send_logout",
+    "send_binary_req",
+    "send_anon_req",
+    "send_node_discover_req",
+    "send_control_data",
+    "share_contact",
+    "req_neighbours_async",
+    "req_regions_async",
+    "req_owner_async",
+    "req_basic_async",
 })
 _REMOTE_WAIT_COMMANDS = frozenset({
     "fetch_all_neighbours",
     "send_msg_with_retry",
+    "req_status",
+    "req_telemetry",
+    "req_acl",
 })
 # What each metered mesh-bound command is, so the budget can pick its lane.
 _COMMAND_OPS = {
@@ -128,6 +144,32 @@ _COMMAND_OPS = {
     "send_telemetry_req": OP_TELEMETRY,
     "fetch_all_neighbours": OP_NEIGHBOURS,
     "send_msg_with_retry": OP_MESSAGE,
+    "send_msg": OP_MESSAGE,
+    "send_cmd": OP_MESSAGE,
+    "send_chan_msg": OP_CHANNEL_MESSAGE,
+    "send_logout": OP_LOGIN,
+    "send_login_sync": OP_LOGIN,
+    "send_path_discovery_sync": OP_PATH_DISCOVERY,
+    "send_binary_req": OP_STATUS,
+    "send_anon_req": OP_STATUS,
+    "send_node_discover_req": OP_PATH_DISCOVERY,
+    "send_control_data": OP_PATH_DISCOVERY,
+    "share_contact": OP_ADVERT,
+    "req_status": OP_STATUS,
+    "req_status_sync": OP_STATUS,
+    "req_telemetry": OP_TELEMETRY,
+    "req_telemetry_sync": OP_TELEMETRY,
+    "req_mma_sync": OP_STATUS,
+    "req_acl": OP_STATUS,
+    "req_acl_sync": OP_STATUS,
+    "req_neighbours_async": OP_NEIGHBOURS,
+    "req_neighbours_sync": OP_NEIGHBOURS,
+    "req_regions_async": OP_STATUS,
+    "req_regions_sync": OP_STATUS,
+    "req_owner_async": OP_STATUS,
+    "req_owner_sync": OP_STATUS,
+    "req_basic_async": OP_STATUS,
+    "req_basic_sync": OP_STATUS,
 }
 
 
@@ -880,6 +922,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             )
         except Exception as ex:
             _LOGGER.warning(f"Could not clear message input: {ex}")
+        return {"success": True}
     
     async def _async_run_command(call: ServiceCall):
         """Parse and run an execute_command call; return the normalized response.
@@ -978,6 +1021,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                 "send_msg_with_retry": ["contact", "str"],  # contact, message (many optional params)
                 "send_chan_msg": ["int", "str", "int"],  # channel, message, timestamp
                 "send_cmd": ["contact", "str", "int"],  # contact, command, timestamp (optional)
+                "send_anon_req": ["contact", "int"],
                 "send_binary_req": ["contact", "int"],  # contact, BinaryReqType (int enum)
                 "send_path_discovery": ["contact"],
                 "send_login_sync": ["contact", "str"],
@@ -1114,7 +1158,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             run = api.invoke if waits_remote else api.exchange
             if needs_lease:
                 target = next(
-                    (arg for arg in prepared_args if isinstance(arg, dict)), None
+                    (arg for arg in [*prepared_args, *prepared_kwargs.values()] if isinstance(arg, dict)), None
                 )
                 coordinator.require_mesh_budget(
                     classify_lane(_COMMAND_OPS.get(command_name, OP_STATUS), target)
@@ -1220,6 +1264,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             #   * Plain dict — req_*_sync (awaited response payload)
             #   * list / scalar / str — wrapped as {"result": <value>}
             #   * None — req_*_sync on timeout / no response
+            if getattr(result, "type", None) == EventType.ERROR and not isinstance(result.payload, dict):
+                return {"error": "rejected", "command": command_name}
             if hasattr(result, "payload") and isinstance(result.payload, dict):
                 response = {
                     k: (v.hex() if isinstance(v, bytes) else v)
@@ -1229,11 +1275,14 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     "Command result: %s with payload: %s",
                     result.type, response,
                 )
+                if result.type == EventType.ERROR:
+                    response.setdefault("error", "rejected")
+                    if len(response) == 1:
+                        response["command"] = command_name
+                    return response
                 if response:
                     return response
                 event_type = getattr(result.type, "value", result.type)
-                if event_type == "error":
-                    return {"error": "rejected", "command": command_name}
                 return {"event": str(event_type), "command": command_name}
             if isinstance(result, dict):
                 response = {
@@ -1273,6 +1322,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         )
         command_str = call.data[ATTR_COMMAND]
         coordinator = _resolve_console_coordinator(call)
+        expose_secrets = getattr(getattr(coordinator, "settings", None), "expose_secrets", False) is True
+        response = sanitize_event_data(response, redact=not expose_secrets)
         if coordinator is not None:
             coordinator.record_cli_console(command_str, response, is_error)
         fire_cli_response(
@@ -1427,24 +1478,13 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
     async def async_add_selected_contact_service(call: ServiceCall) -> None:
         """Add the contact selected in the discovered contact select entity."""
-        entry_id = call.data.get(ATTR_ENTRY_ID)
-
-        # Find the discovered contact select entity for this entry_id
-        # If entry_id not specified, look for first available
-        select_entity_id = None
-        if entry_id:
-            # Look for entity with matching unique_id
-            registry = er.async_get(hass)
-            for entity in registry.entities.values():
-                if entity.unique_id == f"{entry_id}_discovered_contact_select":
-                    select_entity_id = entity.entity_id
-                    break
-        else:
-            # Find first discovered contact select entity
-            for state in hass.states.async_all():
-                if state.entity_id.startswith("select.") and "discovered_contact" in state.entity_id:
-                    select_entity_id = state.entity_id
-                    break
+        entry_id, _coordinator, error = resolve_target(hass, call, refuse_ambiguous=True)
+        if error:
+            raise HomeAssistantError(error["error"])
+        registry = er.async_get(hass)
+        select_entity_id = registry.async_get_entity_id(
+            "select", DOMAIN, f"{entry_id}_discovered_contact_select"
+        )
 
         if not select_entity_id:
             _LOGGER.error("Discovered contact select entity not found")
@@ -1477,24 +1517,13 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
     async def async_remove_selected_contact_service(call: ServiceCall) -> None:
         """Remove the contact selected in the added contact select entity."""
-        entry_id = call.data.get(ATTR_ENTRY_ID)
-
-        # Find the added contact select entity for this entry_id
-        # If entry_id not specified, look for first available
-        select_entity_id = None
-        if entry_id:
-            # Look for entity with matching unique_id
-            registry = er.async_get(hass)
-            for entity in registry.entities.values():
-                if entity.unique_id == f"{entry_id}_added_contact_select":
-                    select_entity_id = entity.entity_id
-                    break
-        else:
-            # Find first added contact select entity
-            for state in hass.states.async_all():
-                if state.entity_id.startswith("select.") and "added_contact" in state.entity_id:
-                    select_entity_id = state.entity_id
-                    break
+        entry_id, _coordinator, error = resolve_target(hass, call, refuse_ambiguous=True)
+        if error:
+            raise HomeAssistantError(error["error"])
+        registry = er.async_get(hass)
+        select_entity_id = registry.async_get_entity_id(
+            "select", DOMAIN, f"{entry_id}_added_contact_select"
+        )
 
         if not select_entity_id:
             _LOGGER.error("Added contact select entity not found")
@@ -1530,20 +1559,18 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         entry_id = call.data.get(ATTR_ENTRY_ID)
         pubkey_prefix = call.data.get(ATTR_PUBKEY_PREFIX)
 
+        entry_id, coordinator, error = resolve_target(
+            hass, call, refuse_ambiguous=not pubkey_prefix
+        )
+        if error:
+            raise HomeAssistantError(error["error"])
+
         # If pubkey_prefix not provided, get from discovered contact select entity
         if not pubkey_prefix:
-            select_entity_id = None
-            if entry_id:
-                registry = er.async_get(hass)
-                for entity in registry.entities.values():
-                    if entity.unique_id == f"{entry_id}_discovered_contact_select":
-                        select_entity_id = entity.entity_id
-                        break
-            else:
-                for state in hass.states.async_all():
-                    if state.entity_id.startswith("select.") and "discovered_contact" in state.entity_id:
-                        select_entity_id = state.entity_id
-                        break
+            registry = er.async_get(hass)
+            select_entity_id = registry.async_get_entity_id(
+                "select", DOMAIN, f"{entry_id}_discovered_contact_select"
+            )
 
             if not select_entity_id:
                 _LOGGER.error("Discovered contact select entity not found and no pubkey_prefix provided")
@@ -1564,30 +1591,16 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                 _LOGGER.error(f"Could not parse pubkey from selection: {selected_option}")
                 return
 
-        # Find coordinator for this entry_id or use first available
-        coordinator = None
-        if entry_id:
-            coordinator = hass.data[DOMAIN].get(entry_id)
-        else:
-            for coord in hass.data[DOMAIN].values():
-                if hasattr(coord, 'api'):
-                    coordinator = coord
-                    break
-
-        if not coordinator:
-            _LOGGER.error("Could not find coordinator")
+        matches = [
+            key for key in coordinator._discovered_contacts
+            if key.startswith(pubkey_prefix)
+        ]
+        if len(matches) != 1:
+            _LOGGER.error("Discovered contact prefix must identify one contact: %s", pubkey_prefix)
             return
-
-        # Find the full public key from discovered contacts
-        full_pubkey = None
-        for pubkey in coordinator._discovered_contacts:
-            if pubkey.startswith(pubkey_prefix):
-                full_pubkey = pubkey
-                break
-
-        if not full_pubkey:
-            _LOGGER.error(f"Discovered contact not found with prefix: {pubkey_prefix}")
-            return
+        full_pubkey = matches[0]
+        pubkey_prefix = full_pubkey[:12]
+        coordinator.tracked_diagnostic_binary_contacts.discard(full_pubkey)
 
         # Remove from discovered contacts
         contact_name = coordinator._discovered_contacts[full_pubkey].get("adv_name", "Unknown")
@@ -1704,10 +1717,6 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             _LOGGER.error("Could not find coordinator")
             return
 
-        if not coordinator._discovered_contacts:
-            _LOGGER.info("No discovered contacts to clear")
-            return
-
         days_threshold = call.data.get("days_threshold")
         if days_threshold:
             # Threshold-based cleanup: only remove stale contacts
@@ -1722,7 +1731,13 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             # returns None and the removal is a no-op; the dict clear below is
             # the whole operation. Running it in every mode also clears any
             # entity orphaned by a prior mode switch.
+            added_keys = {
+                contact["public_key"] for contact in coordinator.get_all_contacts()
+                if contact.get("added_to_node") and contact.get("public_key")
+            }
             for public_key in list(coordinator._discovered_contacts.keys()):
+                if public_key in added_keys:
+                    continue
                 pubkey_prefix = public_key[:12]
                 coordinator.tracked_diagnostic_binary_contacts.discard(public_key)
 
@@ -1740,6 +1755,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             coordinator._save_discovered_contacts()
             coordinator._publish_contacts()
 
+            await coordinator._cleanup_stale_discovered_contacts(365)
             _LOGGER.info(f"Cleared {removed_count} discovered contacts")
 
     hass.services.async_register(
@@ -2040,7 +2056,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                 }
 
             out_path_hash_len = discovered.get("out_path_hash_len", 1)
-            out_path_hash_mode = {1: 0, 2: 1, 4: 2}.get(out_path_hash_len, 0)
+            out_path_hash_mode = {1: 0, 2: 1, 3: 2, 4: 3}.get(out_path_hash_len, 0)
             out_path_hex = discovered.get("out_path", "") or ""
 
         # ── Build the round-trip 1-byte-hash path ──
@@ -2053,7 +2069,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         if not target_hash_hex:
             return {"trace": None, "error": "contact_missing_pubkey"}
 
-        stored_hop_width = {0: 2, 1: 4, 2: 8}.get(out_path_hash_mode, 2)
+        stored_hop_width = (out_path_hash_mode + 1) * 2
         outbound_hops = []
         for i in range(out_path_len):
             start = i * stored_hop_width
@@ -2092,17 +2108,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                 reason = send_result.payload.get("reason", "unknown")
             return {"trace": None, "error": reason}
 
-        # Bound the TRACE_DATA wait using (in order of preference) the
-        # user's requested timeout, the device's self-reported suggested
-        # timeout, and sensible floor/ceiling. Use firmware-suggested *1.2
-        # like ws_trace so near-timeout responses aren't cut off.
-        self_info = getattr(api, "self_info", None) or {}
-        fw_suggested_ms = self_info.get("suggested_timeout", 15000) if isinstance(self_info, dict) else 15000
-        try:
-            fw_suggested_s = float(fw_suggested_ms) / 1000.0 * 1.2
-        except Exception:
-            fw_suggested_s = 18.0
-        effective_timeout = min(max(requested_timeout_s, fw_suggested_s, 5.0), 60.0)
+        effective_timeout = min(max(requested_timeout_s, 5.0), 60.0)
 
         try:
             trace_event = await api.wait_for(

@@ -406,7 +406,7 @@ class TelemetrySensorManager:
             contact_pubkey = extract_pubkey_hex(contact)
             if contact_pubkey.startswith(pubkey_prefix):
                 return {
-                    "name": contact.get("name", f"Node {pubkey_prefix[:6]}"),
+                    "name": contact.get("adv_name") or f"Node {pubkey_prefix[:6]}",
                     "type": "contact",
                     "pubkey_prefix": contact_pubkey,
                 }
@@ -622,9 +622,9 @@ class MeshCoreTelemetrySensor(CoordinatorEntity, SensorEntity):
 
         if node_type == "root":
             # For root node, use cleaner entity IDs
-            device_name = "meshcore"
+            device_name = full_pubkey[:6]
             entity_key = f"{sensor_type_name}_ch{channel}"
-            self.entity_id = format_entity_id("sensor", device_name, entity_key)
+            self.entity_id = format_entity_id("sensor", device_name, entity_key, sanitize_name(node_name))
         else:
             # For other nodes, include more details
             device_name = pubkey_prefix[:10]

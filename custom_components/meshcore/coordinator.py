@@ -255,6 +255,11 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         # nodes currently waiting on a lane, and the governed-only store that
         # lets schedules and credits survive a restart.
         self._traffic_policy: TrafficPolicy = resolve_policy(config_entry)
+        if self._traffic_policy != POLICY_GOVERNED:
+            _LOGGER.warning(
+                "The Legacy traffic policy is deprecated and will be removed in a future "
+                "release. Select Governed in Global Settings > Mesh Traffic Policy."
+            )
         self._rate_limiter = MeshBudget(self._traffic_policy)
         self._deferred_nodes: dict[tuple[str, str], dict[str, Any]] = {}
         self._last_defer_log: dict[tuple[str, str], float] = {}
@@ -468,8 +473,13 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             return
 
         self.logger.info("Contacts synced from node")
+        for contact in self.api.contacts.values():
+            public_key = contact.get("public_key", "")
+            previous = self._contacts.get(public_key[:12], {})
+            if contact.get("lastmod", 0) > previous.get("lastmod", 0):
+                self.rearm_heard_node(public_key)
         self._contacts = {
-            contact["public_key"][:12]: contact
+            contact["public_key"][:12]: dict(contact)
             for contact in self.api.contacts.values()
             if contact.get("public_key")
         }
@@ -1025,6 +1035,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         def handle_advertisement(event: Event):
             public_key = (event.payload or {}).get("public_key")
             if public_key:
+                self.rearm_heard_node(public_key)
                 self.config_entry.async_create_background_task(
                     self.hass,
                     self._fetch_advert_path(public_key),
@@ -1226,6 +1237,14 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self._last_successful_request[pubkey_prefix] = time.time()
         self._save_traffic_state()
 
+    def rearm_heard_node(self, public_key: str) -> None:
+        """Resume governed polling when an auto-disabled tracked node advertises."""
+        if self._traffic_policy != POLICY_GOVERNED:
+            return
+        for prefix in tuple(self._auto_disabled_devices):
+            if public_key.startswith(prefix):
+                self.seed_tracked_node(prefix)
+
     def forget_tracked_node(self, pubkey_prefix: str, node_type: str) -> None:
         """Drop every trace of a node the user stopped tracking.
 
@@ -1369,13 +1388,9 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 n_snr = neighbour.get("snr", 0)
                 n_secs_ago = neighbour.get("secs_ago", 0)
 
-                # The firmware computes secs_ago from its own RTC, so a
-                # secs_ago that shrank since the last poll means the neighbour
-                # was heard again. The window check is load-bearing: after a
-                # restart the stored secs_ago is inflated by the downtime, and
-                # without it every stale neighbour reads as newly heard.
+                # Compare against the aged previous reading, including downtime.
                 existing_data = existing.get(n_pubkey, {})
-                prev_secs_ago = existing_data.get("secs_ago")
+                prev_secs_ago = self.neighbor_age(existing_data, now) if existing_data else None
                 seen_timestamps = [
                     t for t in existing_data.get("seen_timestamps", []) if t > cutoff
                 ]
@@ -1393,9 +1408,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     "seen_timestamps": seen_timestamps,
                 }
 
-            # Neighbours missing from this response may just be off the page:
-            # keep them, but leave last_updated alone (staleness comes from the
-            # most recent poll that did include them) and prune their window.
+            # Preserve absent neighbours' last-heard time, even on partial scans.
             for n_pubkey, n_data in existing.items():
                 if n_pubkey not in updated_neighbors:
                     prev_ts = n_data.get("seen_timestamps", [])
@@ -1479,6 +1492,13 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             self._persistable_neighbors, STORE_SAVE_DELAY
         )
 
+    @staticmethod
+    def neighbor_age(data: dict, now: float | None = None) -> int:
+        """Age a reading from the repeater's last-heard time."""
+        if now is None:
+            now = time.time()
+        return max(0, int(now - data.get("last_updated", now) + data.get("secs_ago", 0)))
+
     async def _cleanup_stale_neighbors(self, days_threshold: int) -> int:
         """Remove neighbors whose last_heard exceeds the age threshold.
 
@@ -1556,12 +1576,8 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         try:
             stored = await self._neighbor_store.async_load()
             if stored:
-                now = time.time()
                 for _rptr_prefix, neighbors in stored.items():
                     for n_pubkey, n_data in neighbors.items():
-                        last_updated = n_data.get("last_updated", now)
-                        elapsed = now - last_updated
-                        n_data["secs_ago"] = n_data.get("secs_ago", 0) + int(elapsed)
                         n_data["resolved_name"] = self.resolve_neighbor_name(n_pubkey)
                         # Migrate seen_count (int) to seen_timestamps (list)
                         if "seen_count" in n_data and "seen_timestamps" not in n_data:
@@ -2183,10 +2199,16 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     )
                     idle_hours = (current_time - last_success) / 3600
                     if idle_hours >= AUTO_DISABLE_HOURS:
+                        # Governed persists the set, so a restart does not bring it back.
+                        resume = (
+                            "Edit the node or wait for its next advert to resume."
+                            if self._traffic_policy == POLICY_GOVERNED
+                            else "This will reset on restart."
+                        )
                         _LOGGER.warning(
                             f"{kind.capitalize()} {node_name} has had no successful requests "
                             f"in {idle_hours:.1f} hours. Automatically disabling to reduce "
-                            f"network traffic. This will reset on restart."
+                            f"network traffic. {resume}"
                         )
                         self._auto_disabled_devices.add(pubkey_prefix)
                         self._save_traffic_state()

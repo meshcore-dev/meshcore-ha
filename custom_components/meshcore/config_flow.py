@@ -91,6 +91,8 @@ from .radio import RadioSession
 from .traffic import (
     OP_FIRMWARE,
     OP_LOGIN,
+    POLICY_GOVERNED,
+    POLICY_LEGACY,
     TRAFFIC_POLICIES,
     classify_lane,
     resolve_policy,
@@ -158,15 +160,17 @@ def _password_selector() -> TextSelector:
     return TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD))
 
 
-def _traffic_policy_selector() -> SelectSelector:
+def _traffic_policy_selector(current: str) -> SelectSelector:
     """Build the translation-keyed select for the mesh traffic policy.
 
     Labels come from the selector translation key; the stored value is the
-    machine string ("legacy" / "governed").
+    machine string ("legacy" / "governed"). Legacy is deprecated: only an entry
+    that still runs it is offered it, so leaving it is one-way.
     """
+    options = list(TRAFFIC_POLICIES) if current == POLICY_LEGACY else [POLICY_GOVERNED]
     return SelectSelector(
         SelectSelectorConfig(
-            options=list(TRAFFIC_POLICIES),
+            options=options,
             mode=SelectSelectorMode.DROPDOWN,
             translation_key="traffic_policy",
         )
@@ -620,6 +624,12 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             self.config_entry, options=options
         )
 
+    def _rearm_node(self, node: dict[str, Any]) -> None:
+        """Resume an auto-disabled node when the user saves it, changed or not."""
+        coordinator = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id)
+        if coordinator is not None and resolve_policy(self.config_entry) == POLICY_GOVERNED:
+            coordinator.seed_tracked_node(node.get("pubkey_prefix", ""))
+
     def _ensure_options_loaded(self) -> None:
         """Load repeater_subscriptions and tracked_clients from config_entry (provided by parent)."""
         if not self._options_initialized:
@@ -1058,7 +1068,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_EXPOSE_SECRETS, default=settings.expose_secrets): cv.boolean,
                 vol.Optional(CONF_AUTO_CLEANUP_STALE_NEIGHBORS, default=settings.auto_cleanup_stale_neighbors): cv.boolean,
                 vol.Optional(CONF_STALE_NEIGHBOR_DAYS, default=settings.stale_neighbor_days): vol.All(cv.positive_int, vol.Range(min=1, max=365)),
-                vol.Optional(CONF_TRAFFIC_POLICY, default=current_traffic_policy): _traffic_policy_selector(),
+                vol.Optional(CONF_TRAFFIC_POLICY, default=current_traffic_policy): _traffic_policy_selector(
+                    current_traffic_policy
+                ),
             }),
         )
 
@@ -1384,6 +1396,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             repeater[CONF_DEVICE_DISABLED] = user_input[CONF_DEVICE_DISABLED]
 
             self._commit({CONF_REPEATER_SUBSCRIPTIONS: self.repeater_subscriptions})
+            self._rearm_node(repeater)
 
             # If neighbors was just disabled, clean up existing entities
             now_neighbors_enabled = user_input.get(CONF_REPEATER_NEIGHBORS_ENABLED, False)
@@ -1441,6 +1454,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             client[CONF_DEVICE_DISABLED] = user_input[CONF_DEVICE_DISABLED]
 
             self._commit({CONF_TRACKED_CLIENTS: self.tracked_clients})
+            self._rearm_node(client)
 
             return await self.async_step_init()
 

@@ -280,3 +280,23 @@ async def test_an_unheard_long_message_is_unconfirmed_not_failed(
     )
 
     assert sensor.native_value == state
+
+
+@pytest.mark.parametrize(
+    ("data", "description"),
+    [
+        ({"message": "hi", "sender_name": "Client"}, "Client: hi"),
+        ({"message": "hi", "sender_name": None, "pubkey_prefix": "abc123def012"}, "Unknown (abc123): hi"),
+        ({"message": "hi", "sender_name": None}, "Unknown: hi"),
+    ],
+)
+def test_the_logbook_names_an_unknown_sender(hass: HomeAssistant, data: dict, description: str) -> None:
+    from custom_components.meshcore.logbook import async_describe_events
+
+    described = {}
+    async_describe_events(
+        hass, lambda domain, event_type, fn: described.setdefault(event_type, fn)
+    )
+
+    entry = described[EVENT_MESSAGE](SimpleNamespace(data=data))
+    assert entry["message"] == description

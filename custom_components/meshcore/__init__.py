@@ -44,6 +44,8 @@ from .const import (
     CONF_TCP_PORT,
     CONF_TRACKED_CLIENTS,
     CONF_USB_PATH,
+    CONNECTION_TYPE_BLE,
+    CONNECTION_TYPE_USB,
     DOMAIN,
     MODE_DATA_ONLY,
     MODE_FULL,
@@ -485,9 +487,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.error(f"Failed to connect after {max_retries} attempts")
 
     if not connected:
+        if connection_type == CONNECTION_TYPE_USB:
+            address = entry.data.get(CONF_USB_PATH, "unknown")
+        elif connection_type == CONNECTION_TYPE_BLE:
+            address = entry.data.get(CONF_BLE_ADDRESS, "unknown")
+        else:
+            address = f"{entry.data.get(CONF_TCP_HOST, 'unknown')}:{entry.data.get(CONF_TCP_PORT, 5000)}"
         raise ConfigEntryNotReady(
             f"Failed to connect to MeshCore device at "
-            f"{entry.data.get(CONF_TCP_HOST, 'unknown')}:{entry.data.get(CONF_TCP_PORT, 5000)} "
+            f"{address} "
             f"after {max_retries} attempts"
         )
 
@@ -593,7 +601,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     public_key = contact.get("public_key")
                     if public_key:
                         prefix = public_key[:12]
-                        coordinator._contacts[prefix] = contact
+                        coordinator._contacts[prefix] = dict(contact)
                         # Mark each contact as dirty so binary sensors update
                         coordinator.mark_contact_dirty(prefix)
 
@@ -839,6 +847,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             """Handle NEW_CONTACT events for discovered but not-yet-added contacts."""
             if not event or not event.payload:
                 return
+
+            public_key = event.payload.get("public_key")
+            if public_key:
+                coordinator.rearm_heard_node(public_key)
 
             # Discovery disabled (mode off): drop incoming adverts so they do
             # not repopulate the discovered set (mirrors the off early-return in

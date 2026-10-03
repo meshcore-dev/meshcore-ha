@@ -127,7 +127,7 @@ class MeshCoreChannelSelect(MeshCoreHelperSelect):
         for idx in range(max_channels):
             # Get channel info from coordinator
             channel_info = self.coordinator._channel_info.get(idx, {})
-            channel_name = channel_info.get("channel_name", "(unused)")
+            channel_name = channel_info.get("channel_name") or "(unused)"
 
             # Format as "Name (idx)"
             option = f"{channel_name} ({idx})"

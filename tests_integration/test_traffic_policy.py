@@ -164,6 +164,23 @@ async def test_options_flow_round_trips_the_policy(
     await hass.async_block_till_done()
     assert entry.options[CONF_TRAFFIC_POLICY] == POLICY_GOVERNED
 
+    # Legacy is deprecated: once an entry leaves it, the form stops offering it.
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"action": "global_settings"}
+    )
+    selector = result["data_schema"].schema[
+        next(m for m in result["data_schema"].schema if m.schema == CONF_TRAFFIC_POLICY)
+    ]
+    assert selector.config["options"] == [POLICY_GOVERNED]
+
+
+async def test_a_legacy_entry_logs_the_deprecation(
+    hass: HomeAssistant, legacy: SimpleNamespace, caplog: pytest.LogCaptureFixture
+) -> None:
+    await _build(hass, POLICY_LEGACY)
+    assert "The Legacy traffic policy is deprecated" in caplog.text
+
 
 async def test_legacy_never_meters_service_calls(
     hass: HomeAssistant, legacy: SimpleNamespace

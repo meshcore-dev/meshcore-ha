@@ -83,4 +83,4 @@ async def test_repeater_stats_reads_as_empty(
                           coordinator=coordinator)
 
     assert stats == {}
-    assert "coordinator._repeater_stats" in _warnings(caplog)[0]
+    assert any("coordinator._repeater_stats" in m for m in _warnings(caplog))

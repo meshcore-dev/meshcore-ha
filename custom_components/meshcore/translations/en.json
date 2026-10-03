@@ -29,12 +29,14 @@
         "data": {
           "usb_path": "USB Device Path",
           "baudrate": "Connection Speed",
+          "self_telemetry_enabled": "Enable Self Telemetry",
+          "self_telemetry_interval": "Self Telemetry Interval (seconds)",
           "self_diagnostics_enabled": "Enable Self Diagnostics",
           "self_diagnostics_interval": "Self Diagnostics Interval (seconds)",
           "contact_discovery_mode": "Contact Discovery Mode"
         },
         "data_description": {
-          "self_diagnostics_enabled": "Creates roughly 15 local diagnostic sensors for the companion node (uptime, TX queue length, noise floor, last RSSI/SNR, TX/RX airtime, and packet counters). Off by default. Adds no mesh traffic — these are local queries to the attached radio, not mesh requests. The interval controls how often the sensors refresh (60–3600 seconds).",
+          "self_diagnostics_enabled": "Creates 14 diagnostic sensors for the companion: uptime, TX queue length, noise floor, last RSSI and SNR, TX and RX airtime, and packet counters. Off by default. These are local queries to the companion and send nothing on the mesh. The interval sets how often the sensors update (60 to 3600 seconds).",
           "contact_discovery_mode": "Entity per contact: every discovered contact gets its own entity (best for small meshes). Data only: discovered contacts are tracked as data only with no per-contact entity -- inspect them via the dropdown or the Get Discovered Contact service. Disabled: contact discovery is turned off entirely and any existing discovered contacts are cleared."
         },
         "description": "Connect to your MeshCore node via USB",
@@ -43,12 +45,14 @@
       "ble": {
         "data": {
           "ble_address": "Bluetooth Device",
+          "self_telemetry_enabled": "Enable Self Telemetry",
+          "self_telemetry_interval": "Self Telemetry Interval (seconds)",
           "self_diagnostics_enabled": "Enable Self Diagnostics",
           "self_diagnostics_interval": "Self Diagnostics Interval (seconds)",
           "contact_discovery_mode": "Contact Discovery Mode"
         },
         "data_description": {
-          "self_diagnostics_enabled": "Creates roughly 15 local diagnostic sensors for the companion node (uptime, TX queue length, noise floor, last RSSI/SNR, TX/RX airtime, and packet counters). Off by default. Adds no mesh traffic — these are local queries to the attached radio, not mesh requests. The interval controls how often the sensors refresh (60–3600 seconds).",
+          "self_diagnostics_enabled": "Creates 14 diagnostic sensors for the companion: uptime, TX queue length, noise floor, last RSSI and SNR, TX and RX airtime, and packet counters. Off by default. These are local queries to the companion and send nothing on the mesh. The interval sets how often the sensors update (60 to 3600 seconds).",
           "contact_discovery_mode": "Entity per contact: every discovered contact gets its own entity (best for small meshes). Data only: discovered contacts are tracked as data only with no per-contact entity -- inspect them via the dropdown or the Get Discovered Contact service. Disabled: contact discovery is turned off entirely and any existing discovered contacts are cleared."
         },
         "description": "Connect to your MeshCore node via Bluetooth",
@@ -58,12 +62,14 @@
         "data": {
           "tcp_host": "Host Address",
           "tcp_port": "Port",
+          "self_telemetry_enabled": "Enable Self Telemetry",
+          "self_telemetry_interval": "Self Telemetry Interval (seconds)",
           "self_diagnostics_enabled": "Enable Self Diagnostics",
           "self_diagnostics_interval": "Self Diagnostics Interval (seconds)",
           "contact_discovery_mode": "Contact Discovery Mode"
         },
         "data_description": {
-          "self_diagnostics_enabled": "Creates roughly 15 local diagnostic sensors for the companion node (uptime, TX queue length, noise floor, last RSSI/SNR, TX/RX airtime, and packet counters). Off by default. Adds no mesh traffic — these are local queries to the attached radio, not mesh requests. The interval controls how often the sensors refresh (60–3600 seconds).",
+          "self_diagnostics_enabled": "Creates 14 diagnostic sensors for the companion: uptime, TX queue length, noise floor, last RSSI and SNR, TX and RX airtime, and packet counters. Off by default. These are local queries to the companion and send nothing on the mesh. The interval sets how often the sensors update (60 to 3600 seconds).",
           "contact_discovery_mode": "Entity per contact: every discovered contact gets its own entity (best for small meshes). Data only: discovered contacts are tracked as data only with no per-contact entity -- inspect them via the dropdown or the Get Discovered Contact service. Disabled: contact discovery is turned off entirely and any existing discovered contacts are cleared."
         },
         "description": "Connect to your MeshCore node over the network",
@@ -112,10 +118,10 @@
           "repeater_password": "Repeater Password",
           "telemetry_enabled": "Enable Telemetry Polling (automatically polls and discovers telemetry data)",
           "neighbors_enabled": "Enable Neighbor Entities (creates SNR and activity sensors for each neighbor seen by the repeater)",
-          "repeater_update_interval": "Telemetry Refresh Rate (seconds)"
+          "update_interval": "Telemetry Refresh Rate (seconds)"
         },
         "data_description": {
-          "neighbors_enabled": "Queries this repeater for its neighbor list on each poll cycle and exposes each neighbor as two sensors. Airtime cost is one direct request and response per cycle — at the default 2-hour `Update Interval` that's roughly one exchange every 2 hours per enabled repeater, comparable to one extra telemetry request. Requires MeshCore firmware \u2265 1.14.0."
+          "neighbors_enabled": "Asks this repeater for its neighbour list after each successful status poll. Each neighbour gets an SNR sensor and a seen sensor. The list is paged: each page is one request, so the cost grows with the number of neighbours. Requires MeshCore firmware 1.14.0 or later."
         },
         "description": "Monitor a repeater for telemetry and status",
         "title": "Add Repeater Station"
@@ -123,7 +129,7 @@
       "add_client": {
         "data": {
           "client_name": "Available Clients",
-          "client_update_interval": "Update Frequency (GPS and telemetry will be auto-polled/discovered)"
+          "update_interval": "Update Frequency (GPS and telemetry will be auto-polled/discovered)"
         },
         "description": "Track presence and battery for a client device",
         "title": "Add Tracked Client"
@@ -141,17 +147,17 @@
           "repeater_password": "Update Password (leave blank to keep current)",
           "telemetry_enabled": "Enable Telemetry Polling (automatically polls and discovers telemetry data)",
           "neighbors_enabled": "Enable Neighbor Entities (creates SNR and activity sensors for each neighbor seen by the repeater)",
-          "repeater_update_interval": "Telemetry Refresh Rate (seconds)"
+          "update_interval": "Telemetry Refresh Rate (seconds)"
         },
         "data_description": {
-          "neighbors_enabled": "Queries this repeater for its neighbor list on each poll cycle and exposes each neighbor as two sensors. Airtime cost is one direct request and response per cycle — at the default 2-hour `Update Interval` that's roughly one exchange every 2 hours per enabled repeater, comparable to one extra telemetry request. Requires MeshCore firmware \u2265 1.14.0."
+          "neighbors_enabled": "Asks this repeater for its neighbour list after each successful status poll. Each neighbour gets an SNR sensor and a seen sensor. The list is paged: each page is one request, so the cost grows with the number of neighbours. Requires MeshCore firmware 1.14.0 or later."
         },
         "description": "Edit settings for {device_name}",
         "title": "Edit Repeater"
       },
       "edit_client": {
         "data": {
-          "client_update_interval": "Update Frequency (GPS and telemetry will be auto-polled/discovered)"
+          "update_interval": "Update Frequency (GPS and telemetry will be auto-polled/discovered)"
         },
         "description": "Edit settings for {device_name}",
         "title": "Edit Tracked Client"
@@ -176,10 +182,10 @@
           "flood_scopes": "Flood Scope Allowlist"
         },
         "data_description": {
-          "self_diagnostics_enabled": "Creates roughly 15 local diagnostic sensors for the companion node (uptime, TX queue length, noise floor, last RSSI/SNR, TX/RX airtime, and packet counters). Off by default. Adds no mesh traffic — these are local queries to the attached radio, not mesh requests. The interval controls how often the sensors refresh (60–3600 seconds).",
+          "self_diagnostics_enabled": "Creates 14 diagnostic sensors for the companion: uptime, TX queue length, noise floor, last RSSI and SNR, TX and RX airtime, and packet counters. Off by default. These are local queries to the companion and send nothing on the mesh. The interval sets how often the sensors update (60 to 3600 seconds).",
           "contact_discovery_mode": "Entity per contact: every discovered contact gets its own entity (best for small meshes). Data only: discovered contacts are tracked as data only with no per-contact entity -- inspect them via the dropdown or the Get Discovered Contact service. Disabled: contact discovery is turned off entirely and any existing discovered contacts are cleared.",
-          "cli_console_enabled": "Adds a CLI Console sensor that records the commands you run via execute_command / execute_command_ui with record_to_console enabled and their responses, so the output is visible in the UI (a plain command card runs commands but discards the output). It shows only command/response pairs — it does not stream the device's continuous diagnostic/noise-floor log. Off by default. Pair it with the text.meshcore_command input helper and a markdown card; see the docs for an example dashboard.",
-          "map_upload_enabled": "When enabled, adverts from repeaters and room servers you receive are uploaded to map.meshcore.io. Those nodes appear on the official MeshCore map for the community. Requires private key export enabled on the firmware (`ENABLE_PRIVATE_KEY_EXPORT=1`); without it, uploads cannot be signed.",
+          "cli_console_enabled": "Adds a CLI Console sensor. It records each command that you run with execute_command or execute_command_ui when record_to_console is on, and the response. It shows only command and response pairs, not the device log. Off by default. Use it with the text.meshcore_command helper and a Markdown card. The documentation has an example dashboard.",
+          "map_upload_enabled": "Uploads the adverts that you receive from repeaters, room servers and sensor nodes to map.meshcore.io. Those nodes then show on the MeshCore community map. The firmware must allow private key export (`ENABLE_PRIVATE_KEY_EXPORT=1`). Without it, the integration cannot sign the uploads.",
           "auto_cleanup_stale_contacts": "When enabled, discovered contacts whose last update is older than the configured threshold are automatically removed once per day. Contacts saved to the node are always preserved.",
           "auto_cleanup_stale_neighbors": "Automatically remove neighbor entries and their sensor entities when they haven't been heard from in the configured number of days.",
           "stale_neighbor_days": "Number of days without hearing a neighbor before it is automatically removed (1–365).",
@@ -239,12 +245,12 @@
           "repeater_password": "Repeater Password",
           "telemetry_enabled": "Enable Telemetry Polling",
           "neighbors_enabled": "Enable Neighbor Entities (creates SNR and activity sensors for each neighbor seen by the repeater)",
-          "repeater_update_interval": "Telemetry Refresh Rate (seconds)",
+          "update_interval": "Telemetry Refresh Rate (seconds)",
           "disable_path_reset": "Disable Path Reset",
           "password": "Password"
         },
         "data_description": {
-          "neighbors_enabled": "Queries this repeater for its neighbor list on each poll cycle and exposes each neighbor as two sensors. Airtime cost is one direct request and response per cycle — at the default 2-hour `Update Interval` that's roughly one exchange every 2 hours per enabled repeater, comparable to one extra telemetry request. Requires MeshCore firmware \u2265 1.14.0.",
+          "neighbors_enabled": "Asks this repeater for its neighbour list after each successful status poll. Each neighbour gets an SNR sensor and a seen sensor. The list is paged: each page is one request, so the cost grows with the number of neighbours. Requires MeshCore firmware 1.14.0 or later.",
           "password": "Sent once to log in to the repeater. Leave blank for a repeater that grants access by ACL without a password."
         },
         "description": "Monitor a repeater for telemetry and status",
@@ -253,7 +259,7 @@
       "add_client": {
         "data": {
           "client_name": "Available Clients",
-          "client_update_interval": "Update Frequency (seconds)",
+          "update_interval": "Update Frequency (seconds)",
           "disable_path_reset": "Disable Path Reset"
         },
         "description": "Track presence and battery for a client device",
@@ -272,13 +278,13 @@
           "repeater_password": "Update Password (leave blank to keep current)",
           "telemetry_enabled": "Enable Telemetry Polling",
           "neighbors_enabled": "Enable Neighbor Entities (creates SNR and activity sensors for each neighbor seen by the repeater)",
-          "repeater_update_interval": "Telemetry Refresh Rate (seconds)",
+          "update_interval": "Telemetry Refresh Rate (seconds)",
           "disable_path_reset": "Disable Path Reset",
           "disabled": "Disable Device",
           "password": "Update Password (leave blank to keep current)"
         },
         "data_description": {
-          "neighbors_enabled": "Queries this repeater for its neighbor list on each poll cycle and exposes each neighbor as two sensors. Airtime cost is one direct request and response per cycle — at the default 2-hour `Update Interval` that's roughly one exchange every 2 hours per enabled repeater, comparable to one extra telemetry request. Requires MeshCore firmware \u2265 1.14.0.",
+          "neighbors_enabled": "Asks this repeater for its neighbour list after each successful status poll. Each neighbour gets an SNR sensor and a seen sensor. The list is paged: each page is one request, so the cost grows with the number of neighbours. Requires MeshCore firmware 1.14.0 or later.",
           "password": "Stored passwords are never shown. Leave this blank to keep the saved password; type a new one to replace it."
         },
         "description": "Edit settings for {device_name}",
@@ -286,7 +292,7 @@
       },
       "edit_client": {
         "data": {
-          "client_update_interval": "Update Frequency (seconds)",
+          "update_interval": "Update Frequency (seconds)",
           "disable_path_reset": "Disable Path Reset",
           "disabled": "Disable Device"
         },
@@ -316,19 +322,19 @@
           "expose_secrets": "Expose Node Secrets in Events"
         },
         "data_description": {
-          "self_diagnostics_enabled": "Creates roughly 15 local diagnostic sensors for the companion node (uptime, TX queue length, noise floor, last RSSI/SNR, TX/RX airtime, and packet counters). Off by default. Adds no mesh traffic — these are local queries to the attached radio, not mesh requests. The interval controls how often the sensors refresh (60–3600 seconds).",
+          "self_diagnostics_enabled": "Creates 14 diagnostic sensors for the companion: uptime, TX queue length, noise floor, last RSSI and SNR, TX and RX airtime, and packet counters. Off by default. These are local queries to the companion and send nothing on the mesh. The interval sets how often the sensors update (60 to 3600 seconds).",
           "contact_discovery_mode": "Entity per contact: every discovered contact gets its own entity (best for small meshes). Data only: discovered contacts are tracked as data only with no per-contact entity -- inspect them via the dropdown or the Get Discovered Contact service. Disabled: contact discovery is turned off entirely and any existing discovered contacts are cleared.",
-          "cli_console_enabled": "Adds a CLI Console sensor that records the commands you run via execute_command / execute_command_ui with record_to_console enabled and their responses, so the output is visible in the UI (a plain command card runs commands but discards the output). It shows only command/response pairs — it does not stream the device's continuous diagnostic/noise-floor log. Off by default. Pair it with the text.meshcore_command input helper and a markdown card; see the docs for an example dashboard.",
-          "map_upload_enabled": "When enabled, adverts from repeaters and room servers you receive are uploaded to map.meshcore.io. Those nodes appear on the official MeshCore map for the community. Requires private key export enabled on the firmware (`ENABLE_PRIVATE_KEY_EXPORT=1`); without it, uploads cannot be signed.",
+          "cli_console_enabled": "Adds a CLI Console sensor. It records each command that you run with execute_command or execute_command_ui when record_to_console is on, and the response. It shows only command and response pairs, not the device log. Off by default. Use it with the text.meshcore_command helper and a Markdown card. The documentation has an example dashboard.",
+          "map_upload_enabled": "Uploads the adverts that you receive from repeaters, room servers and sensor nodes to map.meshcore.io. Those nodes then show on the MeshCore community map. The firmware must allow private key export (`ENABLE_PRIVATE_KEY_EXPORT=1`). Without it, the integration cannot sign the uploads.",
           "auto_cleanup_stale_contacts": "When enabled, discovered contacts whose last update is older than the configured threshold are automatically removed once per day. Contacts saved to the node are always preserved.",
           "auto_cleanup_stale_neighbors": "Automatically remove neighbor entries and their sensor entities when they haven't been heard from in the configured number of days.",
           "stale_neighbor_days": "Number of days without hearing a neighbor before it is automatically removed (1–365).",
           "consume_incoming_messages": "Enabled by default. Turn off when another client, such as a phone over BLE, should retrieve queued channel and direct messages. Home Assistant keeps polling repeater status and telemetry and can still send commands. Messages delivered by the device may still appear in Home Assistant; this setting controls queue retrieval, not message visibility. Text replies to commands may also remain queued for the other client.",
           "adaptive_poll_wait": "When enabled, incoming channel messages fire as soon as RX_LOG data arrives (typically ~50ms) instead of always waiting the full 500ms. Late-arriving repeater data is delivered progressively. Disable if bots or automations depend on having all paths in the initial event.",
           "flood_scopes": "Comma-separated list of region scope names to match against incoming TC_FLOOD messages (e.g. pl-mz, pl-waw). When a match is found, rx_log_data will include a flood_scope field with the matched name. Leave empty to disable scope matching.",
-          "traffic_policy": "Legacy (default) keeps the schedule the integration has always used: a 20-request burst budget refilling one request every two minutes, one token per request whatever it costs the mesh, a budget refusal counted as a node failure, and auto-disable that only ever reaches repeaters. Governed sizes the budget to the number of nodes you track, charges flood-routed traffic more than direct traffic, keeps credit in reserve so your own service calls still get through, defers a poll instead of blaming the node when credit runs out, and auto-disables silent clients too. Change it only if your mesh is congested; saving reloads the integration.",
-          "messages_interval": "How often the integration polls the companion radio for queued messages and runs its scheduling tick. Local USB/BLE/TCP traffic only, no mesh airtime. Lower values make chat feel faster at the cost of more companion chatter.",
-          "expose_secrets": "Off by default, and best left off. Raw MeshCore events reach the Home Assistant event bus (meshcore_raw_event) and any MQTT broker set to raw payload mode. While this is off, a private-key export is never forwarded and channel secrets are replaced with \"<redacted>\" — the integration still decrypts channel traffic itself, so nothing else changes. Turn it on only when an automation or external tool genuinely needs those values, knowing that anyone who can read your event bus or your broker can then read them too."
+          "traffic_policy": "Governed (the default for new installs) gives the radio three budgets: a small flood budget (5, then 20 per hour), a direct budget for routed polls (20, then 120 per hour) and a budget for your messages. A poll that is out of budget waits; it is not counted as a failure. Legacy is the 2.x behavior, kept only for installs that already use it. It is deprecated and will be removed in a future release. After you leave Legacy, you cannot select it again. Changes apply at once.",
+          "messages_interval": "How often the integration runs its scheduling tick (polls that are due, local queries). New messages do not wait for it: the integration reads them when the companion reports them, and also checks after 60 seconds with no messages. This sends nothing on the mesh.",
+          "expose_secrets": "Off by default. Keep it off. Raw MeshCore events go to the Home Assistant event bus (meshcore_raw_event) and to MQTT brokers in raw payload mode. While this is off, the integration never forwards a private key export and replaces channel secrets with \"<redacted>\". The integration still decrypts channel messages. Enable it only if an automation or tool needs these values. Anyone who can read your event bus or broker can then read them."
         },
         "description": "Configure global integration settings",
         "title": "Global Settings"
@@ -400,7 +406,7 @@
         },
         "entry_id": {
           "name": "Config Entry ID",
-          "description": "The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device."
+          "description": "The entry ID of the companion to use. If you have more than one MeshCore entry, always set it. Without it, some actions use the first entry and others refuse the call."
         }
       }
     },
@@ -410,7 +416,7 @@
       "fields": {
         "entry_id": {
           "name": "Config Entry ID",
-          "description": "The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device."
+          "description": "The entry ID of the companion to use. If you have more than one MeshCore entry, always set it. Without it, some actions use the first entry and others refuse the call."
         }
       }
     },
@@ -420,15 +426,15 @@
       "fields": {
         "command": {
           "name": "Command",
-          "description": "The command with parameters to execute. Format is \"[command_name] [param1] [param2] ...\" Examples: - set_name \"MyDevice\" - send_msg \"f293ac\" \"Hello from Home Assistant!\" - get_bat - set_tx_power 20 - set_coords 37.7749 -122.4194"
+          "description": "The command with parameters to execute. Format is \"[command_name] [param1] [param2] ...\" Examples: - set_name \"MyDevice\" - send_msg \"def456\" \"Hello from Home Assistant!\" - get_bat - set_tx_power 20 - set_coords 12.345 -67.890"
         },
         "entry_id": {
           "name": "Config Entry ID",
-          "description": "The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device."
+          "description": "The entry ID of the companion to use. If you have more than one MeshCore entry, always set it. Without it, some actions use the first entry and others refuse the call."
         },
         "record_to_console": {
           "name": "Record to CLI Console",
-          "description": "Record the command and its response to the CLI Console transcript and fire the meshcore_cli_response event, so the output is visible in the UI. Requires the CLI Console to be enabled in Global Settings. Defaults to false."
+          "description": "Records the command and its response and fires the meshcore_cli_response event. The CLI Console sensor shows the transcript only when the CLI Console is enabled in Global Settings."
         }
       }
     },
@@ -438,11 +444,11 @@
       "fields": {
         "entry_id": {
           "name": "Config Entry ID",
-          "description": "The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device."
+          "description": "The entry ID of the companion to use. If you have more than one MeshCore entry, always set it. Without it, some actions use the first entry and others refuse the call."
         },
         "record_to_console": {
           "name": "Record to CLI Console",
-          "description": "Record the command and its response to the CLI Console transcript and fire the meshcore_cli_response event, so the output is visible in the UI. Requires the CLI Console to be enabled in Global Settings. Defaults to false."
+          "description": "Records the command and its response and fires the meshcore_cli_response event. The CLI Console sensor shows the transcript only when the CLI Console is enabled in Global Settings."
         }
       }
     },
@@ -462,7 +468,7 @@
       "fields": {
         "entry_id": {
           "name": "Config Entry ID",
-          "description": "The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device."
+          "description": "The entry ID of the companion to use. If you have more than one MeshCore entry, always set it. Without it, some actions use the first entry and others refuse the call."
         }
       }
     },
@@ -472,7 +478,7 @@
       "fields": {
         "entry_id": {
           "name": "Config Entry ID",
-          "description": "The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device."
+          "description": "The entry ID of the companion to use. If you have more than one MeshCore entry, always set it. Without it, some actions use the first entry and others refuse the call."
         }
       }
     },
@@ -482,11 +488,11 @@
       "fields": {
         "pubkey_prefix": {
           "name": "Public Key Prefix",
-          "description": "The public key prefix (at least 6 characters) of the contact to remove. Leave empty to use the selected contact from the discovered contact select entity."
+          "description": "The public key prefix of the contact to remove. It must match only one contact. Leave empty to use the selected contact from the discovered contact select entity."
         },
         "entry_id": {
           "name": "Config Entry ID",
-          "description": "The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device."
+          "description": "The entry ID of the companion to use. If you have more than one MeshCore entry, always set it. Without it, some actions use the first entry and others refuse the call."
         }
       }
     },
@@ -510,7 +516,7 @@
         },
         "entry_id": {
           "name": "Config Entry ID",
-          "description": "The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device."
+          "description": "The entry ID of the companion to use. If you have more than one MeshCore entry, always set it. Without it, some actions use the first entry and others refuse the call."
         }
       }
     },
@@ -524,7 +530,7 @@
         },
         "entry_id": {
           "name": "Config Entry ID",
-          "description": "The config entry ID if you have multiple MeshCore devices. Leave empty to use the first available device."
+          "description": "The entry ID of the companion to use. If you have more than one MeshCore entry, always set it. Without it, some actions use the first entry and others refuse the call."
         }
       }
     }
@@ -706,8 +712,8 @@
   "selector": {
     "traffic_policy": {
       "options": {
-        "legacy": "Legacy (unchanged)",
-        "governed": "Governed (traffic-aware)"
+        "legacy": "Legacy (deprecated, 2.x installs only)",
+        "governed": "Governed (recommended)"
       }
     },
     "contact_discovery_mode": {

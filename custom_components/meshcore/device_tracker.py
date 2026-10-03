@@ -139,7 +139,7 @@ class DeviceTrackerManager:
             contact_pubkey = extract_pubkey_hex(contact)
             if contact_pubkey.startswith(pubkey_prefix):
                 return {
-                    "name": contact.get("name", f"Node {pubkey_prefix[:6]}"),
+                    "name": contact.get("adv_name") or f"Node {pubkey_prefix[:6]}",
                     "type": "contact",
                     "pubkey_prefix": contact_pubkey
                 }
@@ -173,9 +173,9 @@ class MeshCoreGPSTracker(CoordinatorEntity, TrackerEntity):
         self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{pubkey_prefix}_gps_tracker"
         
         if node_type == "root":
-            device_name = "meshcore"
+            device_name = full_pubkey[:6]
             entity_key = "gps"
-            self.entity_id = format_entity_id("device_tracker", device_name, entity_key)
+            self.entity_id = format_entity_id("device_tracker", device_name, entity_key, sanitize_name(node_name))
         else:
             device_name = pubkey_prefix[:10]
             entity_key = "gps"
