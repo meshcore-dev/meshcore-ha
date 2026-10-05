@@ -2014,6 +2014,8 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 result = await self.api.exchange("set_manual_add_contacts", True)
                 if result and result.type != EventType.ERROR:
                     self.logger.info("Manual contact mode enabled")
+                elif result and (result.payload or {}).get("code_string") == "ERR_CODE_UNSUPPORTED_CMD":
+                    self.logger.info("Manual contact mode is not supported by this node")
                 else:
                     self.logger.error(f"Failed to set manual contact mode: {result}")
             except Exception as ex:
