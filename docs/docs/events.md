@@ -186,9 +186,9 @@ The integration fires `meshcore_message` one time for each message. This event i
 
 | Field | Type | Present | Description |
 |---|---|---|---|
-| `message` | string | Always | The text without the `Name: ` prefix when the sender is known. Otherwise, the full text. |
-| `sender_name` | string | Always | The text before the first `:` when it is the name of a contact. Otherwise `"Unknown"`. |
-| `pubkey_prefix` | string | When the sender is a contact | The first 12 hex characters of the public key of that contact |
+| `message` | string | Always | The text after the first `: `. If the text has no `: `, the full text. |
+| `sender_name` | string | Always | The text before the first `: `. `"Unknown"` if the text has no `: `. |
+| `pubkey_prefix` | string | When the sender name matches an added or discovered contact | The first 12 hex characters of the public key of that contact |
 | `channel` | string | Always | The channel name on the companion. If the channel has no name: `"public"` for channel 0, or the index as a string. |
 | `channel_idx` | integer | Always | The channel index |
 | `entity_id` | string | Always | `binary_sensor.meshcore_<pk6>_ch_<channel_idx>_messages` |

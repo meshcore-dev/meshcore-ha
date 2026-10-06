@@ -80,7 +80,7 @@ actions:
 mode: queued
 ```
 
-For a channel message from a node that is not a contact, `sender_name` is `Unknown` and `message` contains the full text.
+For a channel message, `sender_name` is the name before the first `: `, also when the sender is not a contact.
 
 ### Filter messages
 

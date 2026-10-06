@@ -250,6 +250,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self._telemetry_consecutive_failures = {}
         self._last_successful_request = {}
         self._auto_disabled_devices = set()
+        self._missing_contacts_logged: set[str] = set()
 
         # Mesh traffic policy: the lane budget every mesh request crosses, the
         # nodes currently waiting on a lane, and the governed-only store that
@@ -2232,8 +2233,16 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                 if key != "status":
                     contact = self.api.contact_by_prefix(pubkey_prefix)
                     if not contact:
-                        _LOGGER.warning(no_contact_msg, pubkey_prefix)
+                        # An offline client can be missing for days: warn once and
+                        # retry on the node's own interval, not on every tick.
+                        if pubkey_prefix not in self._missing_contacts_logged:
+                            self._missing_contacts_logged.add(pubkey_prefix)
+                            _LOGGER.warning(no_contact_msg, pubkey_prefix)
+                        due[pubkey_prefix] = current_time + self.get_device_update_interval(
+                            pubkey_prefix
+                        )
                         continue
+                    self._missing_contacts_logged.discard(pubkey_prefix)
 
                 _LOGGER.debug(start_msg, node_name)
                 tasks[pubkey_prefix] = self.config_entry.async_create_background_task(

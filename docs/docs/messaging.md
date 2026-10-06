@@ -46,7 +46,7 @@ The companion keeps incoming messages in a queue. The integration reads the queu
 | Message type | How the integration finds the sender |
 |---|---|
 | Direct | The firmware gives the public key prefix. If no contact has that prefix, `sender_name` is `null`. |
-| Channel | The packet carries `Name: message`. If the name is not a contact name, `sender_name` is `"Unknown"` and `message` holds the full text. |
+| Channel | The packet carries `Name: message`. `sender_name` is the name before the first `: `, also for senders that are not contacts. `message` is the text after it. |
 
 `pubkey_prefix` is on each incoming direct message. It is on an incoming channel message only when the sender is a contact. A text reply from a repeater to `send_cmd` also arrives as a direct message.
 

@@ -325,3 +325,28 @@ async def test_unchanged_edit_save_rearms(recorder_mock, enable_custom_integrati
     await hass.config_entries.options.async_configure(result["flow_id"], defaults)
 
     _assert_rearmed(coordinator, "001122334455")
+
+
+async def test_missing_client_contact_waits_its_interval_and_warns_once(mesh, caplog):
+    """A tracked client absent from the contact table is not retried every tick (#369)."""
+    from meshcore.events import Event, EventType
+
+    async def exchange(command, *args, **kwargs):
+        if command == "get_msg":
+            return Event(EventType.NO_MORE_MSGS, {})
+        return Event(EventType.OK, {})
+
+    mesh.api.exchange = exchange
+    coordinator = mesh.coordinator
+    for _ in range(3):
+        try:
+            await asyncio.wait_for(coordinator._async_update_data(), 5)
+        except TimeoutError:
+            raise
+        except Exception:  # noqa: BLE001 - other steps may fail on the fake radio
+            pass
+
+    message = "Could not find contact for client telemetry request: 001122334455"
+    assert caplog.text.count(message) == 1
+    due = coordinator._next_telemetry_update_times["001122334455"]
+    assert due > coordinator._current_time() + 3000

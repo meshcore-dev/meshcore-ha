@@ -222,24 +222,23 @@ async def test_an_unnamed_channel_is_shown_by_its_index(
     assert message["message_type"] == "channel"
 
 
-async def test_a_colon_in_the_body_is_not_a_sender(
+async def test_a_channel_sender_is_read_from_the_prefix(
     hass: HomeAssistant, runtime: SimpleNamespace, captured: dict
 ) -> None:
-    """Only a known contact name before the colon is read as the sender."""
-    await receive_channel_message(
-        Event(EventType.CHANNEL_MSG_RECV, {"channel_idx": 1, "text": "ETA 14:30"}),
-        runtime.coordinator,
-    )
-    await receive_channel_message(
-        Event(EventType.CHANNEL_MSG_RECV, {"channel_idx": 1, "text": "Client: Hello"}),
-        runtime.coordinator,
-    )
+    """The firmware writes "<name>: <text>"; a stranger keeps its name (#370)."""
+    for text in ("ETA 14:30", "Client: Hello", "Stranger: Hi: there"):
+        await receive_channel_message(
+            Event(EventType.CHANNEL_MSG_RECV, {"channel_idx": 1, "text": text}),
+            runtime.coordinator,
+        )
     await hass.async_block_till_done()
 
-    unprefixed, prefixed = captured[EVENT_MESSAGE]
+    unprefixed, known, stranger = captured[EVENT_MESSAGE]
     assert (unprefixed["sender_name"], unprefixed["message"]) == ("Unknown", "ETA 14:30")
-    assert (prefixed["sender_name"], prefixed["message"]) == ("Client", "Hello")
-    assert prefixed["pubkey_prefix"] == "b" * 12
+    assert (known["sender_name"], known["message"]) == ("Client", "Hello")
+    assert known["pubkey_prefix"] == "b" * 12
+    assert (stranger["sender_name"], stranger["message"]) == ("Stranger", "Hi: there")
+    assert not stranger.get("pubkey_prefix")
 
 
 async def test_a_send_says_whether_its_repeats_can_be_heard(

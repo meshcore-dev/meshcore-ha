@@ -100,7 +100,7 @@ For installs from 2.x that still use the deprecated Legacy policy, see [Legacy t
 | A message is not sent and no error shows | Most send failures do not raise an error | Trigger on `meshcore_message_send_failed` and read `reason`. See [Services](services.md#send-message). |
 | `reason: contact_not_found` | The contact is not on the companion, or the name does not match | Run `get_contacts` and check `added_to_node` |
 | A message is missing from the logbook | Not connected, **Retrieve queued incoming messages** is off, or a direct message waits for the ACK | Check the connection and the setting |
-| Sender name is `null` or `Unknown`, or a contact has no message entity | The sender is not a contact of the companion | Add the sender to the companion |
+| Direct message sender name is `null`, or a contact has no message entity | The sender is not a contact of the companion | Add the sender to the companion |
 | A phone that shares the companion gets no messages | Home Assistant reads the message queue | Disable **Retrieve queued incoming messages**. See [Share the companion with a phone](messaging.md#sharing-a-companion-with-a-phone). |
 | `set_channel` for a hashtag channel sets the wrong name | YAML read `#` as a comment | Put the full command in quotes |
 

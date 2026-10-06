@@ -75,25 +75,30 @@ def channel_label(channel_info: dict | None, channel_idx: int) -> str:
 def _split_sender(message_text: str, coordinator) -> tuple[str, str, str]:
     """Split "Name: text" into its sender, its text and the sender's key.
 
-    Channel packets carry the sender's advertised name, but message bodies
-    contain colons too, so the prefix is only read as a sender when it names a
-    contact this node knows. With no contact table to ask (link down) the
-    prefix is trusted, as it always was.
+    The firmware sends every channel message as "<name>: <text>", so the first
+    ": " separates the sender, whether or not the sender is a contact. The key
+    is filled when the name matches a contact on the companion or a discovered
+    contact.
     """
-    if not message_text or ":" not in message_text:
+    name, sep, text = (message_text or "").partition(": ")
+    name = name.strip()
+    if not sep or not name:
         return "Unknown", message_text, ""
-    name, _, text = message_text.partition(":")
-    name, text = name.strip(), text.strip()
-    if not name:
-        return "Unknown", message_text, ""
+    return name, text.strip(), _sender_key(name, coordinator)
 
+
+def _sender_key(name: str, coordinator) -> str:
+    """Return the 12-character key of the contact with this advertised name."""
     api = getattr(coordinator, "api", None)
-    if api is None or not api.connected:
-        return name, text, ""
-    contact = api.contact_by_name(name)
-    if not isinstance(contact, dict):
-        return "Unknown", message_text, ""
-    return name, text, contact.get("public_key", "")[:12]
+    if api is not None and api.connected:
+        contact = api.contact_by_name(name)
+        if isinstance(contact, dict):
+            return contact.get("public_key", "")[:12]
+    get_all = getattr(coordinator, "get_all_contacts", None)
+    for contact in get_all() if callable(get_all) else []:
+        if contact.get("adv_name") == name:
+            return contact.get("public_key", "")[:12]
+    return ""
 
 
 async def handle_channel_message(event, coordinator) -> None:
