@@ -174,6 +174,7 @@ async def test_repeater_polling_and_telemetry_continue_when_disabled():
     repeater = {"name": "station", "pubkey_prefix": "abcdef", "telemetry_enabled": True}
     coord._tracked_repeaters = [repeater]
     coord._auto_disabled_devices = set()
+    coord._missing_contacts_logged = set()
     coord._last_successful_request = {}
     coord._coordinator_start_time = 1000
     coord._active_repeater_tasks = {}
