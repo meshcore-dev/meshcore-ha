@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from homeassistant.components.sensor import SensorEntityDescription
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers import device_registry as dr
 from meshcore.events import Event, EventType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -350,3 +351,19 @@ async def test_missing_client_contact_waits_its_interval_and_warns_once(mesh, ca
     assert caplog.text.count(message) == 1
     due = coordinator._next_telemetry_update_times["001122334455"]
     assert due > coordinator._current_time() + 3000
+
+
+async def test_device_query_updates_the_registered_companion_device(hass, mesh):
+    """A device registered before the query answered gets its firmware (#306)."""
+    coordinator = mesh.coordinator
+    registry = dr.async_get(hass)
+    device = registry.async_get_or_create(
+        config_entry_id=coordinator.config_entry.entry_id, **coordinator.device_info
+    )
+    assert (device.sw_version, device.model) == ("Unknown", "Mesh Radio")
+
+    coordinator.device_info.update(sw_version="v1.17.1", model="Heltec V4")
+    coordinator._publish_device_info()
+
+    device = registry.async_get(device.id)
+    assert (device.sw_version, device.model) == ("v1.17.1", "Heltec V4")

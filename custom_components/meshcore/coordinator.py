@@ -1981,6 +1981,24 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             except Exception as ex:
                 _LOGGER.error("Error in async_flush_messages: %s", ex)
 
+    def _publish_device_info(self) -> None:
+        """Write the companion's firmware and model to its registered device.
+
+        Entities hand device_info to the registry only when they are added, so
+        a device registered before the device query answered would keep the
+        placeholders until some later entity was added to it.
+        """
+        registry = dr.async_get(self.hass)
+        device = registry.async_get_device(
+            identifiers={(DOMAIN, self.config_entry.entry_id)}
+        )
+        if device is not None:
+            registry.async_update_device(
+                device.id,
+                sw_version=self.device_info["sw_version"],
+                model=self.device_info["model"],
+            )
+
     async def _async_update_data(self) -> dict[str, Any]:
         """Fire the scheduled commands whose events drive the entities.
 
@@ -2035,6 +2053,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                         self.device_info["sw_version"] = self._firmware_version
                     if self._hardware_model:
                         self.device_info["model"] = self._hardware_model
+                    self._publish_device_info()
 
                     self.logger.info(f"Device info updated - Firmware: {self._firmware_version}, Model: {self._hardware_model}, Max Channels: {self._max_channels}")
                     self._device_info_initialized = True
