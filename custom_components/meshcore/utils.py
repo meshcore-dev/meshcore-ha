@@ -115,6 +115,16 @@ def format_entity_id(
     return f"{domain}.{sanitize_name(entity_name)}"
 
 
+# The firmware caps "<node name>: <text>" of a channel message at this many
+# bytes and cuts the rest without an error (BaseChatMesh::sendGroupMessage).
+CHANNEL_TEXT_MAX_BYTES: Final = 160
+
+
+def channel_text_budget(node_name: str) -> int:
+    """Return the UTF-8 bytes of channel text the companion sends uncut."""
+    return CHANNEL_TEXT_MAX_BYTES - len(f"{node_name}: ".encode())
+
+
 def get_channel_entity_id(
     domain: str, device_name: str, channel_idx: int, suffix: str = MESSAGES_SUFFIX
 ) -> str:

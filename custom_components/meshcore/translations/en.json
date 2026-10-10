@@ -705,6 +705,9 @@
     "command_denied": {
       "message": "The command {command} is not available through this integration: it would reset the node, replace its identity, or hand the radio raw frames"
     },
+    "channel_message_too_long": {
+      "message": "The channel message is {size} bytes. This companion can send {limit} bytes. Make the message shorter."
+    },
     "send_message_target_required": {
       "message": "send_message needs a recipient: give either node_id or pubkey_prefix"
     }

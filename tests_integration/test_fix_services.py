@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from meshcore.events import Event, EventType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -259,3 +259,19 @@ async def test_structured_get_channels_already_hides_secrets(hass, services, exp
     result = await _call(hass, "get_channels", {}, True)
     assert "secretvalue" not in str(result)
     assert result["channels"][0]["shared_secret_present"] is True
+
+
+async def test_channel_message_over_the_firmware_limit_is_refused(hass, services):
+    services.api.self_info = {"name": "Gorsag"}
+    failed = []
+    hass.bus.async_listen("meshcore_message_send_failed", lambda event: failed.append(event.data))
+    sent = lambda: [call[2] for call in services.radio.calls if call[0] == "send_chan_msg"]  # noqa: E731
+
+    await _call(hass, "send_channel_message", {"channel_idx": 1, "message": "ł" * 76})
+    assert sent() == ["ł" * 76]
+
+    with pytest.raises(ServiceValidationError):
+        await _call(hass, "send_channel_message", {"channel_idx": 1, "message": "ł" * 76 + "x"})
+    await hass.async_block_till_done()
+    assert sent() == ["ł" * 76]
+    assert [e["detail"] for e in failed if e["reason"] == "too_long"] == ["153 bytes, limit 152"]

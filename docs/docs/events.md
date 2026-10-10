@@ -122,10 +122,12 @@ sequenceDiagram
 
 #### repeats_observable
 
-The companion reports a received packet only when it fits in one serial frame (172 bytes). The integration checks the size before the send and sets `repeats_observable`:
+The companion reports a received packet only when it fits in one serial frame (176 bytes). The integration checks the size before the send and sets `repeats_observable`:
 
-- `true`: `<sender name>: <text>` is 139 bytes or less (UTF-8). The integration can hear relayed copies.
+- `true`: `<sender name>: <text>` is 155 bytes or less (UTF-8). The integration can hear relayed copies.
 - `false`: the text is longer. A `repeater_count` of 0 then means "unknown", not "not relayed". The **Last Message Delivery** sensor shows `Unconfirmed`.
+
+Companion firmware older than 1.16.0 has a frame of 172 bytes. With that firmware, a message can show `0 Repeaters` although repeaters relayed it, when `<sender name>: <text>` is 140 to 155 bytes.
 
 ### Incoming channel message
 
@@ -303,7 +305,7 @@ The integration fires `meshcore_message_sent` when the companion accepts a messa
 
 ## meshcore_message_send_failed
 
-The integration fires `meshcore_message_send_failed` when a message did not leave the companion. The service call does not raise an error, except for `traffic_policy`.
+The integration fires `meshcore_message_send_failed` when a message did not leave the companion. The service call does not raise an error, except for `traffic_policy` and `too_long`.
 
 | Field | Type | Present | Description |
 |---|---|---|---|
@@ -312,7 +314,7 @@ The integration fires `meshcore_message_send_failed` when a message did not leav
 | `timestamp` | integer | Always | Unix seconds |
 | `target` | string | Direct only | The requested recipient, for example `node_id 'myclient'` or `public key 'def456'` |
 | `channel_idx` | integer | Channel only | The requested channel index |
-| `detail` | string | `rejected`, `send_failed`, `traffic_policy` | The text from the firmware, the library or the traffic policy |
+| `detail` | string | `rejected`, `send_failed`, `traffic_policy`, `too_long` | The text from the firmware, the library or the traffic policy. For `too_long`: the size and the limit in bytes. |
 | `entry_id`, `device_id` | string | Always | See [Which companion fired the event](#which-companion-fired-the-event) |
 
 | `reason` | Cause | Service call |
@@ -322,6 +324,7 @@ The integration fires `meshcore_message_send_failed` when a message did not leav
 | `rejected` | The firmware refused the message | Returns |
 | `send_failed` | The send raised an exception | Returns |
 | `traffic_policy` | The messages lane has no credit. See [Mesh Traffic Policy](traffic-policy.md). | Raises an error |
+| `too_long` | The channel message is more than the firmware can send (channel only). See [Send Channel Message](services.md#send-channel-message). | Raises an error |
 
 No event fires when `entry_id` does not exist, or when a `send_message` call has no recipient.
 

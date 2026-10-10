@@ -51,11 +51,11 @@ def test_a_short_message_can_be_confirmed() -> None:
 
 
 def test_the_frame_limit_boundary() -> None:
-    # "Gorsag: " + 131 bytes encrypts to 144; one more byte pads to 160 and,
-    # with the largest relay overhead, no longer fits a 172-byte frame.
-    assert _repeats_observable("Gorsag", "x" * 131) is True
-    assert _repeats_observable("Gorsag", "x" * 132) is False
+    # "Gorsag: " + 147 bytes encrypts to 160; one more byte pads to 176 and,
+    # with the largest relay overhead, no longer fits a 176-byte frame.
+    assert _repeats_observable("Gorsag", "x" * 147) is True
+    assert _repeats_observable("Gorsag", "x" * 148) is False
 
 
 def test_the_limit_counts_utf8_bytes() -> None:
-    assert _repeats_observable("Gorsag", "ł" * 66) is False
+    assert _repeats_observable("Gorsag", "ł" * 74) is False

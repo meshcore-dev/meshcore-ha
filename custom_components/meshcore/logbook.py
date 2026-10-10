@@ -397,8 +397,9 @@ _MAX_COLLECTION_PASSES = 20  # well inside the 60 s outgoing-key reservation
 _REPEAT_DELAY_AIRTIMES = 2.5
 _GRP_TXT_OVERHEAD = 6  # header, path length, one path hash, channel hash, 2-byte MAC
 # The companion pushes a received packet to HA only when it fits one serial
-# frame (companion_radio MyMesh::logRxRaw: len + 3 <= MAX_FRAME_SIZE, 172).
-_COMPANION_MAX_FRAME = 172
+# frame (companion_radio MyMesh::logRxRaw: len + 3 <= MAX_FRAME_SIZE). The
+# limit is 176 from companion firmware 1.16.0; it was 172 before that.
+_COMPANION_MAX_FRAME = 176
 # The most a relayed copy carries around the ciphertext: header, path length,
 # a 4-byte path hash, 4 transport-code bytes, channel hash and 2-byte MAC.
 _RELAYED_OVERHEAD_MAX = 13

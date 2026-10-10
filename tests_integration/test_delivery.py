@@ -247,13 +247,13 @@ async def test_a_send_says_whether_its_repeats_can_be_heard(
     """Long messages are relayed but never reported back by the companion."""
     await handle_outgoing_message(CHANNEL_SEND, runtime.coordinator)
     await handle_outgoing_message(
-        {**CHANNEL_SEND, "message": "x" * 150, "send_timestamp": NOW + 1},
+        {**CHANNEL_SEND, "message": "x" * 156, "send_timestamp": NOW + 1},
         runtime.coordinator,
     )
 
     short, long = (
         [e for e in captured[EVENT_MESSAGE] if e["message"] == text][0]
-        for text in ("Hello", "x" * 150)
+        for text in ("Hello", "x" * 156)
     )
     assert short["repeats_observable"] is True
     assert long["repeats_observable"] is False

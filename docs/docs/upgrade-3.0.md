@@ -88,7 +88,7 @@ triggers:
       progressive: false
 ```
 
-A channel message event has a `repeats_observable` field. It is `false` when the sender name, `: ` and the text are more than 139 bytes. Home Assistant cannot hear repeats of such a message, so **Last Message Delivery** shows `Unconfirmed` in place of `0 Repeaters`.
+A channel message event has a `repeats_observable` field. It is `false` when the sender name, `: ` and the text are more than 155 bytes. Home Assistant cannot hear repeats of such a message, so **Last Message Delivery** shows `Unconfirmed` in place of `0 Repeaters`.
 
 ### meshcore_message_send_failed
 

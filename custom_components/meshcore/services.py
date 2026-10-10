@@ -11,7 +11,7 @@ from typing import Any, Final, cast
 import voluptuous as vol
 from homeassistant.const import MAJOR_VERSION, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import Context, HomeAssistant, ServiceCall, SupportsResponse
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.service import async_register_admin_service
@@ -65,7 +65,7 @@ from .traffic import (
     OP_TRACE,
     classify_lane,
 )
-from .utils import extract_pubkey_from_selection
+from .utils import channel_text_budget, extract_pubkey_from_selection
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -701,6 +701,23 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     _LOGGER.debug(
                         "Sending message to channel %s: %s", channel_idx, message
                     )
+
+                    size = len(message.encode())
+                    limit = channel_text_budget(api.node_name)
+                    if size > limit:
+                        _fire_send_failed(
+                            hass,
+                            coordinator,
+                            reason="too_long",
+                            message_type="channel",
+                            channel_idx=channel_idx,
+                            detail=f"{size} bytes, limit {limit}",
+                        )
+                        raise ServiceValidationError(
+                            translation_domain=DOMAIN,
+                            translation_key="channel_message_too_long",
+                            translation_placeholders={"size": str(size), "limit": str(limit)},
+                        )
 
                     try:
                         coordinator.require_mesh_budget(classify_lane(OP_CHANNEL_MESSAGE))

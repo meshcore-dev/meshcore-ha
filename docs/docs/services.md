@@ -132,7 +132,8 @@ data:
 
 - With `scope`, the integration sets the flood scope on the companion, sends the message, then resets the scope. It also resets the scope after a failed send.
 - If the companion refuses the scope, the integration logs a warning and sends the message without a scope.
-- A failed send fires `meshcore_message_send_failed` with `message_type: channel`. The `reason` values are the same as for `send_message`, except `contact_not_found`.
+- The firmware sends a maximum of 160 bytes (UTF-8) for the companion name, `: ` and the text together. For a companion name of 11 bytes, the text limit is 147 bytes. An emoji is 4 bytes or more. If the text is longer, the call fails with an error and the companion does not send the message.
+- A failed send fires `meshcore_message_send_failed` with `message_type: channel`. The `reason` values are the same as for `send_message`, except `contact_not_found`, plus `too_long`.
 
 ## Send UI Message
 

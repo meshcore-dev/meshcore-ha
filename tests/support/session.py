@@ -33,6 +33,11 @@ class StubSession:
         self.contacts_reported_at = 0.0
         self.__dict__.update(attributes)
 
+    @property
+    def node_name(self) -> str:
+        """Return the node name from SELF_INFO, as the real session does."""
+        return str(self.self_info.get("name", "") or "").strip()
+
     def command_parameters(self, name: str) -> list[str] | None:
         """Return a scripted command's parameter names, None when it has none."""
         command = None if name.startswith("_") else getattr(self.commands, name, None)
