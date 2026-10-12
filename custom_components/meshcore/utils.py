@@ -11,6 +11,8 @@ import sys
 from typing import Any, Final
 
 from Crypto.Cipher import AES
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from homeassistant.util import slugify
 
 from .const import BAT_VMAX, BAT_VMIN, CHANNEL_PREFIX, DOMAIN, MESSAGES_SUFFIX, NodeType
@@ -113,6 +115,31 @@ def format_entity_id(
 
     # Format as domain.entity_name
     return f"{domain}.{sanitize_name(entity_name)}"
+
+
+def find_device(hass: HomeAssistant, entry_id: str, identifier: str) -> dr.DeviceEntry | None:
+    """Return this entry's device with the given identifier.
+
+    Newer Home Assistant keys identifiers per config entry and deprecates the
+    lookup that ignores the entry; older releases only have that lookup.
+    """
+    registry = dr.async_get(hass)
+    lookup = getattr(registry, "async_get_device_by_identifier", None)
+    if lookup is not None:
+        return lookup((DOMAIN, identifier), entry_id)
+    return registry.async_get_device(identifiers={(DOMAIN, identifier)})
+
+
+def via_companion(hass: HomeAssistant, entry_id: str) -> dict[str, Any]:
+    """Return the DeviceInfo field that links a node's device to its companion.
+
+    Newer Home Assistant takes the companion's registry id (via_device_id);
+    older releases only know the identifier pair (via_device).
+    """
+    if "via_device_id" not in getattr(dr.DeviceInfo, "__annotations__", {}):
+        return {"via_device": (DOMAIN, entry_id)}
+    device = find_device(hass, entry_id, entry_id)
+    return {"via_device_id": device.id} if device is not None else {}
 
 
 # The firmware caps "<node name>: <text>" of a channel message at this many

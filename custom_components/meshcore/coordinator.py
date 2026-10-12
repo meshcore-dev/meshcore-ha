@@ -73,7 +73,7 @@ from .traffic import (
     should_login,
     should_reset_path,
 )
-from .utils import warn_deprecated_internal
+from .utils import find_device, warn_deprecated_internal
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -1297,7 +1297,7 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         """
         device_id = f"{self.config_entry.entry_id}_{node_type}_{pubkey_prefix}"
         device_registry = dr.async_get(self.hass)
-        device = device_registry.async_get_device(identifiers={(DOMAIN, device_id)})
+        device = find_device(self.hass, self.config_entry.entry_id, device_id)
         if device is not None:
             entity_registry = er.async_get(self.hass)
             removed = [
@@ -1989,9 +1989,8 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         placeholders until some later entity was added to it.
         """
         registry = dr.async_get(self.hass)
-        device = registry.async_get_device(
-            identifiers={(DOMAIN, self.config_entry.entry_id)}
-        )
+        entry_id = self.config_entry.entry_id
+        device = find_device(self.hass, entry_id, entry_id)
         if device is not None:
             registry.async_update_device(
                 device.id,

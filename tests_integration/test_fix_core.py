@@ -367,3 +367,33 @@ async def test_device_query_updates_the_registered_companion_device(hass, mesh):
 
     device = registry.async_get(device.id)
     assert (device.sw_version, device.model) == ("v1.17.1", "Heltec V4")
+
+
+def test_device_helpers_use_the_entry_scoped_registry_api(monkeypatch):
+    """Newer Home Assistant gets the entry-scoped lookup and via_device_id."""
+    from custom_components.meshcore import utils
+
+    registry = MagicMock()
+    registry.async_get_device_by_identifier.return_value = SimpleNamespace(id="hub-id")
+    monkeypatch.setattr(utils.dr, "async_get", lambda hass: registry)
+    monkeypatch.setattr(
+        utils.dr, "DeviceInfo", SimpleNamespace(__annotations__={"via_device_id": str})
+    )
+
+    assert utils.via_companion(None, "entry") == {"via_device_id": "hub-id"}
+    registry.async_get_device_by_identifier.assert_called_once_with(("meshcore", "entry"), "entry")
+    registry.async_get_device.assert_not_called()
+
+
+def test_device_helpers_fall_back_on_older_home_assistant(monkeypatch):
+    from custom_components.meshcore import utils
+
+    registry = MagicMock(spec=["async_get_device"])
+    monkeypatch.setattr(utils.dr, "async_get", lambda hass: registry)
+    monkeypatch.setattr(utils.dr, "DeviceInfo", SimpleNamespace(__annotations__={}))
+
+    assert utils.via_companion(None, "entry") == {"via_device": ("meshcore", "entry")}
+    utils.find_device(None, "entry", "entry_repeater_aa")
+    registry.async_get_device.assert_called_once_with(
+        identifiers={("meshcore", "entry_repeater_aa")}
+    )

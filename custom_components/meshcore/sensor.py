@@ -14,6 +14,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.device_registry import async_entries_for_config_entry
 from homeassistant.helpers.device_registry import async_get as async_get_device_registry
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -42,6 +43,7 @@ from .utils import (
     calculate_battery_percentage,
     format_entity_id,
     sanitize_name,
+    via_companion,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -622,7 +624,7 @@ async def async_setup_entry(
         active_repeater_device_ids.add(device_id)
 
     # Find and remove any repeater devices that are no longer in the configuration
-    for device in list(device_registry.devices.values()):
+    for device in async_entries_for_config_entry(device_registry, entry.entry_id):
         # Check if this is a device from this integration
         for identifier in device.identifiers:
             if identifier[0] == DOMAIN:
@@ -1499,7 +1501,7 @@ class MeshCoreReliabilitySensor(CoordinatorEntity, SensorEntity):
             "name": device_name,
             "manufacturer": "MeshCore",
             "model": f"Mesh {node_type.title()}",
-            "via_device": (DOMAIN, coordinator.config_entry.entry_id),
+            **via_companion(coordinator.hass, coordinator.config_entry.entry_id),
         }
         self._attr_device_info = DeviceInfo(**device_info)
 
@@ -1568,7 +1570,7 @@ class MeshCorePathSensor(CoordinatorEntity, SensorEntity):
             "name": device_name,
             "manufacturer": "MeshCore",
             "model": f"Mesh {node_type.title()}",
-            "via_device": (DOMAIN, coordinator.config_entry.entry_id),  # Link to the main device
+            **via_companion(coordinator.hass, coordinator.config_entry.entry_id),
         }
 
         self._attr_device_info = DeviceInfo(**device_info)
@@ -1660,7 +1662,7 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
             "manufacturer": "MeshCore",
             "model": "Mesh Repeater",
             "sw_version": coordinator.repeater_firmware(self.public_key),
-            "via_device": (DOMAIN, coordinator.config_entry.entry_id),  # Link to the main device
+            **via_companion(coordinator.hass, coordinator.config_entry.entry_id),
         }
 
         self._attr_device_info = DeviceInfo(**device_info)
@@ -1965,7 +1967,7 @@ class MeshCoreNeighborSensor(CoordinatorEntity, SensorEntity):
             name=device_name,
             manufacturer="MeshCore",
             model="Mesh Repeater",
-            via_device=(DOMAIN, coordinator.config_entry.entry_id),
+            **via_companion(coordinator.hass, coordinator.config_entry.entry_id),
         )
 
     def _update_friendly_name(self):
@@ -2103,7 +2105,7 @@ class MeshCoreNeighborSeenSensor(CoordinatorEntity, SensorEntity):
             name=device_name,
             manufacturer="MeshCore",
             model="Mesh Repeater",
-            via_device=(DOMAIN, coordinator.config_entry.entry_id),
+            **via_companion(coordinator.hass, coordinator.config_entry.entry_id),
         )
 
     def _update_friendly_name(self):
@@ -2193,7 +2195,7 @@ class MeshCoreNeighborCountSensor(CoordinatorEntity, SensorEntity):
             name=device_name,
             manufacturer="MeshCore",
             model="Mesh Repeater",
-            via_device=(DOMAIN, coordinator.config_entry.entry_id),
+            **via_companion(coordinator.hass, coordinator.config_entry.entry_id),
         )
 
     @property

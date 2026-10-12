@@ -61,6 +61,7 @@ from .radio import RadioSession
 from .services import async_setup_services, async_unload_services
 from .utils import (
     create_message_correlation_key,
+    find_device,
     load_flood_scope_keys,
     match_flood_scope,
     parse_and_decrypt_rx_log,
@@ -188,9 +189,7 @@ def _move_firmware_to_device_registry(
             prefix = record.get("pubkey_prefix")
             if not version or not prefix:
                 continue
-            device = device_registry.async_get_device(
-                identifiers={(DOMAIN, f"{entry.entry_id}_repeater_{prefix}")}
-            )
+            device = find_device(hass, entry.entry_id, f"{entry.entry_id}_repeater_{prefix}")
             if device is not None and not device.sw_version:
                 device_registry.async_update_device(device.id, sw_version=version)
 
@@ -659,6 +658,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Restore node schedules so a restart does not re-poll the whole mesh
         # (governed policy only; legacy has never persisted schedule state).
         await coordinator.async_load_traffic_state()
+
+        # The companion device exists before any platform runs, so a node's
+        # device can link to it by registry id.
+        dr.async_get(hass).async_get_or_create(
+            config_entry_id=entry.entry_id, **coordinator.device_info
+        )
 
         # Set up all platforms for this device
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

@@ -19,9 +19,11 @@ class _EventType:
 
 
 sys.modules["meshcore.events"].EventType = _EventType
-# The helper reads records through the real settings codec, so load both for real.
+# The helper reads records through the real settings codec and finds its device
+# through the real lookup helper, so load them for real.
 load_module("const")
 load_module("config")
+load_module("utils")
 
 _SPEC = importlib.util.spec_from_file_location(
     "custom_components.meshcore.repeater_firmware",
@@ -131,7 +133,7 @@ def _hass_for(entry, device):
     coordinator.set_repeater_firmware = MagicMock()
     hass.data = {"meshcore": {entry.entry_id: coordinator}}
     registry = MagicMock()
-    registry.async_get_device.return_value = device
+    registry.async_get_device_by_identifier.return_value = device
     _MODULE.dr.async_get.return_value = registry
     return hass, registry
 
@@ -169,8 +171,8 @@ async def test_refresh_updates_config_and_repeater_device() -> None:
         "aabbccddeeff", version
     )
     hass.config_entries.async_update_entry.assert_not_called()
-    registry.async_get_device.assert_called_once_with(
-        identifiers={("meshcore", "hub-one_repeater_aabbccddeeff")}
+    registry.async_get_device_by_identifier.assert_called_once_with(
+        ("meshcore", "hub-one_repeater_aabbccddeeff"), "hub-one"
     )
     registry.async_update_device.assert_called_once_with("repeater-device", sw_version=version)
 
@@ -306,6 +308,6 @@ async def test_refresh_targets_only_supplied_hub_entry() -> None:
         "aabbccddeeff", "1.14.2 (Build: 2026-09-18)"
     )
     assert other.data["repeater_subscriptions"][0]["firmware_version"] == "9.9.9"
-    registry.async_get_device.assert_called_once_with(
-        identifiers={("meshcore", "hub-one_repeater_aabbccddeeff")}
+    registry.async_get_device_by_identifier.assert_called_once_with(
+        ("meshcore", "hub-one_repeater_aabbccddeeff"), "hub-one"
     )

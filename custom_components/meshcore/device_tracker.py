@@ -27,6 +27,7 @@ from .utils import (
     get_device_model,
     sanitize_name,
     telemetry_pubkey_prefix,
+    via_companion,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -193,7 +194,11 @@ class MeshCoreGPSTracker(CoordinatorEntity, TrackerEntity):
             name=device_name,
             manufacturer="MeshCore",
             model=device_model,
-            via_device=(DOMAIN, coordinator.config_entry.entry_id) if node_type != "root" else None,
+            **(
+                via_companion(coordinator.hass, coordinator.config_entry.entry_id)
+                if node_type != "root"
+                else {}
+            ),
         )
         
         self._latitude = None

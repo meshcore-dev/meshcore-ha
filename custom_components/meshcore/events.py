@@ -17,9 +17,9 @@ from typing import Any, Final
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr
 
 from .const import DOMAIN, EVENT_CLI_RESPONSE
+from .utils import find_device
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -85,7 +85,7 @@ def _device_id(hass: HomeAssistant, entry: ConfigEntry) -> str | None:
     reads as unknown rather than raising inside an event producer.
     """
     try:
-        device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, entry.entry_id)})
+        device = find_device(hass, entry.entry_id, entry.entry_id)
     except Exception:
         return None
     device_id = getattr(device, "id", None)

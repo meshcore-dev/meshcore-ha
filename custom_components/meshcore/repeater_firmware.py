@@ -14,6 +14,7 @@ from meshcore.events import EventType
 
 from .config import Settings
 from .const import DOMAIN
+from .utils import find_device
 
 _LOGGER = logging.getLogger(__name__)
 # CommonCLI formats `ver` as "<firmware> (Build: <date>)".
@@ -118,8 +119,9 @@ def async_save_repeater_firmware_version(
         return False
 
     device_registry = dr.async_get(hass)
-    identifier = (DOMAIN, f"{config_entry.entry_id}_repeater_{pubkey_prefix}")
-    device = device_registry.async_get_device(identifiers={identifier})
+    device = find_device(
+        hass, config_entry.entry_id, f"{config_entry.entry_id}_repeater_{pubkey_prefix}"
+    )
     if not device:
         raise RepeaterFirmwareRefreshError(
             "repeater device-registry entry was not found"

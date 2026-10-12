@@ -37,6 +37,7 @@ from .utils import (
     get_device_model,
     sanitize_name,
     telemetry_pubkey_prefix,
+    via_companion,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -647,10 +648,10 @@ class MeshCoreTelemetrySensor(CoordinatorEntity, SensorEntity):
             name=device_name,
             manufacturer="MeshCore",
             model=device_model,
-            via_device=(
-                (DOMAIN, coordinator.config_entry.entry_id)
+            **(
+                via_companion(coordinator.hass, coordinator.config_entry.entry_id)
                 if node_type != "root"
-                else None
+                else {}
             ),
         )
 
