@@ -39,6 +39,24 @@ Traffic policy decisions, uploads and route changes also show at the `info` leve
 
 CAUTION: Disable debug logging after the diagnosis. Debug logging makes the log file large.
 
+## Download diagnostics
+
+The diagnostics file shows the state of one companion entry. Attach it to a GitHub issue together with the debug log.
+
+1. Go to **Settings > Devices & services > MeshCore**.
+2. Open the three-dot menu of the entry.
+3. Select **Download diagnostics**.
+
+The file contains:
+
+- The integration and Home Assistant versions, and the entry settings.
+- The connection: type, status, firmware, model and node name.
+- The traffic policy: the credits of each lane and the nodes that wait for a credit.
+- For each tracked repeater and client: the update interval, the time of the next poll, the failures in sequence, the auto-disable status, the route and the request counts.
+- The number of contacts, entities and devices, and the size of each runtime store.
+
+The integration removes passwords, private keys, channel secrets, tokens, MQTT user names and email addresses from the file. Examine the file before you attach it.
+
 ## Connection
 
 | Symptom | Cause | Fix |

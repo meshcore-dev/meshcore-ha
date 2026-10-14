@@ -218,4 +218,6 @@ The **Request Rate Limiter** sensor, for example `sensor.meshcore_abc123_rate_li
 
 The recorder does not save the credit, next-eligible or `deferred_nodes` attributes.
 
+To share the budget and the schedule of each node, download the diagnostics. See [Download diagnostics](troubleshooting.md#download-diagnostics).
+
 At the `info` log level, the integration also logs `Successfully reset path for <name>`, `Rediscovered path to <name> on attempt <n>: <hops> hops` and `No route to <name> after 3 path discoveries`.
