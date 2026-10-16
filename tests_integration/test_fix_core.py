@@ -397,3 +397,18 @@ def test_device_helpers_fall_back_on_older_home_assistant(monkeypatch):
     registry.async_get_device.assert_called_once_with(
         identifiers={("meshcore", "entry_repeater_aa")}
     )
+
+
+async def test_missing_repeater_contact_waits_its_interval_and_warns_once(mesh, monkeypatch, caplog):
+    """A tracked repeater absent from the contact table is not retried every tick."""
+    monkeypatch.setattr(coordinator_module, "MAX_RANDOM_DELAY", 0)
+    monkeypatch.setattr(mesh.api, "contact_by_prefix", lambda prefix: None)
+    coordinator = mesh.coordinator
+    record = coordinator.settings.repeater_records[0]
+    for _ in range(2):
+        await coordinator._update_repeater(record)
+
+    message = f"Could not find repeater contact with pubkey_prefix: {PREFIX}"
+    assert caplog.text.count(message) == 1
+    due = coordinator._next_repeater_update_times[PREFIX]
+    assert due >= coordinator._current_time() + 7200 - 5

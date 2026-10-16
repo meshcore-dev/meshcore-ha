@@ -1644,9 +1644,18 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         try:
             contact = self.api.contact_by_prefix(pubkey_prefix)
             if not contact:
-                # A contact we cannot find was never asked, so it never failed.
-                self.logger.warning(f"Could not find repeater contact with pubkey_prefix: {pubkey_prefix}")
+                # A contact we cannot find was never asked, so it never failed:
+                # warn once and wait the node's own interval, not one tick.
+                if pubkey_prefix not in self._missing_contacts_logged:
+                    self._missing_contacts_logged.add(pubkey_prefix)
+                    self.logger.warning(
+                        "Could not find repeater contact with pubkey_prefix: %s", pubkey_prefix
+                    )
+                self._next_repeater_update_times[pubkey_prefix] = (
+                    self._current_time() + update_interval
+                )
                 return
+            self._missing_contacts_logged.discard(pubkey_prefix)
 
             failure_count = self._repeater_consecutive_failures.get(pubkey_prefix, 0)
             has_path = contact.get("out_path_len", -1) > -1

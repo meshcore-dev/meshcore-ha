@@ -121,6 +121,29 @@ async def test_subscriptions_survive_a_reconnect(hass: HomeAssistant) -> None:
     second.assert_no_leaked_tasks()
 
 
+async def test_contacts_survive_a_reconnect(hass: HomeAssistant) -> None:
+    """A rebuilt instance answers lookups before the node resends its table."""
+    first = await _fresh_radio()
+    second = await _fresh_radio()
+    contact = {"public_key": "ab" * 32, "adv_name": "Repeater"}
+    first.contacts = {contact["public_key"]: contact}
+
+    with (
+        patch.object(radio_module, "RECONNECT_BACKOFF", (0.01,)),
+        patch.object(radio_module.MeshCore, "create_tcp", side_effect=[first, second]),
+    ):
+        session = RadioSession(hass, "tcp", tcp_host="fixture.invalid")
+        assert await session.start()
+
+        await first.drop_link()
+        await _wait_connected(session)
+
+        assert session.contact_by_prefix("ab" * 6) == contact
+        assert second.contacts_dirty, "the carried table must still be refetched"
+
+        await session.close()
+
+
 async def test_unsubscribe_removes_the_registration_for_good(hass: HomeAssistant) -> None:
     """An unsubscribed handler is not replayed onto the next dispatcher."""
     first = await _fresh_radio()

@@ -112,6 +112,7 @@ class RadioSession(MeshCommands):
         self.self_info: dict[str, Any] = {}
 
         self._mesh_core: MeshCore | None = None
+        self._carried_contacts: dict[str, dict[str, Any]] = {}
         self._contacts_reported_at = 0.0
         self._connected = False
         self._closing = False
@@ -433,7 +434,21 @@ class RadioSession(MeshCommands):
 
         self._mesh_core = mesh_core
         self._started = True
+        self._seed_contacts(mesh_core)
         return True
+
+    def _seed_contacts(self, mesh_core: MeshCore) -> None:
+        """Give a reconnected instance the contact table the dead one held.
+
+        Each reconnect builds a new SDK instance with an empty table, and every
+        contact lookup would miss until the node resends it, which a large
+        table on a slow link may not do for minutes. The table is marked stale
+        so the next contact sync still replaces it from the node.
+        """
+        carried, self._carried_contacts = self._carried_contacts, {}
+        if carried and not getattr(mesh_core, "_contacts", None):
+            mesh_core._contacts = carried
+            mesh_core._contacts_dirty = True
 
     async def _create(self) -> MeshCore | None:
         """Build the SDK instance for the configured transport, bounded in time.
@@ -581,6 +596,7 @@ class RadioSession(MeshCommands):
         mesh_core, self._mesh_core = self._mesh_core, None
         self._detach_all()
         if mesh_core is not None:
+            self._carried_contacts = dict(getattr(mesh_core, "_contacts", None) or {})
             await self._shutdown_instance(mesh_core, CLOSE_DEADLINE)
 
         attempt = 0
