@@ -134,6 +134,7 @@ class MeshCoreMqttUploader:
         self._packet_dedupe_ttl_seconds = 1.0
         self._status_refresh_interval_seconds = 300
         self._status_refresh_task: asyncio.Task[None] | None = None
+        self._stopped = False
         # One queue and one consumer for the whole entry: every radio event
         # used to get its own task and executor hop, whether or not a broker
         # was reachable.
@@ -400,6 +401,11 @@ class MeshCoreMqttUploader:
                 client.loop_start()
             except Exception as ex:
                 self.logger.error("[%s] Connection error: %s", broker.name, ex)
+        # An unload can stop the uploader while a connect above is pending;
+        # the clients made since then and the loops below must not outlive it.
+        if self._stopped:
+            await self.async_stop()
+            return
         if self._status_refresh_task is None or self._status_refresh_task.done():
             self._status_refresh_task = asyncio.create_task(
                 self._async_status_refresh_loop(),
@@ -1300,6 +1306,7 @@ class MeshCoreMqttUploader:
 
     async def async_stop(self) -> None:
         """Stop all MQTT clients after publishing offline status."""
+        self._stopped = True
         for attribute in ("_status_refresh_task", "_publish_task"):
             task = getattr(self, attribute)
             if task and not task.done():

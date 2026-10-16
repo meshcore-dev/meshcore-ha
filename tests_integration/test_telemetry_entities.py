@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from meshcore.lpp_json_encoder import my_lpp_types
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -35,7 +36,11 @@ def _manager(hass: HomeAssistant) -> TelemetrySensorManager:
     platform = MockEntityPlatform(hass, domain="sensor", platform_name=DOMAIN)
     platform.config_entry = config_entry
 
+    dr.async_get(hass).async_get_or_create(
+        config_entry_id=config_entry.entry_id, identifiers={(DOMAIN, config_entry.entry_id)}
+    )
     coordinator = MagicMock()
+    coordinator.hass = hass
     coordinator.config_entry = config_entry
     coordinator.pubkey = ROOT_PUBKEY
     coordinator.name = "Hub"

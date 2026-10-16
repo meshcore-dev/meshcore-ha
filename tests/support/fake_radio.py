@@ -20,8 +20,11 @@ class FakeRadio:
     Unscripted commands fail immediately so accidental I/O cannot be hidden.
     """
 
+    instances: list["FakeRadio"] = []
+
     def __init__(self) -> None:
         """Initialize a disconnected radio without spawning tasks."""
+        FakeRadio.instances.append(self)
         self.dispatcher = EventDispatcher()
         self._dispatchers = [self.dispatcher]
         self.connected = False
@@ -166,6 +169,26 @@ class FakeRadio:
     async def disconnect(self) -> None:
         """Provide the SDK disconnect surface for API lifecycle tests."""
         await self.close()
+
+    @classmethod
+    async def release_all(cls) -> None:
+        """Stop every dispatcher a test left running, then forget the radios.
+
+        A test that never closes its radio would otherwise leave the SDK's
+        worker task behind for Home Assistant's lingering-task check.
+        """
+        tasks = []
+        for radio in cls.instances:
+            for dispatcher in radio._dispatchers:
+                dispatcher.running = False
+                tasks.extend(dispatcher._background_tasks)
+                if dispatcher._task is not None:
+                    tasks.append(dispatcher._task)
+        cls.instances.clear()
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     def assert_no_leaked_tasks(self) -> None:
         """Check all dispatcher generations, including retired callbacks."""

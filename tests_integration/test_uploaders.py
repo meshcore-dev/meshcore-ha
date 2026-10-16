@@ -279,3 +279,29 @@ async def test_two_adverts_never_export_the_key_at_once(
     assert await first is True
     assert await second is True
     assert api.exchange.await_count == 1
+
+
+async def test_a_stop_during_connect_leaves_no_loops(hass: HomeAssistant) -> None:
+    """An unload that lands while a broker connect is pending ends the uploader."""
+    uploader = _uploader(hass, connected=False)
+    uploader._clients = []
+    client = MagicMock()
+    release = asyncio.Event()
+
+    async def slow_connect(*_args: Any) -> None:
+        await release.wait()
+
+    with (
+        patch.object(uploader, "_async_create_client", AsyncMock(return_value=client)),
+        patch.object(hass, "async_add_executor_job", side_effect=slow_connect),
+    ):
+        start = asyncio.create_task(uploader.async_start())
+        await asyncio.sleep(0)
+        await uploader.async_stop()
+        release.set()
+        await start
+
+    assert uploader._status_refresh_task is None
+    assert uploader._publish_task is None
+    assert uploader._clients == []
+    client.loop_stop.assert_called()

@@ -1,0 +1,12 @@
+# Integration-tier test deps against current Home Assistant (2026.10.x, Python
+# 3.14). Same runtime deps as requirements-test-integration.txt, which keeps the
+# older pin so both ends of the supported range are tested. Bump the phcc pin by
+# hand: dependabot ignores phcc for both files (see .github/dependabot.yml).
+pytest-homeassistant-custom-component==0.13.372
+# Pulled in because the integration depends on logbook -> frontend.
+home-assistant-frontend
+meshcore>=2.3.15
+pycryptodome>=3.24.0
+cachetools>=7.2.0
+paho-mqtt>=2.1.0
+pynacl>=1.6.2

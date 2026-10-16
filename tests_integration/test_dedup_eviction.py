@@ -20,6 +20,7 @@ registration the key persists after removal and these tests fail.
 from unittest.mock import MagicMock
 
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -36,14 +37,18 @@ from custom_components.meshcore.telemetry_sensor import TelemetrySensorManager
 PUBKEY_PREFIX = "a1b2c3d4e5f6"
 
 
-def _coordinator(config_entry):
+def _coordinator(hass, config_entry):
     """A coordinator stub exposing only the attributes the handlers read.
 
     get_device_update_interval returns a real number because the entities'
     ``available`` property does arithmetic with it during the initial state
     write.
     """
+    dr.async_get(hass).async_get_or_create(
+        config_entry_id=config_entry.entry_id, identifiers={(DOMAIN, config_entry.entry_id)}
+    )
     coordinator = MagicMock()
+    coordinator.hass = hass
     coordinator.config_entry = config_entry
     coordinator.pubkey = ""
     coordinator.name = "Test Root"
@@ -66,7 +71,7 @@ async def test_telemetry_sensor_evicted_on_entity_removal(hass: HomeAssistant):
     config_entry.add_to_hass(hass)
     platform = _platform(hass, config_entry, "sensor")
     manager = TelemetrySensorManager(
-        _coordinator(config_entry), platform._async_schedule_add_entities
+        _coordinator(hass, config_entry), platform._async_schedule_add_entities
     )
 
     event = MagicMock()
@@ -99,7 +104,7 @@ async def test_gps_tracker_evicted_on_entity_removal(hass: HomeAssistant):
     config_entry.add_to_hass(hass)
     platform = _platform(hass, config_entry, "device_tracker")
     manager = DeviceTrackerManager(
-        _coordinator(config_entry), platform._async_schedule_add_entities
+        _coordinator(hass, config_entry), platform._async_schedule_add_entities
     )
 
     event = MagicMock()

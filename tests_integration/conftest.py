@@ -14,9 +14,23 @@ import logging
 import os
 import sys
 
+import pytest_asyncio
+
 # Ensure the repo root (which contains custom_components/) is importable.
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 # The recorder (pulled in via the logbook dependency) emits very chatty
 # SQL/engine logging during setup; keep test output readable.
 logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _release_fake_radios(verify_cleanup):
+    """Stop leftover FakeRadio dispatchers before the lingering-task check runs.
+
+    Depending on ``verify_cleanup`` orders this fixture's teardown first.
+    """
+    from tests.support.fake_radio import FakeRadio
+
+    yield
+    await FakeRadio.release_all()

@@ -11,7 +11,6 @@ from unittest.mock import patch
 import pytest
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -19,6 +18,7 @@ from custom_components.meshcore import PLATFORMS, async_update_options
 from custom_components.meshcore.const import DOMAIN
 from custom_components.meshcore.coordinator import MeshCoreDataUpdateCoordinator
 from custom_components.meshcore.radio import RadioSession
+from custom_components.meshcore.utils import find_device
 from tests.support.fake_radio import FakeRadio
 
 CONTRACTS = Path(__file__).with_name("contracts")
@@ -222,7 +222,7 @@ def _registered(hass: HomeAssistant, unique_id_prefix: str) -> dict[str, str]:
 
 def _device(hass: HomeAssistant, identifier: str) -> Any:
     """Look one node device up by its MeshCore identifier."""
-    return dr.async_get(hass).async_get_device(identifiers={(DOMAIN, identifier)})
+    return find_device(hass, "contract", identifier)
 
 
 async def test_adding_a_repeater_builds_the_entities_a_reload_would(
