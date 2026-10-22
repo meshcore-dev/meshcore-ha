@@ -768,39 +768,40 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         return matches[0] if len(matches) == 1 else None
 
     def _show_repeater_settings(self, errors=None):
-        """Keep the selected identity and every entered value after a failed attempt."""
+        """Helper to show repeater form with current values preserved."""
+        if errors is None:
+            errors = {}
+
+        user_input = self._repeater_input
         contact = self._selected_repeater_contact()
-        values = self._repeater_input or {}
-        path = values.get("repeater_path", contact_path(contact or {}))
+        default_path = contact_path(contact or {})
+
+        # Get values from user_input or use defaults
+        default_password = ""
+        default_interval = DEFAULT_REPEATER_UPDATE_INTERVAL
+        default_telemetry = False
+        default_disable_path_reset = False
+        default_neighbors_enabled = False
+
+        if user_input:
+            default_path = user_input.get("repeater_path", default_path)
+            default_password = user_input.get(CONF_REPEATER_PASSWORD, "")
+            default_interval = user_input.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
+            default_telemetry = user_input.get(CONF_REPEATER_TELEMETRY_ENABLED, False)
+            default_disable_path_reset = user_input.get(CONF_REPEATER_DISABLE_PATH_RESET, False)
+            default_neighbors_enabled = user_input.get(CONF_REPEATER_NEIGHBORS_ENABLED, False)
+
         return self.async_show_form(
             step_id="repeater_settings",
-            data_schema=vol.Schema(
-                {
-                    vol.Optional("repeater_path", default=path): str,
-                    vol.Optional(
-                        CONF_REPEATER_PASSWORD, default=values.get(CONF_REPEATER_PASSWORD, "")
-                    ): _password_selector(),
-                    vol.Optional(
-                        CONF_REPEATER_TELEMETRY_ENABLED,
-                        default=values.get(CONF_REPEATER_TELEMETRY_ENABLED, False),
-                    ): bool,
-                    vol.Optional(
-                        CONF_REPEATER_NEIGHBORS_ENABLED,
-                        default=values.get(CONF_REPEATER_NEIGHBORS_ENABLED, False),
-                    ): bool,
-                    vol.Optional(
-                        CONF_REPEATER_UPDATE_INTERVAL,
-                        default=values.get(
-                            CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL
-                        ),
-                    ): vol.All(cv.positive_int, vol.Range(min=MIN_UPDATE_INTERVAL)),
-                    vol.Optional(
-                        CONF_REPEATER_DISABLE_PATH_RESET,
-                        default=values.get(CONF_REPEATER_DISABLE_PATH_RESET, False),
-                    ): bool,
-                }
-            ),
-            errors=errors or {},
+            data_schema=vol.Schema({
+                vol.Optional("repeater_path", default=default_path): str,
+                vol.Optional(CONF_REPEATER_PASSWORD, default=default_password): _password_selector(),
+                vol.Optional(CONF_REPEATER_TELEMETRY_ENABLED, default=default_telemetry): bool,
+                vol.Optional(CONF_REPEATER_NEIGHBORS_ENABLED, default=default_neighbors_enabled): bool,
+                vol.Optional(CONF_REPEATER_UPDATE_INTERVAL, default=default_interval): vol.All(cv.positive_int, vol.Range(min=MIN_UPDATE_INTERVAL)),
+                vol.Optional(CONF_REPEATER_DISABLE_PATH_RESET, default=default_disable_path_reset): bool,
+            }),
+            errors=errors,
             description_placeholders={
                 "device_name": self._selected_repeater_name,
                 "pubkey_prefix": self._selected_repeater,
@@ -809,7 +810,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         )
 
     async def async_step_repeater_settings(self, user_input=None):
-        """Save a discovered contact and optional route, then try login up to three times."""
+        """Save the selected contact and route, then attempt login once."""
         if user_input is None:
             return self._show_repeater_settings()
         self._repeater_input = dict(user_input)
@@ -818,97 +819,91 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         except ValueError:
             return self._show_repeater_settings({"repeater_path": "invalid_path"})
 
+        pubkey_prefix = self._selected_repeater
+        repeater_name = self._selected_repeater_name
+        password = user_input.get(CONF_REPEATER_PASSWORD, "")
+        update_interval = user_input.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
+        telemetry_enabled = user_input.get(CONF_REPEATER_TELEMETRY_ENABLED, True)
+        disable_path_reset = user_input.get(CONF_REPEATER_DISABLE_PATH_RESET, False)
+        neighbors_enabled = user_input.get(CONF_REPEATER_NEIGHBORS_ENABLED, False)
+
         coordinator = self.hass.data[DOMAIN].get(self.config_entry.entry_id)
         if not coordinator or not coordinator.api.connected:
             return self._show_repeater_settings({"base": "cannot_connect"})
         session = coordinator.api
-        prefix = self._selected_repeater
         contact = self._selected_repeater_contact()
         if not contact:
             return self._show_repeater_settings({"base": "contact_not_found"})
 
         try:
-            if not session.contact_by_prefix(prefix):
-                # Advert-only contacts appear in the selector but must be saved
-                # to the companion before it can address a login to them.
-                saved = dict(contact)
-                saved.setdefault("out_path_len", -1)
-                saved.setdefault("out_path", "")
-                saved.setdefault("out_path_hash_mode", -1 if saved["out_path_len"] < 0 else 0)
-                result = await session.exchange("add_contact", saved)
-                if result is None or result.type != EventType.OK:
-                    return self._show_repeater_settings({"base": "contact_save_failed"})
-                session.mark_contacts_dirty()
-                await session.ensure_contacts()
-                contact = session.contact_by_prefix(prefix)
-                if not contact:
-                    return self._show_repeater_settings({"base": "contact_save_failed"})
-                coordinator._contacts[prefix] = contact
-                coordinator.mark_contact_dirty(prefix)
-                coordinator._publish_contacts()
-
-            if path != normalize_path(contact_path(contact)):
-                # The SDK mutates its argument before receiving the radio ACK.
-                # Pass a copy so a rejected update cannot poison our live route.
+            is_new = session.contact_by_prefix(pubkey_prefix) is None
+            path_changed = path != normalize_path(contact_path(contact))
+            if is_new or path_changed:
+                # Both SDK methods write a contact, so an explicit path can
+                # be saved with a discovered contact in a single operation.
+                # The SDK mutates its argument before the radio acknowledges it.
                 updated = dict(contact)
-                if path:
+                updated.setdefault("out_path_len", -1)
+                updated.setdefault("out_path", "")
+                updated.setdefault("out_path_hash_mode", -1 if updated["out_path_len"] < 0 else 0)
+                if path_changed and path:
                     result = await session.exchange("change_contact_path", updated, path)
                 else:
-                    updated.update(out_path="", out_path_len=-1, out_path_hash_mode=-1)
+                    if path_changed:
+                        updated.update(out_path="", out_path_len=-1, out_path_hash_mode=-1)
                     result = await session.exchange("add_contact", updated)
                 if result is None or result.type != EventType.OK:
-                    return self._show_repeater_settings({"base": "path_update_failed"})
-                contact.update(updated)
+                    reason = "contact_save_failed" if is_new else "path_update_failed"
+                    return self._show_repeater_settings({"base": reason})
                 session.mark_contacts_dirty()
-                coordinator.mark_contact_dirty(prefix)
+                if is_new:
+                    await session.ensure_contacts()
+                    contact = session.contact_by_prefix(pubkey_prefix)
+                    if not contact:
+                        return self._show_repeater_settings({"base": "contact_save_failed"})
+                else:
+                    contact.update(updated)
+                coordinator._contacts[pubkey_prefix] = contact
+                coordinator.mark_contact_dirty(pubkey_prefix)
                 coordinator._publish_contacts()
 
-            password = user_input.get(CONF_REPEATER_PASSWORD, "")
-            for attempt in range(1, 4):
-                lane = classify_lane(OP_LOGIN, contact)
-                wait = coordinator.check_interactive_budget(lane)
-                if wait:
-                    return self._show_repeater_settings({"base": "traffic_deferred"})
-                _LOGGER.debug("Repeater login %s, attempt %d/3", prefix, attempt)
-                result = await session.login(contact, password)
-                if result:
-                    break
-                if attempt < 3:
-                    await asyncio.sleep(1)
-            else:
-                _LOGGER.warning("Repeater login failed after 3 attempts: %s", prefix)
+            lane = classify_lane(OP_LOGIN, contact)
+            wait = coordinator.check_interactive_budget(lane)
+            if wait:
+                return self._show_repeater_settings({"base": "traffic_deferred"})
+            result = await session.login(contact, password)
+            if not result:
+                _LOGGER.error("Login to repeater failed or timed out")
                 return self._show_repeater_settings({"base": "login_failed"})
         except (TimeoutError, ConnectionError, HomeAssistantError):
-            _LOGGER.warning("Companion communication failed during repeater setup: %s", prefix)
+            _LOGGER.warning("Companion communication failed during repeater setup: %s", pubkey_prefix)
             return self._show_repeater_settings({"base": "cannot_connect"})
 
-        # Login is sufficient to add the subscription; firmware is best effort.
+        # Login succeeded; the version query is best effort, pays for its own
+        # send, and its answer is an observation kept on the coordinator
+        # rather than in the entry.
         if not coordinator.check_interactive_budget(classify_lane(OP_FIRMWARE, contact)):
-            ver = await self._query_repeater_firmware(prefix, authenticate=False)
+            ver = await self._query_repeater_firmware(pubkey_prefix, authenticate=False)
             if ver != "Unknown":
-                coordinator.set_repeater_firmware(prefix, ver)
-        self.repeater_subscriptions.append(
-            {
-                "name": self._selected_repeater_name,
-                "pubkey_prefix": prefix,
-                CONF_REPEATER_PASSWORD: password,
-                CONF_REPEATER_TELEMETRY_ENABLED: user_input.get(
-                    CONF_REPEATER_TELEMETRY_ENABLED, False
-                ),
-                CONF_REPEATER_NEIGHBORS_ENABLED: user_input.get(
-                    CONF_REPEATER_NEIGHBORS_ENABLED, False
-                ),
-                CONF_REPEATER_UPDATE_INTERVAL: user_input.get(
-                    CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL
-                ),
-                CONF_REPEATER_DISABLE_PATH_RESET: user_input.get(
-                    CONF_REPEATER_DISABLE_PATH_RESET, False
-                ),
-            }
-        )
+                coordinator.set_repeater_firmware(pubkey_prefix, ver)
+
+        # Add the new repeater subscription with pubkey_prefix
+        self.repeater_subscriptions.append({
+            "name": repeater_name,
+            "pubkey_prefix": pubkey_prefix,
+            CONF_REPEATER_PASSWORD: password,
+            CONF_REPEATER_TELEMETRY_ENABLED: telemetry_enabled,
+            CONF_REPEATER_NEIGHBORS_ENABLED: neighbors_enabled,
+            CONF_REPEATER_UPDATE_INTERVAL: update_interval,
+            CONF_REPEATER_DISABLE_PATH_RESET: disable_path_reset,
+        })
+
         self._commit({CONF_REPEATER_SUBSCRIPTIONS: self.repeater_subscriptions})
+
         self._repeater_input = None
-        return await self.async_step_init()
+
+        # Return to the init step
+        return await self.async_step_init() # type: ignore
 
     async def async_step_add_client(self, user_input=None):
         """Handle adding a tracked client."""

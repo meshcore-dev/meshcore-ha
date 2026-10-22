@@ -379,7 +379,7 @@
           "password": "Sent once to log in to the repeater. Leave blank for a repeater that grants access by ACL without a password.",
           "repeater_path": "Prefilled with the saved route. Enter hex hops (for example 7A); append :1 or :2 for two- or three-byte hop hashes. Use direct for zero hops. Blank uses flood. Changes are saved to the companion before login, even if login fails. Enable Disable Path Reset to preserve a fixed route."
         },
-        "description": "Configure {device_name} ({pubkey_prefix}). Current saved path: {current_path}. Login tries up to three times.",
+        "description": "Configure {device_name} ({pubkey_prefix}). Current saved path: {current_path}.",
         "title": "Configure Repeater"
       }
     },
@@ -392,7 +392,7 @@
       "path_update_failed": "The companion did not accept the path. Try again.",
       "invalid_path": "Enter a hex path such as 7A, optionally followed by :0, :1 or :2 for the hop hash width. Use direct for zero hops, or leave blank for flood.",
       "traffic_deferred": "The mesh traffic budget is exhausted. Wait for it to replenish and try again.",
-      "login_failed": "No successful login after three attempts. Check the route, reachability and password, then try again."
+      "login_failed": "Failed to log in to repeater. Check the route, reachability and password, then try again. Your selected repeater and entered settings have been kept."
     }
   },
   "services": {

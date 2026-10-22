@@ -1,4 +1,4 @@
-"""Drive repeater selection, route updates and retries through real HA forms."""
+"""Drive repeater selection, route updates and manual retries through real HA forms."""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -104,20 +104,23 @@ async def test_failure_keeps_selection_and_every_field(hass, setup_flow):
         "neighbors_enabled": False,
         "update_interval": 900,
     }
-    assert setup_flow[1].api.login.await_count == 3
+    assert setup_flow[1].api.login.await_count == 1
     assert setup_flow[0].options.get("repeater_subscriptions", []) == []
 
 
-async def test_retry_succeeds_once(hass, setup_flow):
+async def test_manual_retry_succeeds_without_reselection(hass, setup_flow):
     entry, coordinator, _, _, _ = setup_flow
-    coordinator.api.login.side_effect = [None, None, Event(EventType.LOGIN_SUCCESS, {})]
+    coordinator.api.login.side_effect = [None, Event(EventType.LOGIN_SUCCESS, {})]
     with patch(
         "custom_components.meshcore.config_flow.OptionsFlowHandler._query_repeater_firmware",
         new=AsyncMock(return_value="Unknown"),
     ):
         result = await submit(hass, await select(hass, setup_flow))
+        assert result["step_id"] == "repeater_settings"
+        assert coordinator.api.login.await_count == 1
+        result = await submit(hass, result)
     assert result["step_id"] == "init"
-    assert coordinator.api.login.await_count == 3
+    assert coordinator.api.login.await_count == 2
     saved = entry.options["repeater_subscriptions"]
     assert len(saved) == 1
     assert saved[0]["pubkey_prefix"] == PREFIX
@@ -216,12 +219,12 @@ async def test_save_failure_or_unverified_save_blocks_login(hass, setup_flow, ac
     coordinator.api.login.assert_not_awaited()
 
 
-async def test_retry_respects_budget(hass, setup_flow):
+async def test_login_respects_budget(hass, setup_flow):
     _, coordinator, _, _, _ = setup_flow
-    coordinator.check_interactive_budget.side_effect = [0, 45]
+    coordinator.check_interactive_budget.return_value = 45
     result = await submit(hass, await select(hass, setup_flow))
     assert result["errors"] == {"base": "traffic_deferred"}
-    assert coordinator.api.login.await_count == 1
+    coordinator.api.login.assert_not_awaited()
 
 
 async def test_blank_path_explicitly_switches_to_flood(hass, setup_flow):
@@ -280,3 +283,34 @@ def test_saved_path_display(hops, route, mode, expected):
         contact_path({"out_path_len": hops, "out_path": route, "out_path_hash_mode": mode})
         == expected
     )
+
+
+async def test_discovered_contact_and_new_path_use_one_write(hass, setup_flow):
+    _, coordinator, contact, table, _ = setup_flow
+    table.clear()
+    contact.update(out_path="", out_path_len=-1, out_path_hash_mode=-1)
+    saved = {}
+
+    async def write_contact(command, updated, path):
+        assert command == "change_contact_path"
+        assert path == "7a:0"
+        assert updated is not contact
+        updated.update(out_path="7a", out_path_len=1, out_path_hash_mode=0)
+        saved.update(updated)
+        return Event(EventType.OK, {})
+
+    async def sync():
+        table[PREFIX] = saved
+
+    coordinator.api.exchange.side_effect = write_contact
+    coordinator.api.ensure_contacts.side_effect = sync
+    coordinator.api.login.return_value = Event(EventType.LOGIN_SUCCESS, {})
+    with patch(
+        "custom_components.meshcore.config_flow.OptionsFlowHandler._query_repeater_firmware",
+        new=AsyncMock(return_value="Unknown"),
+    ):
+        result = await submit(hass, await select(hass, setup_flow))
+    assert result["step_id"] == "init"
+    assert coordinator.api.exchange.await_count == 1
+    assert coordinator.api.login.await_count == 1
+    assert table[PREFIX]["out_path"] == "7a"

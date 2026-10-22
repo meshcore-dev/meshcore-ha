@@ -34,7 +34,7 @@ Repeaters may be selected from saved or discovered contacts. Repeater setup save
 
 When you submit the settings, contact and path changes are saved on the companion **before login**, and remain there even if login fails or setup is cancelled. Enable **Disable Path Reset** to preserve a fixed route during later polling.
 
-Login makes up to **three attempts**, stopping at the first success. Each attempt checks and charges the mesh traffic budget; an exhausted budget stops retries. The SDK's suggested reply timeout is used for each attempt, with a one-second pause between attempts. A firmware query after successful login is best effort and uses its own budget credit.
+Login makes **one attempt per submission**, using the existing mesh traffic budget and SDK reply timeout. A firmware query after successful login is best effort and uses its own budget credit.
 
 A failed attempt keeps the selected repeater, password, path and polling settings on the settings form. Correct the values or submit again without selecting the repeater again. The password remains masked.
 
@@ -45,7 +45,7 @@ A failed attempt keeps the selected repeater, password, path and polling setting
 | Contact could not be saved or verified | Available contact slots and companion communication. Login is not attempted. |
 | Invalid path or path rejected | Complete hex hop hashes and the hash width. A rejected save does not change the cached route. |
 | Mesh traffic budget exhausted | Wait for the budget to replenish, then submit again. |
-| No successful login after three attempts | Route, reachability and password. This message does not distinguish silence from rejection. |
+| Login failed or timed out | Route, reachability and password. This message does not distinguish silence from rejection. |
 
 ## Add Tracked Client
 
