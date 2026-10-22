@@ -12,33 +12,40 @@ The integration can monitor other nodes in your mesh. A node that you add for mo
 | **Add Repeater Station** | Repeaters, room servers, sensor nodes | Status, telemetry (optional), neighbors (optional), login when necessary |
 | **Add Tracked Client** | Clients | Telemetry |
 
-The node must be in the contact list of the companion. If a repeater is only a discovered contact, the form shows `Contact not found`. If a client is only a discovered contact, the integration adds it but cannot poll it.
+Repeaters may be selected from saved or discovered contacts. Repeater setup saves a discovered contact to the companion and verifies it before attempting login. Clients must already be saved on the companion to be polled.
 
 ## Add Repeater Station
 
 1. Go to **Settings > Devices & services > MeshCore > Configure**.
 2. Select **Add Repeater Station**.
-3. Complete the form (see the table below).
-4. Select **Submit**.
+3. Select the repeater and select **Submit** to load its current saved path.
+4. Review or update the path, password and polling settings (see below).
+5. Select **Submit** to save the contact and any path change, then attempt login.
 
 | Field | Default | Description |
 |---|---|---|
 | **Available Repeaters** | None | The node to track. The list shows repeaters, room servers, sensor nodes, and contacts with "repeater", "room server", "roomserver" or "sensor" in the name. |
+| **Path** | Current saved route | Hex hop hashes, for example `7A`. An optional `:0`, `:1` or `:2` selects one-, two- or three-byte hashes per hop; omitted means one byte. Use `direct` for a zero-hop direct link, or blank for flood. |
 | **Password** | Empty | The login password. Leave it blank for a node that gives access by ACL. |
 | **Enable Telemetry Polling** | Off | Also send telemetry polls, at the same interval as the status polls. |
 | **Enable Neighbor Entities (creates SNR and activity sensors for each neighbor seen by the repeater)** | Off | Read the neighbor list after each successful status poll. The UI gives MeshCore firmware 1.14.0 or later as the requirement. See [Repeater Neighbors](repeater-neighbors.md). |
 | **Telemetry Refresh Rate (seconds)** | 7200 | The interval for all polls of this node. Minimum 300. |
 | **Disable Path Reset** | Off | Do not reset the route to this node after failures. See [Route reset](#route-reset). |
 
-When you select **Submit**, the integration logs in to the node with the password and asks for the firmware version. Each request costs one credit. If no credit is available for the version query, the integration skips it. The first status poll is due at once. The integration keeps the password for later logins.
+When you submit the settings, contact and path changes are saved on the companion **before login**, and remain there even if login fails or setup is cancelled. Enable **Disable Path Reset** to preserve a fixed route during later polling.
 
-| Error | Cause |
+Login makes up to **three attempts**, stopping at the first success. Each attempt checks and charges the mesh traffic budget; an exhausted budget stops retries. The SDK's suggested reply timeout is used for each attempt, with a one-second pause between attempts. A firmware query after successful login is best effort and uses its own budget credit.
+
+A failed attempt keeps the selected repeater, password, path and polling settings on the settings form. Correct the values or submit again without selecting the repeater again. The password remains masked.
+
+| Error | What to check |
 |---|---|
-| `Repeater is already configured` | The node is a tracked node already. |
-| `Device not connected. Please ensure the MeshCore device is connected.` | The companion is not connected. |
-| `Contact not found` | The node is not in the contact list of the companion. |
-| `Mesh traffic <lane> lane is empty. Try again in <seconds> seconds.` | The lane has no credit for the login. |
-| `Failed to log in to repeater. Check password and try again.` | The node refused the login, or did not answer. |
+| Repeater already configured | The node is already tracked. |
+| Companion did not respond | The companion connection. |
+| Contact could not be saved or verified | Available contact slots and companion communication. Login is not attempted. |
+| Invalid path or path rejected | Complete hex hop hashes and the hash width. A rejected save does not change the cached route. |
+| Mesh traffic budget exhausted | Wait for the budget to replenish, then submit again. |
+| No successful login after three attempts | Route, reachability and password. This message does not distinguish silence from rejection. |
 
 ## Add Tracked Client
 
@@ -63,7 +70,7 @@ The integration sends no mesh traffic when you add a client. The first telemetry
 4. In **Action**, select **Edit Device Settings** or **Remove Device**.
 5. Select **Submit**.
 
-The edit forms have the same fields as the add forms, plus these fields:
+The edit forms contain the polling and password settings, plus the fields below. The path field is currently available during repeater setup; use `change_contact_path` to change the route of an existing tracked node.
 
 | Field | Description |
 |---|---|

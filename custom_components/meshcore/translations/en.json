@@ -241,20 +241,10 @@
       },
       "add_repeater": {
         "data": {
-          "repeater_name": "Available Repeaters",
-          "repeater_password": "Repeater Password",
-          "telemetry_enabled": "Enable Telemetry Polling",
-          "neighbors_enabled": "Enable Neighbor Entities (creates SNR and activity sensors for each neighbor seen by the repeater)",
-          "update_interval": "Telemetry Refresh Rate (seconds)",
-          "disable_path_reset": "Disable Path Reset",
-          "password": "Password"
+          "repeater_name": "Available Repeaters"
         },
-        "data_description": {
-          "neighbors_enabled": "Asks this repeater for its neighbour list after each successful status poll. Each neighbour gets an SNR sensor and a seen sensor. The list is paged: each page is one request, so the cost grows with the number of neighbours. Requires MeshCore firmware 1.14.0 or later.",
-          "password": "Sent once to log in to the repeater. Leave blank for a repeater that grants access by ACL without a password."
-        },
-        "description": "Monitor a repeater for telemetry and status",
-        "title": "Add Repeater Station"
+        "description": "Select a repeater to load its saved path and login settings. Discovered contacts are saved to the companion when you submit the next step.",
+        "title": "Select Repeater"
       },
       "add_client": {
         "data": {
@@ -373,7 +363,36 @@
         },
         "description": "Configure MQTT broker {broker_number}",
         "title": "MQTT Broker Settings"
+      },
+      "repeater_settings": {
+        "data": {
+          "repeater_password": "Repeater Password",
+          "telemetry_enabled": "Enable Telemetry Polling",
+          "neighbors_enabled": "Enable Neighbor Entities (creates SNR and activity sensors for each neighbor seen by the repeater)",
+          "update_interval": "Telemetry Refresh Rate (seconds)",
+          "disable_path_reset": "Disable Path Reset",
+          "password": "Password",
+          "repeater_path": "Path"
+        },
+        "data_description": {
+          "neighbors_enabled": "Asks this repeater for its neighbour list after each successful status poll. Each neighbour gets an SNR sensor and a seen sensor. The list is paged: each page is one request, so the cost grows with the number of neighbours. Requires MeshCore firmware 1.14.0 or later.",
+          "password": "Sent once to log in to the repeater. Leave blank for a repeater that grants access by ACL without a password.",
+          "repeater_path": "Prefilled with the saved route. Enter hex hops (for example 7A); append :1 or :2 for two- or three-byte hop hashes. Use direct for zero hops. Blank uses flood. Changes are saved to the companion before login, even if login fails. Enable Disable Path Reset to preserve a fixed route."
+        },
+        "description": "Configure {device_name} ({pubkey_prefix}). Current saved path: {current_path}. Login tries up to three times.",
+        "title": "Configure Repeater"
       }
+    },
+    "error": {
+      "cannot_connect": "The companion did not respond. Check its connection and try again.",
+      "contact_not_found": "The selected contact is no longer available. Select it again.",
+      "already_configured": "This repeater is already configured.",
+      "no_repeaters_found": "No repeaters found. Wait for an advert or refresh contacts.",
+      "contact_save_failed": "Could not save or verify the contact on the companion. Check available contact space and try again.",
+      "path_update_failed": "The companion did not accept the path. Try again.",
+      "invalid_path": "Enter a hex path such as 7A, optionally followed by :0, :1 or :2 for the hop hash width. Use direct for zero hops, or leave blank for flood.",
+      "traffic_deferred": "The mesh traffic budget is exhausted. Wait for it to replenish and try again.",
+      "login_failed": "No successful login after three attempts. Check the route, reachability and password, then try again."
     }
   },
   "services": {

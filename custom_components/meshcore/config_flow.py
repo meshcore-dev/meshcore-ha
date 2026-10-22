@@ -88,6 +88,7 @@ from .const import (
     NodeType,
 )
 from .radio import RadioSession
+from .repeater_setup import contact_path, normalize_path
 from .traffic import (
     OP_FIRMWARE,
     OP_LOGIN,
@@ -718,142 +719,196 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 repeater_contacts.append((pubkey_prefix, contact_name))
 
         return repeater_contacts
-        
-    def _show_add_repeater_form(self, repeater_dict, errors=None, user_input=None):
-        """Helper to show repeater form with current values preserved."""
-        if errors is None:
-            errors = {}
-            
-        # Get values from user_input or use defaults
-        default_password = ""
-        default_interval = DEFAULT_REPEATER_UPDATE_INTERVAL
-        default_telemetry = False
-        default_disable_path_reset = False
-        default_neighbors_enabled = False
 
-        if user_input:
-            default_password = user_input.get(CONF_REPEATER_PASSWORD, "")
-            default_interval = user_input.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
-            default_telemetry = user_input.get(CONF_REPEATER_TELEMETRY_ENABLED, False)
-            default_disable_path_reset = user_input.get(CONF_REPEATER_DISABLE_PATH_RESET, False)
-            default_neighbors_enabled = user_input.get(CONF_REPEATER_NEIGHBORS_ENABLED, False)
-
-        return self.async_show_form(
-            step_id="add_repeater",
-            data_schema=vol.Schema({
-                vol.Required(CONF_REPEATER_NAME): vol.In(repeater_dict.keys()),
-                vol.Optional(CONF_REPEATER_PASSWORD, default=default_password): _password_selector(),
-                vol.Optional(CONF_REPEATER_TELEMETRY_ENABLED, default=default_telemetry): bool,
-                vol.Optional(CONF_REPEATER_NEIGHBORS_ENABLED, default=default_neighbors_enabled): bool,
-                vol.Optional(CONF_REPEATER_UPDATE_INTERVAL, default=default_interval): vol.All(cv.positive_int, vol.Range(min=MIN_UPDATE_INTERVAL)),
-                vol.Optional(CONF_REPEATER_DISABLE_PATH_RESET, default=default_disable_path_reset): bool,
-            }),
-            errors=errors,
-        )
-        
     async def async_step_add_repeater(self, user_input=None):
-        """Handle adding a new repeater subscription."""
+        """Select a repeater before loading its current route and settings."""
+        self._ensure_options_loaded()
+        contacts = sorted(self._get_repeater_contacts(), key=lambda item: item[1].lower())
+        choices = {prefix: f"{name} ({prefix})" for prefix, name in contacts}
         errors = {}
-        
-        # Get repeater contacts
-        repeater_contacts = self._get_repeater_contacts()
-        
-        # Show the form with repeater selection
-        if not repeater_contacts:
-            # No repeaters found
-            return self.async_show_form(
-                step_id="add_repeater",
-                data_schema=vol.Schema({
-                    vol.Required("no_repeaters", default="No repeaters found in contacts. Please ensure your device has repeaters in its contacts list."): str,
-                }),
-                errors=errors,
-            )
+        selected = (user_input or {}).get(CONF_REPEATER_NAME)
+        if user_input is not None:
+            if selected not in choices:
+                errors["base"] = "contact_not_found"
+            elif any(r.get("pubkey_prefix") == selected for r in self.repeater_subscriptions):
+                errors["base"] = "already_configured"
+            else:
+                self._selected_repeater = selected
+                self._selected_repeater_name = dict(contacts)[selected]
+                self._repeater_input = None
+                return await self.async_step_repeater_settings()
 
-        # Create a dictionary with name as key and (prefix, name) tuple as value
-        # Sort contacts alphabetically by name
-        sorted_contacts = sorted(repeater_contacts, key=lambda x: x[1].lower())  # Sort by name (case-insensitive)
-        repeater_dict = {}
-        for prefix, name in sorted_contacts:
-            display_name = f"{name} ({prefix})"
-            repeater_dict[display_name] = (prefix, name)
-            
+        selector = SelectSelector(
+            SelectSelectorConfig(
+                options=[{"value": prefix, "label": label} for prefix, label in choices.items()],
+                mode=SelectSelectorMode.DROPDOWN,
+            )
+        )
+        field = vol.Required(CONF_REPEATER_NAME)
+        if selected in choices:
+            field = vol.Required(CONF_REPEATER_NAME, default=selected)
+        if not choices:
+            errors["base"] = "no_repeaters_found"
+        return self.async_show_form(
+            step_id="add_repeater", data_schema=vol.Schema({field: selector}), errors=errors
+        )
+
+    def _selected_repeater_contact(self):
+        """Prefer the live saved record over a potentially newer discovered advert."""
+        coordinator = self.hass.data[DOMAIN].get(self.config_entry.entry_id)
+        if coordinator and coordinator.api.connected:
+            contact = coordinator.api.contact_by_prefix(self._selected_repeater)
+            if contact:
+                return contact
+        matches = [
+            c
+            for c in self._iter_known_contacts()
+            if c.get("public_key", "").lower().startswith(self._selected_repeater.lower())
+        ]
+        return matches[0] if len(matches) == 1 else None
+
+    def _show_repeater_settings(self, errors=None):
+        """Keep the selected identity and every entered value after a failed attempt."""
+        contact = self._selected_repeater_contact()
+        values = self._repeater_input or {}
+        path = values.get("repeater_path", contact_path(contact or {}))
+        return self.async_show_form(
+            step_id="repeater_settings",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional("repeater_path", default=path): str,
+                    vol.Optional(
+                        CONF_REPEATER_PASSWORD, default=values.get(CONF_REPEATER_PASSWORD, "")
+                    ): _password_selector(),
+                    vol.Optional(
+                        CONF_REPEATER_TELEMETRY_ENABLED,
+                        default=values.get(CONF_REPEATER_TELEMETRY_ENABLED, False),
+                    ): bool,
+                    vol.Optional(
+                        CONF_REPEATER_NEIGHBORS_ENABLED,
+                        default=values.get(CONF_REPEATER_NEIGHBORS_ENABLED, False),
+                    ): bool,
+                    vol.Optional(
+                        CONF_REPEATER_UPDATE_INTERVAL,
+                        default=values.get(
+                            CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL
+                        ),
+                    ): vol.All(cv.positive_int, vol.Range(min=MIN_UPDATE_INTERVAL)),
+                    vol.Optional(
+                        CONF_REPEATER_DISABLE_PATH_RESET,
+                        default=values.get(CONF_REPEATER_DISABLE_PATH_RESET, False),
+                    ): bool,
+                }
+            ),
+            errors=errors or {},
+            description_placeholders={
+                "device_name": self._selected_repeater_name,
+                "pubkey_prefix": self._selected_repeater,
+                "current_path": contact_path(contact or {}) or "Flood (no saved route)",
+            },
+        )
+
+    async def async_step_repeater_settings(self, user_input=None):
+        """Save a discovered contact and optional route, then try login up to three times."""
         if user_input is None:
-            # First time showing form
-            return self._show_add_repeater_form(repeater_dict)
-            
-        selected_repeater = user_input.get(CONF_REPEATER_NAME)
-        password = user_input.get(CONF_REPEATER_PASSWORD, "")
-        update_interval = user_input.get(CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL)
-        telemetry_enabled = user_input.get(CONF_REPEATER_TELEMETRY_ENABLED, True)
-        disable_path_reset = user_input.get(CONF_REPEATER_DISABLE_PATH_RESET, False)
-        neighbors_enabled = user_input.get(CONF_REPEATER_NEIGHBORS_ENABLED, False)
+            return self._show_repeater_settings()
+        self._repeater_input = dict(user_input)
+        try:
+            path = normalize_path(user_input.get("repeater_path", ""))
+        except ValueError:
+            return self._show_repeater_settings({"repeater_path": "invalid_path"})
 
-        # The selected_repeater has format: "Name (prefix)"
-        selected_str = selected_repeater
-        # Extract the pubkey from between parentheses
-        start = selected_str.rfind("(") + 1
-        end = selected_str.rfind(")")
-        pubkey_prefix = selected_str[start:end]
-        # Extract name (everything before the open parenthesis)
-        repeater_name = selected_str[:start-1].strip()
-
-        # Check if this repeater is already in the subscriptions by prefix
-        existing_prefixes = [r.get("pubkey_prefix") for r in self.repeater_subscriptions]
-        if pubkey_prefix in existing_prefixes:
-            errors["base"] = "Repeater is already configured"
-            return self._show_add_repeater_form(repeater_dict, errors, user_input)
-
-        coordinator = self.hass.data[DOMAIN].get(self.config_entry.entry_id) # type: ignore
-        session = coordinator.api # type: ignore
-        if not session or not session.connected:
-            errors["base"] = "Device not connected. Please ensure the MeshCore device is connected."
-            return self._show_add_repeater_form(repeater_dict, errors, user_input)
-
-        # validate the repeater can be logged into
-        contact = session.contact_by_prefix(pubkey_prefix)
+        coordinator = self.hass.data[DOMAIN].get(self.config_entry.entry_id)
+        if not coordinator or not coordinator.api.connected:
+            return self._show_repeater_settings({"base": "cannot_connect"})
+        session = coordinator.api
+        prefix = self._selected_repeater
+        contact = self._selected_repeater_contact()
         if not contact:
-            _LOGGER.error(f"Contact not found with public key prefix: {pubkey_prefix}")
-            errors["base"] = "Contact not found"
-            return self._show_add_repeater_form(repeater_dict, errors, user_input)
-            
-        lane = classify_lane(OP_LOGIN, contact)
-        wait = coordinator.check_interactive_budget(lane)
-        if wait:
-            errors["base"] = (
-                f"Mesh traffic {lane} lane is empty. Try again in {int(wait)} seconds."
-            )
-            return self._show_add_repeater_form(repeater_dict, errors, user_input)
+            return self._show_repeater_settings({"base": "contact_not_found"})
 
-        result = await session.login(contact, password)
-        if not result:
-            _LOGGER.error("Login to repeater failed or timed out")
-            errors["base"] = "Failed to log in to repeater. Check password and try again."
-            return self._show_add_repeater_form(repeater_dict, errors, user_input)
-            
-            
-        # Login succeeded; the version query is best effort, pays for its own
-        # send, and its answer is an observation kept on the coordinator
-        # rather than in the entry.
+        try:
+            if not session.contact_by_prefix(prefix):
+                # Advert-only contacts appear in the selector but must be saved
+                # to the companion before it can address a login to them.
+                saved = dict(contact)
+                saved.setdefault("out_path_len", -1)
+                saved.setdefault("out_path", "")
+                saved.setdefault("out_path_hash_mode", -1 if saved["out_path_len"] < 0 else 0)
+                result = await session.exchange("add_contact", saved)
+                if result is None or result.type != EventType.OK:
+                    return self._show_repeater_settings({"base": "contact_save_failed"})
+                session.mark_contacts_dirty()
+                await session.ensure_contacts()
+                contact = session.contact_by_prefix(prefix)
+                if not contact:
+                    return self._show_repeater_settings({"base": "contact_save_failed"})
+                coordinator._contacts[prefix] = contact
+                coordinator.mark_contact_dirty(prefix)
+                coordinator._publish_contacts()
+
+            if path != normalize_path(contact_path(contact)):
+                # The SDK mutates its argument before receiving the radio ACK.
+                # Pass a copy so a rejected update cannot poison our live route.
+                updated = dict(contact)
+                if path:
+                    result = await session.exchange("change_contact_path", updated, path)
+                else:
+                    updated.update(out_path="", out_path_len=-1, out_path_hash_mode=-1)
+                    result = await session.exchange("add_contact", updated)
+                if result is None or result.type != EventType.OK:
+                    return self._show_repeater_settings({"base": "path_update_failed"})
+                contact.update(updated)
+                session.mark_contacts_dirty()
+                coordinator.mark_contact_dirty(prefix)
+                coordinator._publish_contacts()
+
+            password = user_input.get(CONF_REPEATER_PASSWORD, "")
+            for attempt in range(1, 4):
+                lane = classify_lane(OP_LOGIN, contact)
+                wait = coordinator.check_interactive_budget(lane)
+                if wait:
+                    return self._show_repeater_settings({"base": "traffic_deferred"})
+                _LOGGER.debug("Repeater login %s, attempt %d/3", prefix, attempt)
+                result = await session.login(contact, password)
+                if result:
+                    break
+                if attempt < 3:
+                    await asyncio.sleep(1)
+            else:
+                _LOGGER.warning("Repeater login failed after 3 attempts: %s", prefix)
+                return self._show_repeater_settings({"base": "login_failed"})
+        except (TimeoutError, ConnectionError, HomeAssistantError):
+            _LOGGER.warning("Companion communication failed during repeater setup: %s", prefix)
+            return self._show_repeater_settings({"base": "cannot_connect"})
+
+        # Login is sufficient to add the subscription; firmware is best effort.
         if not coordinator.check_interactive_budget(classify_lane(OP_FIRMWARE, contact)):
-            ver = await self._query_repeater_firmware(pubkey_prefix, authenticate=False)
+            ver = await self._query_repeater_firmware(prefix, authenticate=False)
             if ver != "Unknown":
-                coordinator.set_repeater_firmware(pubkey_prefix, ver)
-
-        # Add the new repeater subscription with pubkey_prefix
-        self.repeater_subscriptions.append({
-            "name": repeater_name,
-            "pubkey_prefix": pubkey_prefix,
-            CONF_REPEATER_PASSWORD: password,
-            CONF_REPEATER_TELEMETRY_ENABLED: telemetry_enabled,
-            CONF_REPEATER_NEIGHBORS_ENABLED: neighbors_enabled,
-            CONF_REPEATER_UPDATE_INTERVAL: update_interval,
-            CONF_REPEATER_DISABLE_PATH_RESET: disable_path_reset,
-        })
-
+                coordinator.set_repeater_firmware(prefix, ver)
+        self.repeater_subscriptions.append(
+            {
+                "name": self._selected_repeater_name,
+                "pubkey_prefix": prefix,
+                CONF_REPEATER_PASSWORD: password,
+                CONF_REPEATER_TELEMETRY_ENABLED: user_input.get(
+                    CONF_REPEATER_TELEMETRY_ENABLED, False
+                ),
+                CONF_REPEATER_NEIGHBORS_ENABLED: user_input.get(
+                    CONF_REPEATER_NEIGHBORS_ENABLED, False
+                ),
+                CONF_REPEATER_UPDATE_INTERVAL: user_input.get(
+                    CONF_REPEATER_UPDATE_INTERVAL, DEFAULT_REPEATER_UPDATE_INTERVAL
+                ),
+                CONF_REPEATER_DISABLE_PATH_RESET: user_input.get(
+                    CONF_REPEATER_DISABLE_PATH_RESET, False
+                ),
+            }
+        )
         self._commit({CONF_REPEATER_SUBSCRIPTIONS: self.repeater_subscriptions})
-
-        # Return to the init step
-        return await self.async_step_init() # type: ignore
+        self._repeater_input = None
+        return await self.async_step_init()
 
     async def async_step_add_client(self, user_input=None):
         """Handle adding a tracked client."""
