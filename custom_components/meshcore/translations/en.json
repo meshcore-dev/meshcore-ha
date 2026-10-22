@@ -388,7 +388,7 @@
       "contact_not_found": "The selected contact is no longer available. Select it again.",
       "already_configured": "This repeater is already configured.",
       "no_repeaters_found": "No repeaters found. Wait for an advert or refresh contacts.",
-      "contact_save_failed": "Could not save or verify the contact on the companion. Check available contact space and try again.",
+      "contact_save_failed": "This repeater was discovered, but could not be added to or verified in the companion's saved contacts. Seeing it in the dropdown does not mean it is saved. Select it in Discovered Contacts and use Add Selected Contact, then retry. If adding fails, check the companion connection and available contact space.",
       "path_update_failed": "The companion did not accept the path. Try again.",
       "invalid_path": "Enter a hex path such as 7A, optionally followed by :0, :1 or :2 for the hop hash width. Use direct for zero hops, or leave blank for flood.",
       "traffic_deferred": "The mesh traffic budget is exhausted. Wait for it to replenish and try again.",
