@@ -73,6 +73,10 @@ _LOGGER = logging.getLogger(__name__)
 # List of platforms to set up
 PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SELECT, Platform.TEXT, Platform.DEVICE_TRACKER, Platform.BUTTON]
 STATIC_PATH_REGISTERED_KEY = f"{DOMAIN}_static_path_registered"
+# Timeout (seconds) for the initial full contact-table fetch. The SDK's
+# get_contacts() default (5s) is too short for large meshes, where streaming the
+# whole table can take ~11s+; see issue #391.
+CONTACT_SYNC_TIMEOUT = 30
 
 
 def _read_integration_version() -> str:
@@ -592,7 +596,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if connected:
             try:
                 _LOGGER.info("Loading contacts from device on initialization...")
-                await api.ensure_contacts(follow=False)
+                # ensure_contacts() delegates to the SDK's get_contacts(), whose
+                # default timeout is 5s. A large contact table takes longer than
+                # that to stream from the node (e.g. ~11s for 351 contacts), so the
+                # one-shot call times out, the table stays empty, and every contact
+                # entity ends up "unavailable" with no error surfaced. Drive a single
+                # full fetch with a generous timeout instead so the whole table is
+                # captured on startup. See
+                # https://github.com/meshcore-dev/meshcore-ha/issues/391
+                try:
+                    await api.exchange(
+                        "get_contacts", lastmod=0, timeout=CONTACT_SYNC_TIMEOUT,
+                        deadline=CONTACT_SYNC_TIMEOUT + 10,
+                    )
+                except Exception as ex:
+                    _LOGGER.warning(
+                        "Full contact fetch failed (%s); falling back to ensure_contacts()",
+                        ex,
+                    )
+                    await api.ensure_contacts(follow=False)
 
                 # Index contacts by 12-char prefix
                 coordinator._contacts = {}
