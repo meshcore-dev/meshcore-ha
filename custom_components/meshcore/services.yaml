@@ -69,6 +69,17 @@ send_channel_message:
       example: "pl-mz"
       selector:
         text:
+    truncate:
+      name: Truncate To Fit
+      description: >-
+        Cut the message to the bytes the radio can send instead of refusing it. Off by default,
+        so an over-long message fails and tells you the size. Turn it on for templated text whose
+        length you cannot predict and whose tail you are willing to lose.
+      required: false
+      default: false
+      example: true
+      selector:
+        boolean:
 
 send_ui_message:
   name: Send UI Message

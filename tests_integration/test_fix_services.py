@@ -1,6 +1,7 @@
 """Regression coverage for CLI safety, routing, trace and contact services."""
 
 import logging
+import time
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -275,3 +276,99 @@ async def test_channel_message_over_the_firmware_limit_is_refused(hass, services
     await hass.async_block_till_done()
     assert sent() == ["ł" * 76]
     assert [e["detail"] for e in failed if e["reason"] == "too_long"] == ["153 bytes, limit 152"]
+
+
+def _chan_sent(services):
+    return [call[2] for call in services.radio.calls if call[0] == "send_chan_msg"]
+
+
+def _script_channel_send(services, channel_idx, text, timestamp):
+    """Answer the one send this text will make, so the sent event can fire."""
+    services.radio.script[
+        services.radio.key("send_chan_msg", channel_idx, text, timestamp=timestamp)
+    ] = Event(EventType.OK, {})
+
+
+async def test_channel_truncate_sends_the_text_cut_to_the_budget(hass, services, freezer):
+    services.api.self_info = {"name": "Gorsag"}
+    freezer.move_to("2026-10-27 12:00:00+00:00")
+    # "Gorsag: " costs 8 bytes of the firmware's 160, leaving 152 for the text.
+    _script_channel_send(services, 1, "x" * 152, int(time.time()))
+    sent_events = []
+    hass.bus.async_listen("meshcore_message_sent", lambda event: sent_events.append(event.data))
+
+    await _call(
+        hass,
+        "send_channel_message",
+        {"channel_idx": 1, "message": "x" * 200, "truncate": True},
+    )
+    await hass.async_block_till_done()
+
+    assert _chan_sent(services) == ["x" * 152]
+    assert [(e["message"], e["truncated"]) for e in sent_events] == [("x" * 152, True)]
+
+
+async def test_channel_truncate_never_splits_a_character(hass, services):
+    services.api.self_info = {"name": "Gorsag"}
+
+    # 152 bytes of budget does not divide by the 2 bytes of "l stroke", so the
+    # cut lands inside a character. The result is one byte short of the budget
+    # rather than invalid UTF-8 the firmware would reject.
+    await _call(
+        hass,
+        "send_channel_message",
+        {"channel_idx": 1, "message": "\u0142" * 100, "truncate": True},
+    )
+    await hass.async_block_till_done()
+
+    assert _chan_sent(services) == ["\u0142" * 76]
+    assert len(("\u0142" * 76).encode()) == 152
+
+
+async def test_channel_truncate_leaves_a_fitting_message_alone(hass, services, freezer):
+    services.api.self_info = {"name": "Gorsag"}
+    freezer.move_to("2026-10-27 12:00:00+00:00")
+    _script_channel_send(services, 1, "short", int(time.time()))
+    sent_events = []
+    hass.bus.async_listen("meshcore_message_sent", lambda event: sent_events.append(event.data))
+
+    await _call(
+        hass,
+        "send_channel_message",
+        {"channel_idx": 1, "message": "short", "truncate": True},
+    )
+    await hass.async_block_till_done()
+
+    assert _chan_sent(services) == ["short"]
+    assert [e["truncated"] for e in sent_events] == [False]
+
+
+async def test_direct_message_over_the_firmware_limit_is_refused(hass, services):
+    contact = {"public_key": "ab" * 32, "adv_name": "PeerNode",
+               "out_path_len": 0, "out_path_hash_mode": 0}
+    services.api.contacts[contact["public_key"]] = contact
+    # An empty payload carries no expected_ack, so no ACK wait is scheduled.
+    services.radio.script[services.radio.key("send_msg", contact, "x" * 160)] = Event(
+        EventType.OK, {}
+    )
+    failed = []
+    hass.bus.async_listen("meshcore_message_send_failed", lambda event: failed.append(event.data))
+    sent = lambda: [call[2] for call in services.radio.calls if call[0] == "send_msg"]  # noqa: E731
+
+    # A direct message carries no name prefix, so the whole 160 bytes are text.
+    await _call(hass, "send_message", {"pubkey_prefix": contact["public_key"][:12],
+                                       "message": "x" * 160})
+    await hass.async_block_till_done()
+    assert sent() == ["x" * 160]
+
+    # One byte more is refused here rather than by the radio, which would
+    # report it as a full contact table.
+    with pytest.raises(ServiceValidationError):
+        await _call(hass, "send_message", {"pubkey_prefix": contact["public_key"][:12],
+                                           "message": "x" * 161})
+    await hass.async_block_till_done()
+
+    assert sent() == ["x" * 160]
+    assert [(e["message_type"], e["detail"]) for e in failed if e["reason"] == "too_long"] == [
+        ("direct", "161 bytes, limit 160")
+    ]

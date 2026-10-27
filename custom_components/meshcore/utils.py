@@ -142,14 +142,35 @@ def via_companion(hass: HomeAssistant, entry_id: str) -> dict[str, Any]:
     return {"via_device_id": device.id} if device is not None else {}
 
 
-# The firmware caps "<node name>: <text>" of a channel message at this many
-# bytes and cuts the rest without an error (BaseChatMesh::sendGroupMessage).
-CHANNEL_TEXT_MAX_BYTES: Final = 160
+# The firmware's MAX_TEXT_LEN (BaseChatMesh.h): the plaintext budget for both
+# message kinds. A channel message spends part of it on the "<node name>: "
+# prefix and is cut without an error past the cap
+# (BaseChatMesh::sendGroupMessage); a direct message carries no prefix and is
+# refused outright instead (BaseChatMesh::composeMsgPacket returns NULL).
+TEXT_MAX_BYTES: Final = 160
 
 
 def channel_text_budget(node_name: str) -> int:
     """Return the UTF-8 bytes of channel text the companion sends uncut."""
-    return CHANNEL_TEXT_MAX_BYTES - len(f"{node_name}: ".encode())
+    return TEXT_MAX_BYTES - len(f"{node_name}: ".encode())
+
+
+def direct_text_budget() -> int:
+    """Return the UTF-8 bytes of direct-message text the companion accepts."""
+    return TEXT_MAX_BYTES
+
+
+def truncate_to_bytes(text: str, limit: int) -> str:
+    """Cut text to at most ``limit`` UTF-8 bytes, never splitting a character.
+
+    Decoding the slice with ``ignore`` drops a multi-byte character the cut
+    landed inside, so the result is always shorter than the limit rather than
+    invalid UTF-8 the firmware would reject.
+    """
+    encoded = text.encode()
+    if len(encoded) <= limit:
+        return text
+    return encoded[:limit].decode("utf-8", "ignore")
 
 
 def get_channel_entity_id(

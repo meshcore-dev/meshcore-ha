@@ -13,7 +13,7 @@
   ],
   "meshcore_message_sent": [
     {"message": "Hello", "device": "contract", "message_type": "direct", "receiver": "Client", "timestamp": 1700000000, "contact_public_key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "ack_received": false, "send_id": "12345678"},
-    {"message": "Hello", "device": "contract", "message_type": "channel", "receiver": "channel_1", "timestamp": 1700000000, "channel_idx": 1, "send_timestamp": 1700000000, "send_id": "12345678", "scope": null}
+    {"message": "Hello", "device": "contract", "message_type": "channel", "receiver": "channel_1", "timestamp": 1700000000, "channel_idx": 1, "send_timestamp": 1700000000, "send_id": "12345678", "scope": null, "truncated": false}
   ],
   "meshcore_cli_response": [
     {"command": "get_bat", "response": {"level": 50}, "is_error": false, "entry_id": "contract", "timestamp": 1700000000}
