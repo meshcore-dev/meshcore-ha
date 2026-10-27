@@ -28,6 +28,7 @@ from .const import (
     ATTR_PUBKEY_PREFIX,
     ATTR_RECORD_TO_CONSOLE,
     ATTR_SCOPE,
+    ATTR_TRUNCATE,
     CONTACT_SUFFIX,
     DOMAIN,
     ENTITY_DOMAIN_BINARY_SENSOR,
@@ -65,7 +66,12 @@ from .traffic import (
     OP_TRACE,
     classify_lane,
 )
-from .utils import channel_text_budget, extract_pubkey_from_selection
+from .utils import (
+    channel_text_budget,
+    direct_text_budget,
+    extract_pubkey_from_selection,
+    truncate_to_bytes,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -196,6 +202,7 @@ SEND_CHANNEL_MESSAGE_SCHEMA = vol.Schema(
         vol.Required(ATTR_MESSAGE): cv.string,
         vol.Optional(ATTR_ENTRY_ID): cv.string,
         vol.Optional(ATTR_SCOPE): vol.Any(None, cv.string),
+        vol.Optional(ATTR_TRUNCATE, default=False): cv.boolean,
     }
 )
 
@@ -521,7 +528,28 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     _LOGGER.debug(
                         "Sending message to %s: %s", target_identifier, message
                     )
-                    
+
+                    # The firmware refuses an over-long direct message rather
+                    # than cutting it, and reports it as ERR_CODE_TABLE_FULL,
+                    # which reads as a full contact table. Say what is wrong
+                    # here instead of forwarding that.
+                    size = len(message.encode())
+                    limit = direct_text_budget()
+                    if size > limit:
+                        _fire_send_failed(
+                            hass,
+                            coordinator,
+                            reason="too_long",
+                            message_type="direct",
+                            target=target_identifier,
+                            detail=f"{size} bytes, limit {limit}",
+                        )
+                        raise ServiceValidationError(
+                            translation_domain=DOMAIN,
+                            translation_key="direct_message_too_long",
+                            translation_placeholders={"size": str(size), "limit": str(limit)},
+                        )
+
                     # Get the contact object
                     contact = None
                     contact_name = None
@@ -689,6 +717,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         channel_idx = call.data[ATTR_CHANNEL_IDX]
         message = call.data[ATTR_MESSAGE]
         scope = call.data.get(ATTR_SCOPE)
+        truncate = call.data.get(ATTR_TRUNCATE, False)
 
         config_entry_id, coordinator, _error = resolve_target(
             hass, call, prefer_connected=True
@@ -702,9 +731,13 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                         "Sending message to channel %s: %s", channel_idx, message
                     )
 
+                    # Cut or refuse before anything else reads the text, so the
+                    # send, the outgoing event and the delivery tracking that
+                    # sizes its repeat window from it all see the same bytes.
                     size = len(message.encode())
                     limit = channel_text_budget(api.node_name)
-                    if size > limit:
+                    truncated = size > limit
+                    if truncated and not truncate:
                         _fire_send_failed(
                             hass,
                             coordinator,
@@ -717,6 +750,13 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                             translation_domain=DOMAIN,
                             translation_key="channel_message_too_long",
                             translation_placeholders={"size": str(size), "limit": str(limit)},
+                        )
+                    if truncated:
+                        message = truncate_to_bytes(message, limit)
+                        _LOGGER.info(
+                            "Channel %s message cut from %s to %s bytes to fit the "
+                            "firmware budget",
+                            channel_idx, size, len(message.encode()),
                         )
 
                     try:
@@ -800,6 +840,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                             "send_timestamp": send_timestamp,
                             "send_id": uuid.uuid4().hex[:8],
                             "scope": scope,
+                            "truncated": truncated,
                         }
                         # Fire event for outgoing message to update message-related entities
                         fire_message_sent(hass, coordinator.config_entry, outgoing_msg)

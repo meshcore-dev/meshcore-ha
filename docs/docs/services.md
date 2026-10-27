@@ -109,7 +109,11 @@ If the message does not leave the companion, the integration fires `meshcore_mes
 | `not_connected` | The entry is not connected to its companion |
 | `rejected` | The companion refused the message. `detail` gives the firmware reason. |
 | `send_failed` | An exception occurred. `detail` gives the text. |
+| `too_long` | The text is over 160 bytes. The call also fails. |
 | `traffic_policy` | The messages lane is empty. The call also fails. |
+
+- The firmware refuses a direct message over 160 bytes (UTF-8) instead of cutting it, so the integration checks the length first and fails the call with the size and the limit. Without that check the radio reports the refusal as a full contact table, which does not name the real cause. A direct message carries no name prefix, so the whole 160 bytes are yours.
+- There is no `truncate` option here, unlike [Send Channel Message](#send-channel-message): the radio never sends part of an over-long direct message, so cutting one would invent a message the radio would not have sent.
 
 ## Send Channel Message
 
@@ -120,6 +124,7 @@ Sends a message to a channel on the companion.
 | `channel_idx` | integer | Yes | The channel index (0 or more) |
 | `message` | string | Yes | The message text |
 | `scope` | string | No | A region scope name for this flood, for example `myregion` or `#myregion` |
+| `truncate` | boolean | No | Cut the text to fit instead of refusing it. Default `false`. |
 | `entry_id` | string | No | See [Select the entry](#select-the-entry) |
 
 ```yaml
@@ -133,7 +138,18 @@ data:
 - With `scope`, the integration sets the flood scope on the companion, sends the message, then resets the scope. It also resets the scope after a failed send.
 - If the companion refuses the scope, the integration logs a warning and sends the message without a scope.
 - The firmware sends a maximum of 160 bytes (UTF-8) for the companion name, `: ` and the text together. For a companion name of 11 bytes, the text limit is 147 bytes. An emoji is 4 bytes or more. If the text is longer, the call fails with an error and the companion does not send the message.
-- A failed send fires `meshcore_message_send_failed` with `message_type: channel`. The `reason` values are the same as for `send_message`, except `contact_not_found`, plus `too_long`.
+- With `truncate: true` the integration cuts the text to the byte limit and sends it instead of failing. The cut never splits a character, so the result can be a byte or two under the limit. Use it for templated text whose length you cannot predict and whose tail you are willing to lose; leave it off to be told when a message does not fit.
+
+  ```yaml
+  action: meshcore.send_channel_message
+  data:
+    channel_idx: 1
+    truncate: true
+    message: "{{ states('sensor.forecast_summary') }}"
+  ```
+
+  The firmware cuts over-long channel text on its own and says nothing, so this option puts that cut in the integration, where the length is known and reported. The `meshcore_message_sent` event carries `truncated: true` when the text was cut, and `message` holds the bytes that went out, not what you passed in.
+- A failed send fires `meshcore_message_send_failed` with `message_type: channel`. The `reason` values are the same as for `send_message`, except `contact_not_found`. `too_long` fires only when `truncate` is off.
 
 ## Send UI Message
 

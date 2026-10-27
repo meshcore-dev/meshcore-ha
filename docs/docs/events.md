@@ -289,7 +289,7 @@ The integration fires `meshcore_message_sent` when the companion accepts a messa
 
 | Field | Type | Present | Description |
 |---|---|---|---|
-| `message` | string | Always | The text that was sent |
+| `message` | string | Always | The text that was sent. With `truncate`, the bytes that went out, not what the service call passed in. |
 | `device` | string | Always | The entry ID of the companion that sent the message |
 | `message_type` | string | Always | `"direct"` or `"channel"` |
 | `receiver` | string or null | Always | Direct: the name of the recipient contact, or `null`. Channel: `"channel_<channel_idx>"`. |
@@ -301,6 +301,7 @@ The integration fires `meshcore_message_sent` when the companion accepts a messa
 | `channel_idx` | integer | Channel only | The channel index |
 | `send_timestamp` | integer | Channel only | The timestamp that the companion used for the packet |
 | `scope` | string or null | Channel only | The flood scope of the service call |
+| `truncated` | boolean | Channel only | `true` when `truncate` was set and the text was over the byte budget |
 | `entry_id`, `device_id` | string | Always | See [Which companion fired the event](#which-companion-fired-the-event) |
 
 ## meshcore_message_send_failed
@@ -324,7 +325,7 @@ The integration fires `meshcore_message_send_failed` when a message did not leav
 | `rejected` | The firmware refused the message | Returns |
 | `send_failed` | The send raised an exception | Returns |
 | `traffic_policy` | The messages lane has no credit. See [Mesh Traffic Policy](traffic-policy.md). | Raises an error |
-| `too_long` | The channel message is more than the firmware can send (channel only). See [Send Channel Message](services.md#send-channel-message). | Raises an error |
+| `too_long` | The text is over the byte budget. Channel: only when `truncate` is off. See [Send Channel Message](services.md#send-channel-message). | Raises an error |
 
 No event fires when `entry_id` does not exist, or when a `send_message` call has no recipient.
 

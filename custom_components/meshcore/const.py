@@ -57,6 +57,9 @@ ATTR_MESSAGE: Final = "message"
 ATTR_COMMAND: Final = "command"
 ATTR_ENTRY_ID: Final = "entry_id"
 ATTR_SCOPE: Final = "scope"
+# When set on send_channel_message, text over the firmware budget is cut to fit
+# instead of refusing the send.
+ATTR_TRUNCATE: Final = "truncate"
 # When set on execute_command / execute_command_ui, the command/response pair is
 # recorded to the CLI Console transcript and the meshcore_cli_response event fires.
 ATTR_RECORD_TO_CONSOLE: Final = "record_to_console"

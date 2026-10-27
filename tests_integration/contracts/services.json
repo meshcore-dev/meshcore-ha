@@ -10,7 +10,8 @@
     "Required:channel_idx": {"validator": {"All": [{"Coerce": "int"}, {"Range": [0, null, true, true]}]}},
     "Required:message": {"validator": "homeassistant.helpers.config_validation.string"},
     "Optional:entry_id": {"validator": "homeassistant.helpers.config_validation.string"},
-    "Optional:scope": {"validator": {"Any": [null, "homeassistant.helpers.config_validation.string"]}}
+    "Optional:scope": {"validator": {"Any": [null, "homeassistant.helpers.config_validation.string"]}},
+    "Optional:truncate": {"validator": "homeassistant.helpers.config_validation.boolean", "default": false}
   }}},
   "execute_command": {"response": "optional", "schema": {"required": false, "extra": 0, "fields": {
     "Required:command": {"validator": "homeassistant.helpers.config_validation.string"},
