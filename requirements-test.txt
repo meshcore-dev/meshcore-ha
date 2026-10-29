@@ -2,7 +2,7 @@
 # meshcore, voluptuous, paho-mqtt, pynacl) are MagicMock-stubbed in
 # tests/conftest.py, so only what the suite really imports is needed here.
 pytest>=9.1.1
-pytest-asyncio>=1.4.0
+pytest-asyncio>=1.4.1
 pytest-cov>=7.1.0
 pycryptodome>=3.24.0
 ruff>=0.16.10
