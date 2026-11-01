@@ -75,6 +75,7 @@ PUBKEY_PREFIX_LENGTH: Final = 12
 
 DEFAULT_MQTT_TOPIC_STATUS: Final = "meshcore/{IATA}/{PUBLIC_KEY}/status"
 DEFAULT_MQTT_TOPIC_EVENTS: Final = "meshcore/{IATA}/{PUBLIC_KEY}/packets"
+DEFAULT_MQTT_WS_PATH: Final = "/"
 DEFAULT_MQTT_IATA: Final = "XYZ"
 DEFAULT_MQTT_DECODER_CMD: Final = "meshcore-decoder"
 MAX_MQTT_BROKERS: Final = 4

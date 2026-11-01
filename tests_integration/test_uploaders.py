@@ -305,3 +305,52 @@ async def test_a_stop_during_connect_leaves_no_loops(hass: HomeAssistant) -> Non
     assert uploader._publish_task is None
     assert uploader._clients == []
     client.loop_stop.assert_called()
+
+
+def _broker_uploader(hass: HomeAssistant, settings: dict[str, Any]) -> MeshCoreMqttUploader:
+    """An uploader whose single broker has these settings and no client yet."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        entry_id=f"ws-{id(settings)}",
+        data=ENTRY_DATA,
+        options={"mqtt_brokers": {"1": {"enabled": True, "server": "ws.invalid", **settings}}},
+    )
+    entry.add_to_hass(hass)
+    return MeshCoreMqttUploader(hass, logging.getLogger(__name__), entry)
+
+
+@pytest.mark.parametrize(
+    ("stored", "path"),
+    [
+        (None, "/"),
+        ("", "/"),
+        ("   ", "/"),
+        ("/mqtt", "/mqtt"),
+        (" /mqtt ", "/mqtt"),
+        ("mqtt", "/mqtt"),
+    ],
+)
+def test_the_websocket_path_is_always_rooted(hass: HomeAssistant, stored: Any, path: str) -> None:
+    """A missing or unrooted path becomes one paho can open."""
+    settings: dict[str, Any] = {"transport": "websockets"}
+    if stored is not None:
+        settings["ws_path"] = stored
+    uploader = _broker_uploader(hass, settings)
+    assert uploader.get_brokers()[0].ws_path == path
+
+
+async def test_a_websockets_broker_connects_on_its_configured_path(hass: HomeAssistant) -> None:
+    """The path a broker serves MQTT on reaches paho instead of a hardcoded root."""
+    uploader = _broker_uploader(hass, {"transport": "websockets", "ws_path": "/mqtt"})
+    with patch("custom_components.meshcore.mqtt_uploader.mqtt.Client") as client_cls:
+        client = await uploader._async_create_client(uploader.get_brokers()[0])
+    assert client is client_cls.return_value
+    client.ws_set_options.assert_called_once_with(path="/mqtt", headers=None)
+
+
+async def test_a_tcp_broker_sets_no_websocket_options(hass: HomeAssistant) -> None:
+    """A tcp broker ignores the path field entirely."""
+    uploader = _broker_uploader(hass, {"transport": "tcp", "ws_path": "/mqtt"})
+    with patch("custom_components.meshcore.mqtt_uploader.mqtt.Client") as client_cls:
+        await uploader._async_create_client(uploader.get_brokers()[0])
+    client_cls.return_value.ws_set_options.assert_not_called()

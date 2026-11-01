@@ -23,7 +23,7 @@ from homeassistant.core import HomeAssistant
 
 from meshcore.events import EventType
 
-from .config import Settings
+from .config import DEFAULT_MQTT_WS_PATH, Settings
 from .const import (
     CONF_NAME,
     CONF_PUBKEY,
@@ -59,6 +59,14 @@ def _as_int(value: str | int | None, default: int) -> int:
         return default
 
 
+def _normalize_ws_path(value: Any) -> str:
+    """Return the WebSocket path a broker serves MQTT on, always rooted."""
+    path = str(value or "").strip()
+    if not path:
+        return DEFAULT_MQTT_WS_PATH
+    return path if path.startswith("/") else f"/{path}"
+
+
 @dataclass
 class BrokerConfig:
     """Configuration for one MQTT broker."""
@@ -83,6 +91,7 @@ class BrokerConfig:
     client_id_prefix: str
     topic_status: str
     topic_packets: str
+    ws_path: str
 
     @property
     def name(self) -> str:
@@ -322,6 +331,7 @@ class MeshCoreMqttUploader:
                     ),
                     iata,
                 ),
+                ws_path=_normalize_ws_path(broker_settings.get("ws_path")),
             )
 
             if broker.is_letsmesh and iata in placeholder_iata_values:
@@ -470,7 +480,7 @@ class MeshCoreMqttUploader:
             self.logger.warning("[%s] Empty status topic; skipping MQTT will", broker.name)
 
         if broker.transport == "websockets":
-            client.ws_set_options(path="/", headers=None)
+            client.ws_set_options(path=broker.ws_path, headers=None)
 
         self.logger.info(
             "[%s] Ready (status_topic=%s packets_topic=%s auth_token=%s)",
