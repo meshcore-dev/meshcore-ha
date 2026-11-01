@@ -122,6 +122,27 @@ async def test_advert_rearms_governed_but_not_legacy(mesh, monkeypatch):
     assert PREFIX in coordinator._auto_disabled_devices
 
 
+async def test_advert_rearms_a_node_still_backing_off(mesh, monkeypatch):
+    coordinator = mesh.coordinator
+    monkeypatch.setattr(coordinator, "_fetch_advert_path", AsyncMock())
+    coordinator._setup_advert_path_listener()
+    coordinator._repeater_consecutive_failures[PREFIX] = 3
+    coordinator._telemetry_consecutive_failures[PREFIX] = 2
+    coordinator._next_repeater_update_times[PREFIX] = 9999999999
+    coordinator._next_telemetry_update_times[PREFIX] = 9999999999
+    assert PREFIX not in coordinator._auto_disabled_devices
+    await mesh.radio.emit(EventType.ADVERTISEMENT, {"public_key": CONTACT["public_key"]})
+    await asyncio.sleep(0)
+    _assert_rearmed(coordinator)
+
+    coordinator._repeater_consecutive_failures[PREFIX] = 0
+    coordinator._telemetry_consecutive_failures[PREFIX] = 0
+    coordinator._next_repeater_update_times[PREFIX] = 1234
+    await mesh.radio.emit(EventType.ADVERTISEMENT, {"public_key": CONTACT["public_key"]})
+    await asyncio.sleep(0)
+    assert coordinator._next_repeater_update_times[PREFIX] == 1234
+
+
 async def test_contact_lastmod_update_rearms(mesh, monkeypatch):
     coordinator = mesh.coordinator
     coordinator._contacts = {PREFIX: dict(CONTACT)}

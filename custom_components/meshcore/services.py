@@ -1226,6 +1226,20 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             else:
                 result = await run(command_name, *prepared_args, **prepared_kwargs)
 
+            # A status answered on request proves the node is reachable, just
+            # like a scheduled poll would; malformed answers (uptime 0) do not.
+            if (
+                command_name == "req_status_sync"
+                and isinstance(result, dict)
+                and result.get("uptime", 0)
+            ):
+                status_target = next(
+                    (arg for arg in [*prepared_args, *prepared_kwargs.values()] if isinstance(arg, dict)),
+                    None,
+                )
+                if status_target:
+                    coordinator.record_status_response(status_target.get("public_key", ""))
+
             # Refresh SELF_INFO after commands that modify config values
             # so HA sensors immediately reflect the new state.
             if command_name in _SELF_INFO_COMMANDS and result.type != EventType.ERROR:
