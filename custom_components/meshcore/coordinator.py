@@ -1239,12 +1239,40 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
         self._save_traffic_state()
 
     def rearm_heard_node(self, public_key: str) -> None:
-        """Resume governed polling when an auto-disabled tracked node advertises."""
+        """Resume governed polling when a struggling tracked node advertises.
+
+        Covers auto-disabled nodes and tracked nodes still backing off after
+        failed polls: hearing the node means it is reachable again, so its
+        next poll is due now and its failure counters start over.
+        """
         if self._traffic_policy != POLICY_GOVERNED:
             return
-        for prefix in tuple(self._auto_disabled_devices):
+        struggling = set(self._auto_disabled_devices)
+        for failures in (
+            self._repeater_consecutive_failures,
+            self._telemetry_consecutive_failures,
+        ):
+            struggling.update(prefix for prefix, count in failures.items() if count)
+        for prefix in struggling:
             if public_key.startswith(prefix):
                 self.seed_tracked_node(prefix)
+
+    def record_status_response(self, public_key: str) -> None:
+        """Stamp a tracked node's last success from a status answered outside a poll.
+
+        A manual ``req_status_sync`` refreshes the node's stats sensors, so its
+        online sensor should agree instead of waiting for the next scheduled poll.
+        """
+        if not public_key:
+            return
+        stamped = False
+        for node_config in (*self._tracked_repeaters, *self._tracked_clients):
+            prefix = node_config.get("pubkey_prefix", "")
+            if prefix and public_key.startswith(prefix):
+                self._last_successful_request[prefix] = time.time()
+                stamped = True
+        if stamped:
+            self.async_update_listeners()
 
     def forget_tracked_node(self, pubkey_prefix: str, node_type: str) -> None:
         """Drop every trace of a node the user stopped tracking.

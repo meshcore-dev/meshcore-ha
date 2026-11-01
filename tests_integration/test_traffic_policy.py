@@ -282,6 +282,29 @@ async def test_mesh_round_trip_does_not_block_a_local_command(
     assert await status == {"uptime": 42}
 
 
+async def test_manual_status_request_stamps_the_online_sensor(
+    hass: HomeAssistant, governed: SimpleNamespace
+) -> None:
+    """A status answered to execute_command counts as a success for that node."""
+    coordinator = governed.coordinator
+    radio = governed.radio
+    assert PREFIX not in coordinator._last_successful_request
+
+    radio.script[radio.key("req_status_sync", CONTACT)] = {"uptime": 0}
+    await hass.services.async_call(
+        DOMAIN, SERVICE_EXECUTE_COMMAND, {"command": f"req_status_sync {PREFIX}"},
+        blocking=True, return_response=True,
+    )
+    assert PREFIX not in coordinator._last_successful_request
+
+    radio.script[radio.key("req_status_sync", CONTACT)] = {"uptime": 42}
+    assert await hass.services.async_call(
+        DOMAIN, SERVICE_EXECUTE_COMMAND, {"command": f"req_status_sync {PREFIX}"},
+        blocking=True, return_response=True,
+    ) == {"uptime": 42}
+    assert coordinator._last_successful_request[PREFIX] > 0
+
+
 async def test_governed_state_survives_a_restart(
     hass: HomeAssistant, governed: SimpleNamespace
 ) -> None:
