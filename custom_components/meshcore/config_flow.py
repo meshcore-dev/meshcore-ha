@@ -25,6 +25,7 @@ from meshcore.events import EventType
 from .config import (
     DEFAULT_MQTT_TOPIC_EVENTS,
     DEFAULT_MQTT_TOPIC_STATUS,
+    DEFAULT_MQTT_WS_PATH,
     MAX_MQTT_BROKERS,
     PUBKEY_PREFIX_LENGTH,
     Settings,
@@ -1175,6 +1176,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 "server": user_input.get("server", ""),
                 "port": user_input.get("port", 1883),
                 "transport": user_input.get("transport", "tcp"),
+                "ws_path": user_input.get("ws_path", DEFAULT_MQTT_WS_PATH),
                 "use_tls": user_input.get("use_tls", False),
                 "tls_verify": user_input.get("tls_verify", True),
                 "keepalive": user_input.get("keepalive", 60),
@@ -1198,6 +1200,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             vol.Optional("server", default=broker.get("server", "")): str,
             vol.Optional("port", default=broker.get("port", 1883)): cv.port,
             vol.Optional("transport", default=broker.get("transport", "tcp")): vol.In(["tcp", "websockets"]),
+            vol.Optional("ws_path", default=broker.get("ws_path", DEFAULT_MQTT_WS_PATH)): str,
             vol.Optional("use_tls", default=broker.get("use_tls", False)): cv.boolean,
             vol.Optional("tls_verify", default=broker.get("tls_verify", True)): cv.boolean,
             vol.Optional("keepalive", default=broker.get("keepalive", 60)): vol.All(cv.positive_int, vol.Range(min=15, max=300)),

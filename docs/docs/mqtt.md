@@ -26,7 +26,8 @@ The change applies at once, without a reload. The [connection sensors](#connecti
 | **Enabled** | Off | The integration skips a disabled broker. |
 | **Server** | Empty | Host name or IP address. The integration skips an enabled broker with no server. |
 | **Port** | 1883 | 1 to 65535. |
-| **Transport** | `tcp` | `tcp` or `websockets`. The WebSocket path is `/`. |
+| **Transport** | `tcp` | `tcp` or `websockets`. |
+| **WebSocket Path** | `/` | Used only with `websockets`. LetsMesh and MeshMapper use `/`. Mosquitto, EMQX and meshview.dk usually serve MQTT at `/mqtt`. A path without a leading `/` gets one. |
 | **Use TLS** | Off | |
 | **Verify TLS Certificate** | On | If off, the integration accepts any certificate and logs a warning. |
 | **Keepalive (seconds)** | 60 | 15 to 300. |

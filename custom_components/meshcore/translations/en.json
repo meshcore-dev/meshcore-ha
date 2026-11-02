@@ -353,6 +353,7 @@
           "server": "Server",
           "port": "Port",
           "transport": "Transport",
+          "ws_path": "WebSocket Path",
           "use_tls": "Use TLS",
           "tls_verify": "Verify TLS Certificate",
           "keepalive": "Keepalive (seconds)",
@@ -372,7 +373,10 @@
           "client_id_prefix": "Client ID Prefix"
         },
         "description": "Configure MQTT broker {broker_number}",
-        "title": "MQTT Broker Settings"
+        "title": "MQTT Broker Settings",
+        "data_description": {
+          "ws_path": "Used only when Transport is websockets. LetsMesh and MeshMapper use /. Mosquitto, EMQX and meshview.dk usually serve MQTT at /mqtt."
+        }
       }
     }
   },
