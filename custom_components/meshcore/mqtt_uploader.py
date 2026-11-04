@@ -23,7 +23,7 @@ from homeassistant.core import HomeAssistant
 
 from meshcore.events import EventType
 
-from .config import DEFAULT_MQTT_WS_PATH, Settings
+from .config import DEFAULT_MQTT_WS_PATH, MAX_MQTT_BROKERS, Settings
 from .const import (
     CONF_NAME,
     CONF_PUBKEY,
@@ -227,7 +227,7 @@ class MeshCoreMqttUploader:
         """Load broker configs from config entry data."""
         placeholder_iata_values = {"", "XYZ"}
         brokers: list[BrokerConfig] = []
-        for idx in range(1, 5):
+        for idx in range(1, MAX_MQTT_BROKERS + 1):
             broker_settings = self.settings.get(str(idx), {}) if isinstance(self.settings, dict) else {}
             broker_name = f"MQTT{idx}"
             enabled = _as_bool(

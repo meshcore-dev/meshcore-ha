@@ -96,7 +96,7 @@ Go to **Settings > Devices & services > MeshCore > Configure**. In **Choose an a
 | Add Tracked Client | Track a client. See [Remote Node Tracking](remote-device-tracking.md). |
 | Manage Monitored Devices | Edit or remove a tracked node |
 | Global Settings | Change the settings of the entry |
-| Manage MQTT Brokers | Add, edit or remove a maximum of 4 MQTT brokers. See [MQTT Upload](mqtt.md). |
+| Manage MQTT Brokers | Add, edit or remove a maximum of 6 MQTT brokers. See [MQTT Upload](mqtt.md). |
 
 Each **Submit** saves the change. To close the menu, select **Done**.
 

@@ -5,7 +5,7 @@ title: MQTT Upload
 
 # MQTT Upload
 
-The integration can publish MeshCore packets and events to a maximum of 4 MQTT brokers. It connects to the brokers directly. It does not use the Home Assistant MQTT integration. Each broker has its own server, authentication, topics and payload mode.
+The integration can publish MeshCore packets and events to a maximum of 6 MQTT brokers. It connects to the brokers directly. It does not use the Home Assistant MQTT integration. Each broker has its own server, authentication, topics and payload mode.
 
 ## Configure a broker
 
