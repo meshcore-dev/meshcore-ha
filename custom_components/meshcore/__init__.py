@@ -71,7 +71,7 @@ from .utils import (
 _LOGGER = logging.getLogger(__name__)
 
 # List of platforms to set up
-PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SELECT, Platform.TEXT, Platform.DEVICE_TRACKER, Platform.BUTTON]
+PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SELECT, Platform.TEXT, Platform.DEVICE_TRACKER, Platform.BUTTON, Platform.UPDATE]
 STATIC_PATH_REGISTERED_KEY = f"{DOMAIN}_static_path_registered"
 
 

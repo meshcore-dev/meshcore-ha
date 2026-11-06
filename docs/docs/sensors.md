@@ -27,8 +27,8 @@ A node that you do not track has its advertised name. If the contact has no name
 
 | Device | Name format | Entities on the device |
 |---|---|---|
-| Companion | `MeshCore <name> (<pk6>)` | Companion, Self Diagnostics, companion telemetry, contact, message, radio fault and MQTT broker sensors, companion GPS tracker |
-| Repeater | `MeshCore Repeater: <name> (<node pk6>)` | Repeater, route, reliability, Online and neighbor sensors, telemetry sensors, GPS tracker, Refresh firmware version button |
+| Companion | `MeshCore <name> (<pk6>)` | Companion, Self Diagnostics, companion telemetry, contact, message, radio fault and MQTT broker sensors, companion GPS tracker, Firmware update |
+| Repeater | `MeshCore Repeater: <name> (<node pk6>)` | Repeater, route, reliability, Online and neighbor sensors, telemetry sensors, GPS tracker, Refresh firmware version button, Firmware update |
 | Client | `MeshCore Client: <name> (<node pk6>)` | Route, reliability and Online sensors, telemetry sensors, GPS tracker |
 | Other node | `MeshCore Node: <name> (<node pk6>)` | Telemetry sensors and GPS tracker of a node that you do not track |
 | No device | - | Select and text helpers, CLI Console sensor, CLI buttons |
@@ -39,7 +39,7 @@ A room server or sensor node that you add with **Add Repeater Station** gets a r
 
 | Entity group | Unavailable when |
 |---|---|
-| Companion, Self Diagnostics, route, reliability, Online, message and radio fault sensors, Companion Prefix, Neighbor Count, Discovered Contacts, CLI Console, buttons | The companion is disconnected (the last coordinator update failed) |
+| Companion, Self Diagnostics, route, reliability, Online, message and radio fault sensors, Companion Prefix, Neighbor Count, Discovered Contacts, CLI Console, buttons, firmware updates | The companion is disconnected (the last coordinator update failed) |
 | Repeater sensors | No status response in 3 x the update interval (6 h at the default 7200 s). After a restart, until the first status response. |
 | Telemetry sensors | No telemetry reading in 3 x the update interval (default 6 h). After a restart, until the first reading. |
 | GPS trackers | No GPS reading in 1.5 x the update interval (default 3 h) |
@@ -290,6 +290,27 @@ The location accuracy is 10 m when the reading gives no accuracy. Attributes: `p
 | CLI Clear Console | `button.meshcore_<pk6>_cli_clear` | None (hidden) | When **Enable CLI Console** is set |
 
 A press of **Refresh firmware version** costs one credit. If the lane has no credit, the press fails with an error.
+
+## Firmware updates
+
+| Update | Entity ID format | Device | When created |
+|---|---|---|---|
+| Firmware | `update.meshcore_<pk6>_firmware` | Companion | Always |
+| Firmware | `update.meshcore_<pk10>_firmware` | Repeater | For each tracked repeater |
+
+Each update entity compares the firmware that the node reported with the newest stable release of the [MeshCore firmware](https://github.com/meshcore-dev/MeshCore/releases) for the role of the node:
+
+| Node | Installed version from | Release line |
+|---|---|---|
+| Companion | The device query at connect | `companion-v*` |
+| Tracked repeater | The **Refresh firmware version** button, or the version kept in the device registry | `repeater-v*` |
+| Tracked room server | The same as a repeater | `room-server-v*` |
+
+The integration checks the releases on GitHub every 12 hours. One check serves all config entries. Pre-releases and drafts are ignored. The check uses no mesh airtime.
+
+The entities only report an update. They have no install action, because MeshCore nodes are flashed over USB or with the web flasher. **Release notes** shows the notes of the release, and the entity links to the release page.
+
+If the node has not reported a version, the entity has no latest version and does not show an update. Press **Refresh firmware version** to read the version of a repeater.
 
 ## CLI Console sensor
 

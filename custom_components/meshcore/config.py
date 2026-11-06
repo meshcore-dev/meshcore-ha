@@ -569,6 +569,7 @@ def _add_node_entities(coordinator: Any, record: dict[str, Any], node_type: str)
     from .binary_sensor import build_node_online_sensors
     from .button import build_repeater_buttons
     from .sensor import build_node_sensors
+    from .update import build_repeater_updates
 
     _add_entities(
         getattr(coordinator, "sensor_add_entities", None),
@@ -582,6 +583,10 @@ def _add_node_entities(coordinator: Any, record: dict[str, Any], node_type: str)
         _add_entities(
             getattr(coordinator, "button_add_entities", None),
             build_repeater_buttons(coordinator, record),
+        )
+        _add_entities(
+            getattr(coordinator, "update_add_entities", None),
+            build_repeater_updates(coordinator, record),
         )
 
 

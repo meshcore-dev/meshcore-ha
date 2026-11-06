@@ -34,3 +34,16 @@ async def _release_fake_radios(verify_cleanup):
 
     yield
     await FakeRadio.release_all()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _no_firmware_release_fetch(aioclient_mock):
+    """Answer the firmware release check offline with an empty release list.
+
+    Every entry setup starts the shared GitHub release poll; tests that care
+    about its result clear this mock and register their own response.
+    """
+    from custom_components.meshcore.firmware_release import FIRMWARE_RELEASES_URL
+
+    aioclient_mock.get(FIRMWARE_RELEASES_URL, json=[])
+    yield
