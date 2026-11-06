@@ -410,7 +410,13 @@ class MeshCoreMqttUploader:
                 )
                 client.loop_start()
             except Exception as ex:
-                self.logger.error("[%s] Connection error: %s", broker.name, ex)
+                # paho's loop retries a failed first connect with backoff, the
+                # same as after a timeout; without it the broker stays dead
+                # until the entry reloads.
+                self.logger.error(
+                    "[%s] Connection error: %s; paho keeps retrying", broker.name, ex
+                )
+                client.loop_start()
         # An unload can stop the uploader while a connect above is pending;
         # the clients made since then and the loops below must not outlive it.
         if self._stopped:

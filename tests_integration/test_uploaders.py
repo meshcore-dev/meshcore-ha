@@ -354,3 +354,18 @@ async def test_a_tcp_broker_sets_no_websocket_options(hass: HomeAssistant) -> No
     with patch("custom_components.meshcore.mqtt_uploader.mqtt.Client") as client_cls:
         await uploader._async_create_client(uploader.get_brokers()[0])
     client_cls.return_value.ws_set_options.assert_not_called()
+
+
+async def test_a_refused_first_connect_still_starts_the_retry_loop(hass: HomeAssistant) -> None:
+    """A non-timeout connect error leaves paho retrying, not a dead broker (#408)."""
+    uploader = _broker_uploader(hass, {"transport": "websockets"})
+    client = MagicMock()
+    client.connect.side_effect = OSError("WebSocket handshake error, connection not upgraded")
+    with patch.object(uploader, "_async_create_client", AsyncMock(return_value=client)):
+        await uploader.async_start()
+    try:
+        client.connect.assert_called_once()
+        client.loop_start.assert_called_once()
+        assert uploader.is_broker_connected(1) is False
+    finally:
+        await uploader.async_stop()

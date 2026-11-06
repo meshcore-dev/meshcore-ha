@@ -333,6 +333,15 @@ No event fires when `entry_id` does not exist, or when a `send_message` call has
 
 The integration fires `meshcore_raw_event` for each event that the meshcore-py library reports, except `PRIVATE_KEY`. The [meshcore-py source](https://github.com/meshcore-dev/meshcore_py) defines each payload.
 
+The recorder stores every one of these events by default. On a busy mesh that is hundreds of thousands of rows in a few days. If you do not use them in automations, exclude them:
+
+```yaml
+recorder:
+  exclude:
+    event_types:
+      - meshcore_raw_event
+```
+
 | Field | Type | Present | Description |
 |---|---|---|---|
 | `event_type` | string | Always | The library event type, for example `"EventType.BATTERY"` |

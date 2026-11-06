@@ -137,7 +137,7 @@ data:
 
 - With `scope`, the integration sets the flood scope on the companion, sends the message, then resets the scope. It also resets the scope after a failed send.
 - If the companion refuses the scope, the integration logs a warning and sends the message without a scope.
-- The firmware sends a maximum of 160 bytes (UTF-8) for the companion name, `: ` and the text together. For a companion name of 11 bytes, the text limit is 147 bytes. An emoji is 4 bytes or more. If the text is longer, the call fails with an error and the companion does not send the message.
+- The firmware sends a maximum of 160 bytes (UTF-8) for the companion name, `: ` and the text together. For a companion name of 11 bytes, the text limit is 147 bytes. An emoji is 4 bytes or more. If the text is longer, the call fails with an error and the companion does not send the message, unless `truncate` is set.
 - With `truncate: true` the integration cuts the text to the byte limit and sends it instead of failing. The cut never splits a character, so the result can be a byte or two under the limit. Use it for templated text whose length you cannot predict and whose tail you are willing to lose; leave it off to be told when a message does not fit.
 
   ```yaml

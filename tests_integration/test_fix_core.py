@@ -260,7 +260,8 @@ async def test_neighbor_restart_does_not_double_count_and_absence_ages(mesh, mon
     assert sensor.available
     clock.value = 199000 + NEIGHBOR_STALE_THRESHOLD
     assert not sensor.available
-    assert sensor.extra_state_attributes["secs_ago"] == NEIGHBOR_STALE_THRESHOLD + 100
+    assert coordinator.neighbor_age(data) == NEIGHBOR_STALE_THRESHOLD + 100
+    assert "secs_ago" not in sensor.extra_state_attributes
     # 86400 seconds since last heard is retained, rather than adding downtime twice.
     clock.value = 199000 + 86300
     assert await coordinator._cleanup_stale_neighbors(1) == 0
@@ -433,3 +434,21 @@ async def test_missing_repeater_contact_waits_its_interval_and_warns_once(mesh, 
     assert caplog.text.count(message) == 1
     due = coordinator._next_repeater_update_times[PREFIX]
     assert due >= coordinator._current_time() + 7200 - 5
+
+
+async def test_neighbor_attributes_do_not_change_with_the_clock(mesh, monkeypatch):
+    from datetime import datetime
+
+    """An age in the attributes made every coordinator tick a recorder row (#407)."""
+    coordinator = mesh.coordinator
+    clock = SimpleNamespace(value=200000.0)
+    monkeypatch.setattr(coordinator_module, "time", SimpleNamespace(time=lambda: clock.value))
+    coordinator._repeater_neighbors[PREFIX] = {
+        "11223344": {"secs_ago": 10, "last_updated": 199990, "snr": 5, "seen_timestamps": [199990]}
+    }
+    sensor = MeshCoreNeighborSensor(coordinator, PREFIX, "Repeater", "11223344")
+    first = dict(sensor.extra_state_attributes)
+    clock.value += 300
+    assert sensor.extra_state_attributes == first
+    assert "secs_ago" not in first and "last_seen" not in first
+    assert first["last_updated"] == datetime.fromtimestamp(199990).isoformat()

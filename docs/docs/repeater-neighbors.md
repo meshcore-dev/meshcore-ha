@@ -36,7 +36,7 @@ A scan stops when one of these conditions occurs:
 - The repeater reports a different total two times.
 - The lane has no credit for the next page. The integration keeps the entries that it received.
 
-A neighbor that is not in the latest scan keeps its last SNR. Its age (`secs_ago`) continues to increase, also across restarts, until the repeater hears it again.
+A neighbor that is not in the latest scan keeps its last SNR and its `last_updated` time, also across restarts, until the repeater hears it again. The sensor becomes unavailable 72 h after that time.
 
 ## Sensors
 
@@ -45,7 +45,7 @@ All neighbor sensors are on the device of the repeater. `<pk10>` is the first 10
 | Sensor | Entity ID example | State | Attributes |
 |---|---|---|---|
 | **Neighbor Count** | `sensor.meshcore_def456abc0_neighbor_count` | Number of stored neighbors | `active` (heard in the last 72 hours), `stale` |
-| **Neighbor `<name>` SNR** | `sensor.meshcore_def456abc0_neighbor_fed987` | Last SNR in dB | `secs_ago`, `last_seen`, `pubkey_prefix`, `resolved_name`, `last_updated`, `seen_48h` |
+| **Neighbor `<name>` SNR** | `sensor.meshcore_def456abc0_neighbor_fed987` | Last SNR in dB | `pubkey_prefix`, `resolved_name`, `last_updated`, `seen_48h` |
 | **Neighbor `<name>` Seen** | `sensor.meshcore_def456abc0_neighbor_fed987_seen` | Sightings in the last 48 hours | `pubkey_prefix`, `resolved_name` |
 
 - A sighting is a scan in which the repeater heard the neighbor again since the previous scan. At an interval of 7200 seconds, the maximum value is 24.
