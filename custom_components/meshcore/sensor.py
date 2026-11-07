@@ -2017,22 +2017,9 @@ class MeshCoreNeighborSensor(CoordinatorEntity, SensorEntity):
         if data is None:
             return {}
 
-        secs_ago = self.coordinator.neighbor_age(data)
-
-        # Human-readable last seen
-        if secs_ago < 60:
-            last_seen = f"{secs_ago}s ago"
-        elif secs_ago < 3600:
-            last_seen = f"{secs_ago // 60}m {secs_ago % 60}s ago"
-        elif secs_ago < 86400:
-            hours = secs_ago // 3600
-            mins = (secs_ago % 3600) // 60
-            last_seen = f"{hours}h {mins}m ago"
-        else:
-            days = secs_ago // 86400
-            hours = (secs_ago % 86400) // 3600
-            last_seen = f"{days}d {hours}h ago"
-
+        # Only values that change when the neighbor data changes: an age
+        # computed from the clock would make every coordinator tick a new
+        # recorder row for every neighbor.
         last_updated = data.get("last_updated")
         last_updated_str = (
             datetime.fromtimestamp(last_updated).isoformat()
@@ -2041,8 +2028,6 @@ class MeshCoreNeighborSensor(CoordinatorEntity, SensorEntity):
         )
 
         return {
-            "secs_ago": secs_ago,
-            "last_seen": last_seen,
             "pubkey_prefix": self._neighbor_pubkey,
             "resolved_name": self._resolved_name,
             "last_updated": last_updated_str,
