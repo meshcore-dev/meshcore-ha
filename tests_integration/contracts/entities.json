@@ -65,5 +65,7 @@
   "select.meshcore_added_contact": "contract_added_contact_select",
   "text.meshcore_message": "contract_message_input",
   "text.meshcore_command": "contract_command_input",
-  "button.meshcore_aaaaaaaaaa_refresh_firmware": "contract_repeater_aaaaaaaaaaaa_refresh_firmware"
+  "button.meshcore_aaaaaaaaaa_refresh_firmware": "contract_repeater_aaaaaaaaaaaa_refresh_firmware",
+  "update.meshcore_cccccc_firmware": "contract_firmware_update",
+  "update.meshcore_aaaaaaaaaa_firmware": "contract_repeater_aaaaaaaaaaaa_firmware_update"
 }
