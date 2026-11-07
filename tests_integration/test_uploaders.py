@@ -59,8 +59,13 @@ def fast_connect(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-class _StalledClient:
-    """A paho stand-in whose connect never answers, like a dead broker."""
+class _UnreachableClient:
+    """A paho stand-in whose connect is refused, like a broker that is down.
+
+    It refuses rather than stalls: a stalled connect would leave a worker
+    thread sleeping past the test, and the setup budget this guards is the
+    same either way.
+    """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         """Record the calls a client normally receives, doing none of them."""
@@ -72,8 +77,8 @@ class _StalledClient:
         return lambda *args, **kwargs: None
 
     def connect(self, *args: Any, **kwargs: Any) -> None:
-        """Block the way a connect to an unroutable broker blocks."""
-        time.sleep(30)
+        """Fail the way a connect to a down broker fails."""
+        raise OSError("connection refused")
 
 
 @pytest.fixture
@@ -122,9 +127,6 @@ async def _setup(runtime: SimpleNamespace, hass: HomeAssistant) -> float:
         patch.object(
             coordinator, "async_reconcile_discovered_for_mode", return_value=None
         ),
-        patch(
-            "custom_components.meshcore.mqtt_uploader.mqtt.Client", _StalledClient
-        ),
         patch.object(hass.config_entries, "async_forward_entry_setups", return_value=None),
     ]
     for context in stack:
@@ -142,18 +144,21 @@ async def test_setup_completes_with_an_unreachable_broker(
     hass: HomeAssistant, runtime: SimpleNamespace
 ) -> None:
     """H-09: broker work belongs after platforms, not inside setup."""
-    elapsed = await _setup(runtime, hass)
+    # The broker connect is a background task that may run after setup
+    # returns, so the stand-in client has to outlive the setup call itself.
+    with patch("custom_components.meshcore.mqtt_uploader.mqtt.Client", _UnreachableClient):
+        elapsed = await _setup(runtime, hass)
 
-    assert elapsed < SETUP_BUDGET_SECONDS
-    uploader = runtime.coordinator.mqtt_uploader
-    assert uploader is not None
-    assert [broker.server for broker in uploader.get_brokers()] == ["broker.invalid"]
-    # The status sensors can enumerate the brokers, but nothing has connected.
-    assert uploader.get_brokers()[0].number == 1
-    assert uploader.is_broker_connected(1) is False
+        assert elapsed < SETUP_BUDGET_SECONDS
+        uploader = runtime.coordinator.mqtt_uploader
+        assert uploader is not None
+        assert [broker.server for broker in uploader.get_brokers()] == ["broker.invalid"]
+        # The status sensors can enumerate the brokers, but nothing has connected.
+        assert uploader.get_brokers()[0].number == 1
+        assert uploader.is_broker_connected(1) is False
 
-    with patch.object(hass.config_entries, "async_unload_platforms", return_value=True):
-        assert await async_unload_entry(hass, runtime.entry)
+        with patch.object(hass.config_entries, "async_unload_platforms", return_value=True):
+            assert await async_unload_entry(hass, runtime.entry)
 
 
 def _uploader(hass: HomeAssistant, connected: bool) -> MeshCoreMqttUploader:
