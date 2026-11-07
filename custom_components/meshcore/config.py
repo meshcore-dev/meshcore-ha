@@ -78,7 +78,7 @@ DEFAULT_MQTT_TOPIC_EVENTS: Final = "meshcore/{IATA}/{PUBLIC_KEY}/packets"
 DEFAULT_MQTT_WS_PATH: Final = "/"
 DEFAULT_MQTT_IATA: Final = "XYZ"
 DEFAULT_MQTT_DECODER_CMD: Final = "meshcore-decoder"
-MAX_MQTT_BROKERS: Final = 4
+MAX_MQTT_BROKERS: Final = 6
 
 # Settings that live in entry.options once an entry has been migrated; the
 # migration keeps the entry.data copies so a downgrade still finds them.

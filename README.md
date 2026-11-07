@@ -52,7 +52,7 @@ To let a phone get the chat messages while Home Assistant monitors repeaters, di
 
 ## MQTT upload
 
-Configure a maximum of 4 brokers in **Manage MQTT Brokers**. The auth token mode needs firmware that permits private key export. Broker changes apply without a reload. See [MQTT Upload](https://meshcore-dev.github.io/meshcore-ha/docs/ha/mqtt).
+Configure a maximum of 6 brokers in **Manage MQTT Brokers**. The auth token mode needs firmware that permits private key export. Broker changes apply without a reload. See [MQTT Upload](https://meshcore-dev.github.io/meshcore-ha/docs/ha/mqtt).
 
 ## Map Auto Uploader (map.meshcore.io)
 
