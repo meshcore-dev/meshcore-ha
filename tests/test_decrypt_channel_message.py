@@ -12,10 +12,10 @@ Notes on known gaps vs firmware:
 - These are synthetic round-trip tests, not captures from a real device
   (firmware contains no hardcoded test vectors).
 - The 2-byte MAC: firmware uses the full 32-byte channel.secret as the
-  HMAC key; decrypt_channel_message passes channel_secret directly (16 bytes
-  in practice). The HMAC check always fails against real firmware packets but
-  decrypt_channel_message continues anyway ("Continue anyway" path), so this
-  gap does not affect decryption correctness in these tests.
+  HMAC key, which for 128-bit channels is the 16-byte secret followed by
+  zeros. HMAC zero-pads short keys, so the 16-byte secret verifies real
+  firmware MACs (checked against real over-the-air packets).
+  decrypt_channel_message decrypts regardless and reports mac_valid.
 """
 import importlib.util
 import os
@@ -78,37 +78,73 @@ class TestDecryptChannelMessage:
     def test_returns_correct_timestamp(self):
         ts = 1_748_000_000
         ciphertext, mac = _encrypt(ts, flags=0, text="hello")
-        result_ts, _ = decrypt_channel_message(ciphertext, mac, _KEY)
+        result_ts, _, _ = decrypt_channel_message(ciphertext, mac, _KEY)
         assert result_ts == ts
 
     def test_returns_correct_text(self):
         ciphertext, mac = _encrypt(1_748_000_000, flags=0, text="hello mesh")
-        _, text = decrypt_channel_message(ciphertext, mac, _KEY)
+        _, text, _ = decrypt_channel_message(ciphertext, mac, _KEY)
         assert text == "hello mesh"
 
     def test_flags_byte_not_included_in_text(self):
         """Offset must be 5 (skip 4-byte ts + 1-byte flags), not 4."""
         flags = 0x42  # non-zero to catch an off-by-one that leaks it into text
         ciphertext, mac = _encrypt(1_748_000_000, flags=flags, text="world")
-        _, text = decrypt_channel_message(ciphertext, mac, _KEY)
+        _, text, _ = decrypt_channel_message(ciphertext, mac, _KEY)
         assert text == "world"
         assert chr(flags) not in text
 
     def test_empty_message(self):
         ciphertext, mac = _encrypt(1_748_000_000, flags=0, text="")
-        ts, text = decrypt_channel_message(ciphertext, mac, _KEY)
+        ts, text, _ = decrypt_channel_message(ciphertext, mac, _KEY)
         assert ts == 1_748_000_000
         assert text == ""
 
     def test_various_flags_values_do_not_corrupt_text(self):
         for flags in (0x00, 0x01, 0x7F, 0xFF):
             ciphertext, mac = _encrypt(100, flags=flags, text="test")
-            _, text = decrypt_channel_message(ciphertext, mac, _KEY)
+            _, text, _ = decrypt_channel_message(ciphertext, mac, _KEY)
             assert text == "test", f"failed with flags=0x{flags:02x}"
 
     def test_wrong_key_returns_none(self):
         ciphertext, mac = _encrypt(1_748_000_000, flags=0, text="secret")
         wrong_key = bytes(16)  # all zeros
-        ts, text = decrypt_channel_message(ciphertext, mac, wrong_key)
+        ts, text, _ = decrypt_channel_message(ciphertext, mac, wrong_key)
         # Garbage decrypt — text won't match, but function must not raise
         assert ts is not None or text is not None or (ts is None and text is None)
+
+
+class TestMacValid:
+    """mac_valid reports whether the 2-byte HMAC matches the ciphertext.
+
+    These tests are synthetic (fixed test key, made-up text), but the
+    corruption mirrors flood copies actually observed on air: a repeater
+    flips bits after the LoRa CRC check, most often bit 7 of the last byte
+    of the packet, while the original MAC is kept. With AES-ECB only the
+    affected 16-byte block is garbled, so the timestamp (first block)
+    usually survives and the copy still decrypts.
+    """
+
+    _TEXT = "mgxs: bit flip test, spans several AES blocks"
+
+    def test_intact_packet_is_valid(self):
+        ciphertext, mac = _encrypt(1_790_273_363, flags=0, text=self._TEXT)
+        ts, text, mac_valid = decrypt_channel_message(ciphertext, mac, _KEY)
+        assert mac_valid is True
+        assert ts == 1_790_273_363
+        assert text == self._TEXT
+
+    def test_flipped_bit_is_invalid_but_still_decrypts(self):
+        ciphertext, mac = _encrypt(1_790_273_363, flags=0, text=self._TEXT)
+        corrupted = ciphertext[:-1] + bytes([ciphertext[-1] ^ 0x80])  # bit 7, last byte
+        ts, text, mac_valid = decrypt_channel_message(corrupted, mac, _KEY)
+        assert mac_valid is False
+        # Only the last block is garbled: timestamp and first blocks survive
+        assert ts == 1_790_273_363
+        assert text != self._TEXT
+        assert text.startswith(self._TEXT[:11])
+
+    def test_wrong_key_is_invalid(self):
+        ciphertext, mac = _encrypt(1_790_273_363, flags=0, text=self._TEXT)
+        _, _, mac_valid = decrypt_channel_message(ciphertext, mac, bytes(16))
+        assert mac_valid is False
