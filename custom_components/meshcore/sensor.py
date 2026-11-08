@@ -1082,7 +1082,12 @@ class MeshCoreSensor(CoordinatorEntity, SensorEntity):
 
         elif key == "battery_voltage":
             def update_battery(event: Event):
-                self._native_value = event.payload.get("level") / 1000.0  # Convert from mV to V
+                voltage_mv = event.payload.get("level")
+                self._native_value = (
+                    voltage_mv / 1000.0
+                    if isinstance(voltage_mv, (int, float)) and voltage_mv > 0
+                    else None
+                )
             self.async_on_remove(session.subscribe(EventType.BATTERY, update_battery))
 
         elif key == "battery_percentage":
@@ -1724,8 +1729,12 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
         value = self._cached_stats.get(key)
 
         # Process the value based on the sensor type
-        if key == "bat" and isinstance(value, (int, float)) and value > 0:
-            return value / 1000.0  # Convert millivolts to volts
+        if key == "bat":
+            return (
+                value / 1000.0
+                if isinstance(value, (int, float)) and value > 0
+                else None
+            )
 
         elif key == "battery_percentage" and "bat" in self._cached_stats:
             voltage_mv = self._cached_stats["bat"]

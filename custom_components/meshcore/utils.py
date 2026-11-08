@@ -200,15 +200,21 @@ def extract_channel_idx(entity_key: str) -> int:
     return 0  # Default to channel 0 on error
 
 
-def calculate_battery_percentage(voltage_mv: float) -> float:
+def calculate_battery_percentage(voltage_mv: float | None) -> float | None:
     """Calculate battery percentage using generic battery discharge curve.
+
+    In MeshCore firmware, `getBattMilliVolts()` returns 0 when the board does not
+    have a battery ADC (e.g. mains/USB-powered gateways). Return None for <= 0 mV
+    so Home Assistant reports the entity as `unknown` rather than 0%.
 
     Args:
         voltage_mv: Battery voltage in millivolts
 
     Returns:
-        Battery percentage (0-100)
+        Battery percentage (0-100) or None if battery measurement is unsupported
     """
+    if not isinstance(voltage_mv, (int, float)) or voltage_mv <= 0:
+        return None
     battery_percentage = (voltage_mv - BAT_VMIN) / (BAT_VMAX - BAT_VMIN) * 100
     return round(max(0, min(100, battery_percentage)), 2)
 
