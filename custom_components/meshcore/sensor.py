@@ -40,6 +40,7 @@ from .const import (
 from .telemetry_sensor import TelemetrySensorManager
 from .traffic import GOVERNED_LANES
 from .utils import (
+    boot_time_from_uptime,
     calculate_battery_percentage,
     format_entity_id,
     sanitize_name,
@@ -170,16 +171,16 @@ SELF_INFO_FIELDS: Final[dict[str, str]] = {
 # mirror the matching REPEATER_SENSORS keys/device-classes/units/icons so units,
 # precision, and icons stay consistent across node types. Battery is intentionally
 # omitted (the companion already exposes battery_voltage/battery_percentage).
-# Unit conversions (seconds->minutes for uptime/airtime) are applied in the
+# Unit conversions (seconds->minutes for airtime, uptime->boot timestamp) are applied in the
 # async_added_to_hass handlers below.
 SELF_DIAGNOSTIC_SENSORS = [
     # STATS_CORE
     SensorEntityDescription(
         key="uptime",
-        device_class=SensorDeviceClass.DURATION,
-        native_unit_of_measurement="min",
-        suggested_unit_of_measurement="d",
-        state_class=SensorStateClass.MEASUREMENT,
+        # Exposed as the boot time, like HA core does for other devices, so
+        # the frontend renders "x days ago" and the state only changes on a
+        # reboot instead of on every poll.
+        device_class=SensorDeviceClass.TIMESTAMP,
         icon="mdi:clock",
     ),
     SensorEntityDescription(
@@ -322,10 +323,10 @@ REPEATER_SENSORS = [
     ),
     SensorEntityDescription(
         key="uptime",
-        device_class=SensorDeviceClass.DURATION,
-        native_unit_of_measurement="min",
-        suggested_unit_of_measurement="d",
-        state_class=SensorStateClass.MEASUREMENT,
+        # Exposed as the boot time, like HA core does for other devices, so
+        # the frontend renders "x days ago" and the state only changes on a
+        # reboot instead of on every poll.
+        device_class=SensorDeviceClass.TIMESTAMP,
         icon="mdi:clock",
     ),
     SensorEntityDescription(
@@ -1134,7 +1135,9 @@ class MeshCoreSensor(CoordinatorEntity, SensorEntity):
                 if self.hass is None:
                     return
                 value = event.payload.get("uptime_secs")
-                self._native_value = round(value / 60, 1) if isinstance(value, (int, float)) else None
+                if not isinstance(value, (int, float)) or value <= 0:
+                    return  # malformed sample: keep the last known boot time
+                self._native_value = boot_time_from_uptime(value, self._native_value)
                 self.async_write_ha_state()
             self.async_on_remove(session.subscribe(EventType.STATS_CORE, update_uptime))
 
@@ -1669,6 +1672,7 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
 
         self._cached_stats = {}
         self._previous_stats = {}
+        self._boot_time: datetime | None = None
 
     async def async_added_to_hass(self):
         """Register event handlers when entity is added to hass."""
@@ -1705,6 +1709,13 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
         else:
             self._cached_stats = {}
 
+        # Uptime is exposed as a boot timestamp; work it out once per status
+        # response so it stays stable between polls (see boot_time_from_uptime).
+        if self.entity_description.key == "uptime":
+            uptime = self._cached_stats.get("uptime")
+            if isinstance(uptime, (int, float)) and uptime > 0:
+                self._boot_time = boot_time_from_uptime(uptime, self._boot_time)
+
         # Add metadata
         self._cached_stats["repeater_name"] = self.repeater_name
         self._cached_stats["last_updated"] = time.time()
@@ -1731,8 +1742,8 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
             voltage_mv = self._cached_stats["bat"]
             return calculate_battery_percentage(voltage_mv)
 
-        elif key == "uptime" and isinstance(value, (int, float)) and value > 0:
-            return round(value / 60, 1)  # Convert seconds to minutes
+        elif key == "uptime":
+            return self._boot_time
 
         elif key == "airtime" and isinstance(value, (int, float)) and value > 0:
             return round(value / 60, 1)  # Convert seconds to minutes
