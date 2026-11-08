@@ -8,6 +8,7 @@ import logging
 import math
 import re
 import sys
+from datetime import UTC, datetime, timedelta
 from typing import Any, Final
 
 from Crypto.Cipher import AES
@@ -211,6 +212,38 @@ def calculate_battery_percentage(voltage_mv: float) -> float:
     """
     battery_percentage = (voltage_mv - BAT_VMIN) / (BAT_VMAX - BAT_VMIN) * 100
     return round(max(0, min(100, battery_percentage)), 2)
+
+# How far a freshly computed boot time may drift from the previous one before
+# it is treated as a real change (i.e. a reboot). Uptime arrives over LoRa, so
+# the moment we receive it lags the moment the node sampled it by a few
+# seconds, and the node's clock drifts a little against ours. Without this
+# tolerance the boot timestamp would jitter on every poll and the recorder
+# would log a new state each time.
+UPTIME_DEVIATION_SECS: Final = 60
+
+
+def boot_time_from_uptime(
+    uptime_secs: float,
+    last_boot_time: datetime | None,
+    now: datetime | None = None,
+) -> datetime:
+    """Turn an uptime in seconds into the node's (UTC) boot time.
+
+    Keeps ``last_boot_time`` while the new estimate is within
+    ``UPTIME_DEVIATION_SECS`` of it, so the state only changes when the node
+    really restarted. This mirrors how Home Assistant core integrations
+    (e.g. Shelly) expose uptime as a ``timestamp`` sensor.
+    """
+    if now is None:
+        now = datetime.now(UTC)
+    boot_time = (now - timedelta(seconds=uptime_secs)).replace(microsecond=0)
+    if (
+        last_boot_time is not None
+        and abs((boot_time - last_boot_time).total_seconds()) <= UPTIME_DEVIATION_SECS
+    ):
+        return last_boot_time
+    return boot_time
+
 
 def build_device_name(name: str, pubkey_prefix: str, node_type: str = "unknown") -> str:
     """Build consistent device name based on node info.
