@@ -102,7 +102,7 @@ SENSORS = [
         native_unit_of_measurement="V",
         suggested_display_precision="3",
         state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:battery",
+        icon="mdi:battery-charging",
     ),
     SensorEntityDescription(
         key="battery_percentage",
@@ -110,7 +110,6 @@ SENSORS = [
         native_unit_of_measurement="%",
         suggested_display_precision="2",
         state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:battery",
     ),
     SensorEntityDescription(
         key="node_count",
@@ -123,7 +122,7 @@ SENSORS = [
         native_unit_of_measurement="dBm",
         suggested_display_precision="0",
         state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:power"
+        icon="mdi:flash"
     ),
     SensorEntityDescription(
         key="latitude",
@@ -138,18 +137,18 @@ SENSORS = [
         native_unit_of_measurement="MHz",
         suggested_display_precision="3",
         state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:radio"
+        icon="mdi:sine-wave"
     ),
     SensorEntityDescription(
         key="bandwidth",
         native_unit_of_measurement="kHz",
         suggested_display_precision="1",
         state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:radio"
+        icon="mdi:arrow-expand-horizontal"
     ),
     SensorEntityDescription(
         key="spreading_factor",
-        icon="mdi:radio"
+        icon="mdi:chart-bell-curve"
     ),
 ]
 
@@ -217,14 +216,14 @@ SELF_DIAGNOSTIC_SENSORS = [
         native_unit_of_measurement="min",
         suggested_display_precision="1",
         state_class=SensorStateClass.TOTAL_INCREASING,
-        icon="mdi:radio",
+        icon="mdi:upload",
     ),
     SensorEntityDescription(
         key="rx_airtime",
         native_unit_of_measurement="min",
         suggested_display_precision="1",
         state_class=SensorStateClass.TOTAL_INCREASING,
-        icon="mdi:radio",
+        icon="mdi:download",
     ),
     # STATS_PACKETS
     SensorEntityDescription(
@@ -284,7 +283,6 @@ CONTACT_SENSORS = [
         native_unit_of_measurement="%",
         suggested_display_precision="2",
         state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:battery",
     ),
     SensorEntityDescription(
         key="last_rssi",
@@ -310,7 +308,7 @@ REPEATER_SENSORS = [
         native_unit_of_measurement="V",
         suggested_display_precision="3",
         state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:battery",
+        icon="mdi:battery-charging",
     ),
     SensorEntityDescription(
         key="battery_percentage",
@@ -318,7 +316,6 @@ REPEATER_SENSORS = [
         native_unit_of_measurement="%",
         suggested_display_precision="2",
         state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:battery",
     ),
     SensorEntityDescription(
         key="uptime",
@@ -333,7 +330,7 @@ REPEATER_SENSORS = [
         native_unit_of_measurement="min",
         suggested_display_precision="1",
         state_class=SensorStateClass.TOTAL_INCREASING,
-        icon="mdi:radio",
+        icon="mdi:upload",
     ),
     SensorEntityDescription(
         key="nb_sent",
@@ -417,14 +414,14 @@ REPEATER_SENSORS = [
         native_unit_of_measurement="%",
         suggested_display_precision="1",
         state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:percent",
+        icon="mdi:gauge",
     ),
     SensorEntityDescription(
         key="rx_airtime",
         native_unit_of_measurement="min",
         suggested_display_precision="1",
         state_class=SensorStateClass.TOTAL_INCREASING,
-        icon="mdi:radio",
+        icon="mdi:download",
     ),
     SensorEntityDescription(
         key="rx_airtime_utilization",
@@ -432,7 +429,7 @@ REPEATER_SENSORS = [
         native_unit_of_measurement="%",
         suggested_display_precision="1",
         state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:percent",
+        icon="mdi:gauge",
     ),
     SensorEntityDescription(
         key="direct_dups_rate",
@@ -2045,7 +2042,7 @@ class MeshCoreNeighborSeenSensor(CoordinatorEntity, SensorEntity):
     _attr_has_entity_name = True
     _attr_should_poll = False
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_icon = "mdi:counter"
+    _attr_icon = "mdi:eye-outline"
 
     def __init__(
         self,
