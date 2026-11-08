@@ -4,7 +4,6 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
-from datetime import datetime
 from functools import partial
 from typing import Any
 
@@ -260,9 +259,6 @@ class MeshCoreGPSTracker(CoordinatorEntity, TrackerEntity):
         
         if self._altitude is not None:
             attributes["altitude"] = round(self._altitude, 1)
-            
-        if self._last_updated:
-            attributes["last_updated"] = datetime.fromtimestamp(self._last_updated).isoformat()
             
         return attributes
 

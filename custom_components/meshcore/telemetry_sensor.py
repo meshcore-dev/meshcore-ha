@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
-from datetime import datetime
 from functools import partial
 from typing import Any, Final
 
@@ -714,14 +713,6 @@ class MeshCoreTelemetrySensor(CoordinatorEntity, SensorEntity):
         if self.field:
             attributes["field"] = self.field
 
-        if self._last_updated:
-            attributes["last_updated"] = datetime.fromtimestamp(
-                self._last_updated
-            ).isoformat()
-
-        if self._raw_value is not None:
-            attributes["raw_value"] = self._raw_value
-
         return attributes
 
 
@@ -761,10 +752,3 @@ class MeshCoreBatteryPercentageSensor(MeshCoreTelemetrySensor):
                         self.async_write_ha_state()
                 break
 
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return additional state attributes including the raw voltage."""
-        attributes = super().extra_state_attributes
-        if self._raw_value is not None:
-            attributes["voltage"] = round(self._raw_value, 3)
-        return attributes

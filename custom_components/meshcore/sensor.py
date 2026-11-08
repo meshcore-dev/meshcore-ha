@@ -40,6 +40,7 @@ from .const import (
 from .telemetry_sensor import TelemetrySensorManager
 from .traffic import GOVERNED_LANES
 from .utils import (
+    boot_time_from_uptime,
     calculate_battery_percentage,
     format_entity_id,
     sanitize_name,
@@ -102,7 +103,7 @@ SENSORS = [
         native_unit_of_measurement="V",
         suggested_display_precision="3",
         state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:battery",
+        icon="mdi:battery-charging",
     ),
     SensorEntityDescription(
         key="battery_percentage",
@@ -110,7 +111,6 @@ SENSORS = [
         native_unit_of_measurement="%",
         suggested_display_precision="2",
         state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:battery",
     ),
     SensorEntityDescription(
         key="node_count",
@@ -123,7 +123,7 @@ SENSORS = [
         native_unit_of_measurement="dBm",
         suggested_display_precision="0",
         state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:power"
+        icon="mdi:flash"
     ),
     SensorEntityDescription(
         key="latitude",
@@ -138,18 +138,18 @@ SENSORS = [
         native_unit_of_measurement="MHz",
         suggested_display_precision="3",
         state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:radio"
+        icon="mdi:sine-wave"
     ),
     SensorEntityDescription(
         key="bandwidth",
         native_unit_of_measurement="kHz",
         suggested_display_precision="1",
         state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:radio"
+        icon="mdi:arrow-expand-horizontal"
     ),
     SensorEntityDescription(
         key="spreading_factor",
-        icon="mdi:radio"
+        icon="mdi:chart-bell-curve"
     ),
 ]
 
@@ -170,16 +170,16 @@ SELF_INFO_FIELDS: Final[dict[str, str]] = {
 # mirror the matching REPEATER_SENSORS keys/device-classes/units/icons so units,
 # precision, and icons stay consistent across node types. Battery is intentionally
 # omitted (the companion already exposes battery_voltage/battery_percentage).
-# Unit conversions (seconds->minutes for uptime/airtime) are applied in the
+# Unit conversions (seconds->minutes for airtime, uptime->boot timestamp) are applied in the
 # async_added_to_hass handlers below.
 SELF_DIAGNOSTIC_SENSORS = [
     # STATS_CORE
     SensorEntityDescription(
         key="uptime",
-        device_class=SensorDeviceClass.DURATION,
-        native_unit_of_measurement="min",
-        suggested_unit_of_measurement="d",
-        state_class=SensorStateClass.MEASUREMENT,
+        # Exposed as the boot time, like HA core does for other devices, so
+        # the frontend renders "x days ago" and the state only changes on a
+        # reboot instead of on every poll.
+        device_class=SensorDeviceClass.TIMESTAMP,
         icon="mdi:clock",
     ),
     SensorEntityDescription(
@@ -217,14 +217,14 @@ SELF_DIAGNOSTIC_SENSORS = [
         native_unit_of_measurement="min",
         suggested_display_precision="1",
         state_class=SensorStateClass.TOTAL_INCREASING,
-        icon="mdi:radio",
+        icon="mdi:upload",
     ),
     SensorEntityDescription(
         key="rx_airtime",
         native_unit_of_measurement="min",
         suggested_display_precision="1",
         state_class=SensorStateClass.TOTAL_INCREASING,
-        icon="mdi:radio",
+        icon="mdi:download",
     ),
     # STATS_PACKETS
     SensorEntityDescription(
@@ -284,7 +284,6 @@ CONTACT_SENSORS = [
         native_unit_of_measurement="%",
         suggested_display_precision="2",
         state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:battery",
     ),
     SensorEntityDescription(
         key="last_rssi",
@@ -310,7 +309,7 @@ REPEATER_SENSORS = [
         native_unit_of_measurement="V",
         suggested_display_precision="3",
         state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:battery",
+        icon="mdi:battery-charging",
     ),
     SensorEntityDescription(
         key="battery_percentage",
@@ -318,14 +317,13 @@ REPEATER_SENSORS = [
         native_unit_of_measurement="%",
         suggested_display_precision="2",
         state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:battery",
     ),
     SensorEntityDescription(
         key="uptime",
-        device_class=SensorDeviceClass.DURATION,
-        native_unit_of_measurement="min",
-        suggested_unit_of_measurement="d",
-        state_class=SensorStateClass.MEASUREMENT,
+        # Exposed as the boot time, like HA core does for other devices, so
+        # the frontend renders "x days ago" and the state only changes on a
+        # reboot instead of on every poll.
+        device_class=SensorDeviceClass.TIMESTAMP,
         icon="mdi:clock",
     ),
     SensorEntityDescription(
@@ -333,7 +331,7 @@ REPEATER_SENSORS = [
         native_unit_of_measurement="min",
         suggested_display_precision="1",
         state_class=SensorStateClass.TOTAL_INCREASING,
-        icon="mdi:radio",
+        icon="mdi:upload",
     ),
     SensorEntityDescription(
         key="nb_sent",
@@ -417,14 +415,14 @@ REPEATER_SENSORS = [
         native_unit_of_measurement="%",
         suggested_display_precision="1",
         state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:percent",
+        icon="mdi:gauge",
     ),
     SensorEntityDescription(
         key="rx_airtime",
         native_unit_of_measurement="min",
         suggested_display_precision="1",
         state_class=SensorStateClass.TOTAL_INCREASING,
-        icon="mdi:radio",
+        icon="mdi:download",
     ),
     SensorEntityDescription(
         key="rx_airtime_utilization",
@@ -432,7 +430,7 @@ REPEATER_SENSORS = [
         native_unit_of_measurement="%",
         suggested_display_precision="1",
         state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:percent",
+        icon="mdi:gauge",
     ),
     SensorEntityDescription(
         key="direct_dups_rate",
@@ -1134,7 +1132,9 @@ class MeshCoreSensor(CoordinatorEntity, SensorEntity):
                 if self.hass is None:
                     return
                 value = event.payload.get("uptime_secs")
-                self._native_value = round(value / 60, 1) if isinstance(value, (int, float)) else None
+                if not isinstance(value, (int, float)) or value <= 0:
+                    return  # malformed sample: keep the last known boot time
+                self._native_value = boot_time_from_uptime(value, self._native_value)
                 self.async_write_ha_state()
             self.async_on_remove(session.subscribe(EventType.STATS_CORE, update_uptime))
 
@@ -1669,6 +1669,7 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
 
         self._cached_stats = {}
         self._previous_stats = {}
+        self._boot_time: datetime | None = None
 
     async def async_added_to_hass(self):
         """Register event handlers when entity is added to hass."""
@@ -1705,6 +1706,13 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
         else:
             self._cached_stats = {}
 
+        # Uptime is exposed as a boot timestamp; work it out once per status
+        # response so it stays stable between polls (see boot_time_from_uptime).
+        if self.entity_description.key == "uptime":
+            uptime = self._cached_stats.get("uptime")
+            if isinstance(uptime, (int, float)) and uptime > 0:
+                self._boot_time = boot_time_from_uptime(uptime, self._boot_time)
+
         # Add metadata
         self._cached_stats["repeater_name"] = self.repeater_name
         self._cached_stats["last_updated"] = time.time()
@@ -1731,8 +1739,8 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
             voltage_mv = self._cached_stats["bat"]
             return calculate_battery_percentage(voltage_mv)
 
-        elif key == "uptime" and isinstance(value, (int, float)) and value > 0:
-            return round(value / 60, 1)  # Convert seconds to minutes
+        elif key == "uptime":
+            return self._boot_time
 
         elif key == "airtime" and isinstance(value, (int, float)) and value > 0:
             return round(value / 60, 1)  # Convert seconds to minutes
@@ -1811,101 +1819,6 @@ class MeshCoreRepeaterSensor(CoordinatorEntity, SensorEntity):
         # Check if we have stats for this repeater
         repeater_stats = self.coordinator.data.get("repeater_stats", {})
         return self.repeater_name in repeater_stats
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return additional state attributes."""
-        # First try to use cached stats from events
-        if self._cached_stats:
-            attributes = {
-                "last_updated": datetime.fromtimestamp(self._cached_stats.get("last_updated", 0)).isoformat()
-            }
-
-            key = self.entity_description.key
-
-            # Add raw values for certain sensors
-            if key == "bat" and "bat" in self._cached_stats:
-                attributes["raw_millivolts"] = self._cached_stats["bat"]
-            elif key in ["uptime", "airtime", "rx_airtime"] and key in self._cached_stats:
-                seconds = self._cached_stats[key]
-                if isinstance(seconds, (int, float)) and seconds > 0:
-                    # Add human-readable format for uptime
-                    if key == "uptime":
-                        days = seconds // 86400
-                        hours = (seconds % 86400) // 3600
-                        minutes = (seconds % 3600) // 60
-                        secs = seconds % 60
-                        attributes["human_readable"] = f"{days}d {hours}h {minutes}m {secs}s"
-            elif key.endswith(UTILIZATION_SUFFIX):
-                # Extract the base metric name (remove '_utilization' suffix)
-                base_key = key.removesuffix(UTILIZATION_SUFFIX)
-                uptime = self._cached_stats.get("uptime")
-                metric_value = self._cached_stats.get(base_key)
-
-                if isinstance(uptime, (int, float)) and isinstance(metric_value, (int, float)):
-                    attributes["uptime_seconds"] = str(uptime)
-                    attributes[f"{base_key}_seconds"] = str(metric_value)
-
-                    # Calculate metric delta since last update if we have previous values
-                    if self._previous_stats:
-                        prev_metric = self._previous_stats.get(base_key, 0)
-                        if isinstance(prev_metric, (int, float)) and prev_metric < metric_value:
-                            metric_delta = metric_value - prev_metric
-                            attributes[f"{base_key}_since_last_update"] = str(round(metric_delta / 60, 1))  # in minutes
-            elif key.endswith(RATE_SUFFIX):
-                # Extract the base metric name (remove '_rate' suffix)
-                base_key = key.removesuffix(RATE_SUFFIX)
-                uptime = self._cached_stats.get("uptime")
-                count = self._cached_stats.get(base_key)
-
-                if isinstance(uptime, (int, float)) and isinstance(count, (int, float)):
-                    attributes["uptime_seconds"] = str(uptime)
-                    attributes[f"{base_key}_total"] = str(count)
-
-                    # Calculate count delta since last update if we have previous values
-                    if self._previous_stats:
-                        prev_count = self._previous_stats.get(base_key, 0)
-                        prev_uptime = self._previous_stats.get("uptime", 0)
-                        if isinstance(prev_count, (int, float)) and isinstance(prev_uptime, (int, float)):
-                            count_delta = count - prev_count
-                            uptime_delta = uptime - prev_uptime
-                            if count_delta >= 0 and uptime_delta > 0:
-                                attributes[f"{base_key}_since_last_update"] = str(count_delta)
-                                attributes["uptime_delta_seconds"] = str(uptime_delta)
-
-            return attributes
-
-        # Fall back to coordinator data
-        if not self.coordinator.data or "repeater_stats" not in self.coordinator.data:
-            return {}
-
-        # Get the repeater stats for this repeater
-        repeater_stats = self.coordinator.data.get("repeater_stats", {}).get(self.repeater_name, {})
-        if not repeater_stats:
-            return {}
-
-        attributes = {}
-        key = self.entity_description.key
-
-        # Add raw values for certain sensors to help with debugging
-        if key == "bat":
-            bat_value = repeater_stats.get("bat")
-            if isinstance(bat_value, (int, float)) and bat_value > 0:
-                attributes["raw_millivolts"] = bat_value
-        elif key in ["uptime", "airtime", "rx_airtime"]:
-            seconds = repeater_stats.get(key)
-            if isinstance(seconds, (int, float)) and seconds > 0:
-                attributes["raw_seconds"] = seconds
-
-                # Also add a human-readable format for uptime
-                if key == "uptime":
-                    days = seconds // 86400
-                    hours = (seconds % 86400) // 3600
-                    minutes = (seconds % 3600) // 60
-                    secs = seconds % 60
-                    attributes["human_readable"] = f"{days}d {hours}h {minutes}m {secs}s"
-
-        return attributes
 
 
 class MeshCoreNeighborSensor(CoordinatorEntity, SensorEntity):
@@ -2045,7 +1958,7 @@ class MeshCoreNeighborSeenSensor(CoordinatorEntity, SensorEntity):
     _attr_has_entity_name = True
     _attr_should_poll = False
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_icon = "mdi:counter"
+    _attr_icon = "mdi:eye-outline"
 
     def __init__(
         self,
