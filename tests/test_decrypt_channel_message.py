@@ -11,11 +11,10 @@ cannot silently slip in a future refactor.
 Notes on known gaps vs firmware:
 - These are synthetic round-trip tests, not captures from a real device
   (firmware contains no hardcoded test vectors).
-- The 2-byte MAC: firmware uses the full 32-byte channel.secret as the
-  HMAC key; decrypt_channel_message passes channel_secret directly (16 bytes
-  in practice). The HMAC check always fails against real firmware packets but
-  decrypt_channel_message continues anyway ("Continue anyway" path), so this
-  gap does not affect decryption correctness in these tests.
+- The 2-byte MAC: firmware uses the 32-byte channel.secret (the 16-byte
+  secret followed by zeros) as the HMAC key. HMAC pads keys shorter than its
+  block with zeros, so the 16-byte secret gives the same MAC; a mismatch
+  means the wrong channel key and decrypt_channel_message returns None.
 """
 import importlib.util
 import os
@@ -109,6 +108,53 @@ class TestDecryptChannelMessage:
     def test_wrong_key_returns_none(self):
         ciphertext, mac = _encrypt(1_748_000_000, flags=0, text="secret")
         wrong_key = bytes(16)  # all zeros
-        ts, text = decrypt_channel_message(ciphertext, mac, wrong_key)
-        # Garbage decrypt — text won't match, but function must not raise
-        assert ts is not None or text is not None or (ts is None and text is None)
+        assert decrypt_channel_message(ciphertext, mac, wrong_key) == (None, None)
+
+    def test_mac_matches_firmware_32_byte_key(self):
+        """The firmware's zero-padded 32-byte key gives the same MAC as the 16-byte secret."""
+        import hashlib
+        import hmac as _hmac
+        ciphertext, mac = _encrypt(1_748_000_000, flags=0, text="hello")
+        assert _hmac.new(_KEY + bytes(16), ciphertext, hashlib.sha256).digest()[:2] == mac
+
+
+# Two real hashtag channels whose 1-byte channel hashes collide (both 0x68):
+# key = sha256(name)[:16], channel hash = sha256(key)[0].
+_EMERGENCY = bytes.fromhex("e1ad578d25108e344808f30dfdaaf926")
+_CS = bytes.fromhex("e9116f8b7393ce25f753b8073b105a98")
+
+
+class TestChannelHashCollision:
+
+    def _packet(self, key: bytes, ts: int, text: str) -> dict:
+        import hashlib
+        import hmac as _hmac
+        plaintext = struct.pack("<I", ts) + b"\x00" + text.encode()
+        plaintext += b"\x00" * (-len(plaintext) % 16)
+        ciphertext = AES.new(key, AES.MODE_ECB).encrypt(plaintext)
+        mac = _hmac.new(key, ciphertext, hashlib.sha256).digest()[:2]
+        return {
+            "payload_type": 5,
+            "path_len": 1,
+            "path_hash_size": 1,
+            "path": "ab",
+            "chan_hash": hashlib.sha256(key).hexdigest()[:2],
+            "cipher_mac": mac.hex(),
+            "crypted": ciphertext.hex(),
+        }
+
+    def test_both_channels_share_the_hash(self):
+        import hashlib
+        assert hashlib.sha256(_EMERGENCY).digest()[0] == hashlib.sha256(_CS).digest()[0] == 0x68
+
+    def test_packet_is_matched_to_the_channel_whose_key_verifies(self):
+        parse_and_decrypt_rx_log = _module.parse_and_decrypt_rx_log
+        channels = {
+            9: {"channel_name": "#emergency", "channel_secret": _EMERGENCY.hex()},
+            11: {"channel_name": "#cs", "channel_secret": _CS.hex()},
+        }
+        result = parse_and_decrypt_rx_log(self._packet(_CS, 1_794_347_255, "ahoj"), channels)
+        assert result["decrypted"] is True
+        assert result["channel_idx"] == 11
+        assert result["timestamp"] == 1_794_347_255
+        assert result["text"] == "ahoj"
