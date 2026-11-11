@@ -290,11 +290,15 @@ def decrypt_channel_message(ciphertext: bytes, cipher_mac: bytes, channel_secret
         Tuple of (timestamp, message_text) or (None, None) on failure
     """
     try:
-        # Verify HMAC (optional but recommended)
+        # Verify the MAC. Channels can share the 1-byte channel hash, so a
+        # mismatch means this is not the channel's key: decrypting anyway
+        # would return garbage and stop the caller from trying the next
+        # channel. (HMAC pads the 16-byte secret with zeros, the same key
+        # the firmware uses, so real packets pass.)
         expected_mac = hmac.new(channel_secret, ciphertext, hashlib.sha256).digest()[:2]
         if expected_mac != cipher_mac:
             _LOGGER.debug("HMAC verification failed for channel message")
-            # Continue anyway - some implementations may not verify
+            return None, None
 
         # Decrypt using AES-128 ECB
         cipher = AES.new(channel_secret, AES.MODE_ECB)
