@@ -46,7 +46,7 @@ const FeatureList: FeatureItem[] = [
 const ResourceLinks = [
   {
     title: 'Website',
-    url: 'https://meshcore.co.uk',
+    url: 'https://meshcore.io',
     logo: '/meshcore-ha/img/meshcore-ha-icon.png',
   },
   {
