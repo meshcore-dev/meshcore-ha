@@ -269,6 +269,52 @@ async def test_neighbor_restart_does_not_double_count_and_absence_ages(mesh, mon
     assert await coordinator._cleanup_stale_neighbors(1) == 1
 
 
+@pytest.mark.parametrize("auto_remove,stored", [
+    (True, ["at_limit", "recent"]),
+    (False, ["at_limit", "past_limit", "recent"]),
+])
+async def test_poll_skips_a_neighbor_past_the_removal_threshold(mesh, monkeypatch, auto_remove, stored):
+    coordinator = mesh.coordinator
+    coordinator._auto_cleanup_stale_neighbors = auto_remove
+    coordinator._stale_neighbor_days = 7
+    monkeypatch.setattr(mesh.api, "fetch_neighbours", AsyncMock(return_value={"neighbours": [
+        {"pubkey": "past_limit", "snr": 5, "secs_ago": 7 * 86400 + 1},
+        {"pubkey": "at_limit", "snr": 6, "secs_ago": 7 * 86400},
+        {"pubkey": "recent", "snr": 7, "secs_ago": 60},
+    ]}))
+    await coordinator._fetch_repeater_neighbors(CONTACT, "Repeater", PREFIX)
+    assert sorted(coordinator._repeater_neighbors[PREFIX]) == stored
+
+
+async def test_removed_stale_neighbor_stays_out_while_the_repeater_reports_it(mesh, monkeypatch):
+    coordinator = mesh.coordinator
+    coordinator._auto_cleanup_stale_neighbors = True
+    coordinator._stale_neighbor_days = 7
+    clock = SimpleNamespace(value=5000000.0)
+    monkeypatch.setattr(coordinator_module, "time", SimpleNamespace(time=lambda: clock.value))
+    # Stored before the option was on: last heard 30 days before the last poll.
+    stored_at = clock.value - 3600
+    coordinator._repeater_neighbors[PREFIX] = {
+        "old": {"pubkey": "old", "snr": 5, "secs_ago": 30 * 86400, "last_updated": stored_at,
+                "seen_timestamps": []},
+    }
+    fetch = AsyncMock(return_value={"neighbours": [
+        {"pubkey": "old", "snr": 5, "secs_ago": 30 * 86400 + 3600},
+        {"pubkey": "recent", "snr": 7, "secs_ago": 60},
+    ]})
+    monkeypatch.setattr(mesh.api, "fetch_neighbours", fetch)
+
+    await coordinator._fetch_repeater_neighbors(CONTACT, "Repeater", PREFIX)
+    # The stored entry is kept as it was, for the daily cleanup to remove.
+    assert coordinator._repeater_neighbors[PREFIX]["old"]["last_updated"] == stored_at
+    assert await coordinator._cleanup_stale_neighbors(7) == 1
+    assert sorted(coordinator._repeater_neighbors[PREFIX]) == ["recent"]
+
+    await coordinator._fetch_repeater_neighbors(CONTACT, "Repeater", PREFIX)
+    assert fetch.await_count == 2
+    assert sorted(coordinator._repeater_neighbors[PREFIX]) == ["recent"]
+
+
 @pytest.mark.parametrize("slot,label", [(0, "public"), (2, "2")])
 async def test_outgoing_empty_channel_uses_fallback(hass, mesh, slot, label):
     coordinator = mesh.coordinator

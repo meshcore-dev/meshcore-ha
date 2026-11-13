@@ -1408,6 +1408,15 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
             existing = self._repeater_neighbors.get(pubkey_prefix, {})
             cutoff = now - SEEN_WINDOW_SECS
 
+            # A repeater keeps reporting neighbours it last heard long ago. With
+            # auto-removal on, storing one that is already past the threshold
+            # would bring back what the daily cleanup removes.
+            removal_age = (
+                self._stale_neighbor_days * 86400
+                if self._auto_cleanup_stale_neighbors and self._stale_neighbor_days > 0
+                else None
+            )
+
             for neighbour in neighbours:
                 if not neighbour or not isinstance(neighbour, dict):
                     continue
@@ -1416,6 +1425,8 @@ class MeshCoreDataUpdateCoordinator(DataUpdateCoordinator):
                     continue
                 n_snr = neighbour.get("snr", 0)
                 n_secs_ago = neighbour.get("secs_ago", 0)
+                if removal_age is not None and n_secs_ago > removal_age:
+                    continue
 
                 # Compare against the aged previous reading, including downtime.
                 existing_data = existing.get(n_pubkey, {})
