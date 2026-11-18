@@ -62,6 +62,7 @@ async def runtime(hass: HomeAssistant) -> AsyncIterator[SimpleNamespace]:
     await radio.start()
     radio.contacts = {
         "b" * 64: {"adv_name": "Client", "public_key": "b" * 64, "type": 1},
+        "c" * 64: {"adv_name": "Town Square", "public_key": "c" * 64, "type": 3},
     }
     api = RadioSession(
         hass=hass, connection_type="tcp", tcp_host="fixture.invalid", entry=entry
@@ -299,3 +300,47 @@ def test_the_logbook_names_an_unknown_sender(hass: HomeAssistant, data: dict, de
 
     entry = described[EVENT_MESSAGE](SimpleNamespace(data=data))
     assert entry["message"] == description
+
+
+@pytest.mark.parametrize(
+    ("signature", "expected_author", "expected_description"),
+    [
+        ("b" * 8, "Client", "Client: Hello room"),
+        ("deadbeef", None, "Unknown (deadbe): Hello room"),
+    ],
+)
+async def test_a_room_server_message_identifies_its_author(
+    hass: HomeAssistant,
+    runtime: SimpleNamespace,
+    captured: dict,
+    signature: str,
+    expected_author: str | None,
+    expected_description: str,
+) -> None:
+    """Room server messages resolve the author from signature or fall back to its prefix."""
+    from custom_components.meshcore.logbook import async_describe_events
+
+    receive_contact_message(
+        Event(
+            EventType.CONTACT_MSG_RECV,
+            {
+                "pubkey_prefix": "c" * 12,
+                "signature": signature,
+                "text": "Hello room",
+                "path_len": 255,
+            },
+        ),
+        runtime.coordinator,
+        lambda entities: None,
+    )
+    await hass.async_block_till_done()
+
+    message = captured[EVENT_MESSAGE][0]
+    assert message["sender_name"] == "Town Square"
+    assert message["signature"] == signature
+    assert message.get("author") == expected_author
+    assert message["entity_id"].endswith("cccccc_messages")
+
+    described: dict = {}
+    async_describe_events(hass, lambda _d, _e, cb: described.setdefault("cb", cb))
+    assert described["cb"](SimpleNamespace(data=message))["message"] == expected_description

@@ -183,6 +183,8 @@ The integration fires `meshcore_message` one time for each message. This event i
 | `message_type` | string | Always | `"direct"` |
 | `hop_count` | integer | Always | The number of hops. `0` means direct reception. |
 | `snr` | float | When the frame has it | The signal-to-noise ratio in dB |
+| `signature` | string | When the sender is a room server and the frame has a signature | The public key prefix of the post author |
+| `author` | string or null | When the sender is a room server and the frame has a signature | The advertised name of the post author. `null` when the author is not a contact. |
 
 ### Incoming channel message fields
 
