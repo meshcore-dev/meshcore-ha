@@ -11,6 +11,7 @@ from .const import (
     DEFAULT_DEVICE_NAME,
     DOMAIN,
     ENTITY_DOMAIN_BINARY_SENSOR,
+    NodeType,
 )
 from .events import EVENT_MESSAGE, fire_delivery_update, fire_message
 from .utils import (
@@ -39,6 +40,11 @@ def async_describe_events(
         # A DM from a node we have no contact for carries sender_name None.
         prefix = data.get("pubkey_prefix")
         sender = data.get("sender_name") or (f"Unknown ({prefix[:6]})" if prefix else "Unknown")
+        # Room servers add the authors public key prefix as a signature
+        signature = data.get("signature")
+
+        if signature:
+            sender = data.get("author") or (f"Unknown ({signature[:6]})" if signature else "Unknown")
 
         # Format description based on message type and direction
         if channel:
@@ -330,6 +336,11 @@ def handle_contact_message(event, coordinator) -> None:
         hass = coordinator.hass
         device_key = coordinator.pubkey if hasattr(coordinator, "pubkey") else "unknown"
 
+        # Special handling for room server messages: the author is identified by the signature field
+        signature = payload.get("signature", "")
+        author = None
+        is_room_server = False
+
         # Look up contact name from pubkey_prefix using MeshCore API.
         # A sender this node has no contact for is reported as such: the key
         # prefix below identifies them, so there is no name to invent.
@@ -339,6 +350,17 @@ def handle_contact_message(event, coordinator) -> None:
             contact = coordinator.api.contact_by_prefix(pubkey_prefix)
             if contact and isinstance(contact, dict):
                 contact_name = contact.get("adv_name") or None
+
+                # Flag if the message is from a room server
+                node_type = contact.get("type")
+                if node_type == NodeType.ROOM_SERVER:
+                    is_room_server = True
+
+            # Find the author for a room server message
+            if is_room_server and signature:
+                contact = coordinator.api.contact_by_prefix(signature)
+                if contact and isinstance(contact, dict):
+                    author = contact.get("adv_name") or None
 
         # Generate entity ID matching MeshCoreMessageEntity
         entity_id = get_contact_entity_id(
@@ -376,6 +398,10 @@ def handle_contact_message(event, coordinator) -> None:
 
         if snr is not None:
             event_data["snr"] = snr
+
+        if is_room_server and signature:
+            event_data["author"] = author
+            event_data["signature"] = signature
 
         # Fire event
         fire_message(hass, coordinator.config_entry, event_data)
