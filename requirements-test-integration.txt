@@ -6,7 +6,7 @@
 pytest-homeassistant-custom-component==0.13.316
 # Pulled in because the integration depends on logbook -> frontend.
 home-assistant-frontend
-meshcore>=2.3.17
+meshcore>=2.3.19
 pycryptodome>=4.2.0
 cachetools>=7.2.8
 paho-mqtt>=2.1.0
